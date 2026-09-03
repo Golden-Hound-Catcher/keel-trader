@@ -25,6 +25,7 @@ def status():
             "okx": settings.okx_configured,
             "llm": settings.llm_configured,
         },
+        "ledger_db": str(settings.ledger_path),
     }
 
 

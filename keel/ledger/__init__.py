@@ -1,4 +1,9 @@
-"""Keel ledger module - append-only SQLite ledger for trade events."""
-from keel.ledger.sqlite_ledger import KeelLedger, TradeRecord, DecisionRecord
+"""Keel ledger module - SQLite append-only audit trail."""
+from keel.ledger.sqlite_ledger import (
+    KeelLedger,
+    TradeRecord,
+    DecisionRecord,
+    FactorSnapshot,
+)
 
-__all__ = ["KeelLedger", "TradeRecord", "DecisionRecord"]
+__all__ = ["KeelLedger", "TradeRecord", "DecisionRecord", "FactorSnapshot"]

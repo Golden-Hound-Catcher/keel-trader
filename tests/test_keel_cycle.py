@@ -87,6 +87,35 @@ class TestPaperCycle(unittest.TestCase):
         self.assertEqual(summary["instruments"], 3)
         self.assertEqual(len(summary["results"]), 3)
 
+    def test_forced_short_executes_and_ledgers_trade(self):
+        summary = run_paper_cycle(
+            exchange=self.exchange,
+            ledger=self.ledger,
+            instrument_ids=["BTC-USDT-SWAP"],
+            force_action="SELL_SHORT",
+        )
+        self.assertTrue(summary["ok"])
+        result = summary["results"][0]
+        self.assertEqual(result["action"], "SELL_SHORT")
+        self.assertTrue(result["success"], msg=result)
+        self.assertTrue(result.get("filled"))
+        trades = self.ledger.get_trades(inst_id="BTC-USDT-SWAP")
+        self.assertGreaterEqual(len(trades), 1)
+        self.assertEqual(trades[0].direction, "short")
+
+    def test_cycle_persists_factor_snapshots(self):
+        run_paper_cycle(
+            exchange=self.exchange,
+            ledger=self.ledger,
+            instrument_ids=["BTC-USDT-SWAP", "ETH-USDT-SWAP"],
+            force_action="WAIT",
+        )
+        btc = self.ledger.get_latest_factor_snapshot("BTC-USDT-SWAP", max_age_seconds=60)
+        self.assertIsNotNone(btc)
+        self.assertGreater(btc.price, 0)
+        snaps = self.ledger.get_factor_snapshots(limit=10)
+        self.assertGreaterEqual(len(snaps), 2)
+
 
 class TestKeelSchedulerTraderJob(unittest.TestCase):
     def test_trader_job_invokes_keel_cycle_module(self):
