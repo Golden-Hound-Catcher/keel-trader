@@ -29,7 +29,7 @@
 | **keel-api** | `uvicorn keel.api.app:app` | 只读控制面（推荐 API 入口） |
 | **keel-worker** | `python -m keel.worker` | **唯一**调度器 + paper/demo 交易循环 |
 
-`r20_backend` / `r20_gateway` / `r20-*.service` 均为 **legacy / deprecated**（Stage 7 默认禁用 unit；见 [LEGACY.md](LEGACY.md)），勿作为新部署默认路径。
+支持的运行时：**keel-api** + **keel-worker** +（可选）**frontend** U1 monitor。`r20_backend` / `r20_gateway` / `r20-*.service` 均为 **legacy**（默认禁用/软拦截；见 [LEGACY.md](LEGACY.md)），勿作为新部署路径。
 
 ### 1. 克隆与安装
 
@@ -91,22 +91,22 @@ make test
 
 ---
 
-## ⚠️ Legacy（请勿作为默认路径）
+## ⚠️ Legacy（非支持入口）
 
 | 组件 | 状态 |
 |------|------|
-| `keel.api.app` + `keel.worker` | ✅ **唯一推荐运行时** |
-| `r20_backend.app`（含 dashboard 挂载） | ⚠️ **legacy** 只读/管理 UI；不自动拉起调度器 |
+| `keel.api.app` + `keel.worker` + `frontend/` U1 | ✅ **唯一支持的运行时** |
+| `r20_backend.app`（含 dashboard 挂载） | ❌ **软拦截**：需 `KEEL_ALLOW_LEGACY_BACKEND=1`；保留至 U2 |
 | `r20_gateway` | ⚠️ **legacy** 通知投递（可选）；默认无 job tick |
-| `r20_backend.scheduler` / `r20-scheduler.service` | ❌ **已禁用**（立即退出 / 无法启动） |
+| `r20_backend.scheduler` / `r20-*.service` | ❌ **已禁用/门禁**（非 install 示例） |
 | `scripts/ai_*_trader.py` | ⚠️ shim：默认委托 `keel.worker.cycle` |
 
 ```bash
-# LEGACY ONLY — 旧控制面（dashboard 为只读 UI；勿与 keel-api 同端口双开）
-python -m uvicorn r20_backend.app:app --host 0.0.0.0 --port 8080
+# LEGACY ONLY — requires opt-in; do not dual-bind with keel-api
+KEEL_ALLOW_LEGACY_BACKEND=1 python -m uvicorn r20_backend.app:app --host 0.0.0.0 --port 8080
 ```
 
-> 不要同时运行 `r20_backend.scheduler`、`r20-scheduler.service` 或启用 legacy Gateway 调度。
+> 不要同时运行 `r20_backend.scheduler`、`r20-*.service` 或启用 legacy Gateway 调度。详情见 [LEGACY.md](LEGACY.md)。
 
 ---
 
@@ -120,9 +120,10 @@ keel-trader/
 │   ├── config/ exchange/ factors/ ledger/ llm/ risk/ execution/
 ├── r20_backend/             # LEGACY 控制面（过渡期）
 ├── r20_gateway/             # LEGACY 通知（过渡期）
-├── dashboard/               # LEGACY 只读 UI（由 r20_backend 挂载）
+├── frontend/                # U1 监控 UI（绑定 keel.api）
+├── dashboard/               # LEGACY 只读 UI（由 r20_backend 挂载，直至 U2）
 ├── scripts/                 # LEGACY / shim 脚本
-├── deploy/                  # systemd：优先 keel-api + keel-worker
+├── deploy/                  # systemd：仅 keel-*.service 为安装示例
 ├── tests/                   # 含 test_keel_*.py
 ├── ARCHITECTURE.md
 ├── STANDALONE.md
@@ -202,7 +203,7 @@ class MyRiskGate(RiskGate):
 ## ⚠️ 重要提示
 
 1. **单一调度器**: 只运行 `python -m keel.worker`；已禁用 `r20_backend.scheduler` / `r20-scheduler.service` / 后端 lifespan 自动拉起 Gateway 调度
-2. **默认 API**: 使用 `keel.api.app`；`r20_backend` dashboard 仅为 legacy 只读 UI
+2. **默认 API/UI**: `keel.api.app` + U1 `frontend/` monitor；`r20_backend.app` 已软拦截（非支持入口）
 3. **默认模拟盘**: `R20_OKX_ENV=demo` 是默认值，实盘需显式设置
 4. **风控独立**: 风控门禁不可被 LLM 决策覆盖
 5. **无收益承诺**: 这是研究项目，不保证任何收益

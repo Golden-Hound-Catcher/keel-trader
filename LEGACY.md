@@ -1,18 +1,37 @@
-# Legacy inventory (Stage 7 quarantine)
+# Legacy inventory (quarantine after U1)
 
 Keel Trader keeps historical R20 paths in-tree so rollback and the transitional
-admin/dashboard mount still work. **New deployments must not use them.**
+`/legacy` admin/dashboard mount still work. **New deployments must not use them.**
 
-Primary runtime:
+## Supported runtime (only)
 
 | Process | Module / unit |
 |---------|----------------|
 | API | `uvicorn keel.api.app:app` / `deploy/keel-api.service` |
 | Scheduler | `python -m keel.worker` / `deploy/keel-worker.service` |
+| Monitor UI (U1) | `frontend/` Vite app → Keel `/health` + `/api/v1/*` |
 
-Opt-in: set `KEEL_USE_LEGACY=1` only when you intentionally run a legacy path
-(silences import/run quarantine warnings). Gateway job ticks remain separately
-gated by `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` (emergency only).
+Opt-in flags:
+
+| Env | Purpose |
+|-----|---------|
+| `KEEL_USE_LEGACY=1` | Acknowledge legacy scripts; silence import quarantine warnings |
+| `KEEL_ALLOW_LEGACY_BACKEND=1` | **Required** to run `uvicorn r20_backend.app:app` (soft-block otherwise) |
+| `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` | Emergency: re-enable gateway job ticks |
+
+Gateway job ticks remain separately gated. Prefer Keel units only.
+
+---
+
+## Retirement status
+
+| Stage | Status |
+|-------|--------|
+| Shim traders → Keel cycle; kill dual schedulers; quarantine warnings | **Done** |
+| Phase U1 — Vue monitor rebound to Keel API | **Done** |
+| Soft-block `r20_backend.app` as a deployment entrypoint | **Done** (this inventory) |
+| Phase U2 — drop Jinja `dashboard/` once monitor parity is enough | Later |
+| Delete unused scripts / `r20_gateway` scheduler / `r20_backend` | Last |
 
 ---
 
@@ -21,7 +40,7 @@ gated by `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` (emergency only).
 | Path | Why it remains | Accidental-use guard |
 |------|----------------|----------------------|
 | `r20_backend/` | Admin routes + mounts legacy `dashboard/` | Import warn; prefer `keel.api` |
-| `r20_backend/app.py` | Still mounts dashboard UI — **not deleted** | Module docstring + import warn |
+| `r20_backend/app.py` | Still mounts dashboard UI — **not deleted** (needed until U2) | **`KEEL_ALLOW_LEGACY_BACKEND=1` required** to run via uvicorn; else exit `2` |
 | `r20_backend/scheduler.py` | Hard guard against double-firing | Immediate exit code `2` |
 | `r20_gateway/` | Optional notification delivery | Import warn; no job ticks by default |
 | `r20_gateway/worker.py` | Notify-only loop | Loud stderr warn on `run()`; scheduler off |
@@ -29,11 +48,13 @@ gated by `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` (emergency only).
 
 ## Deploy units
 
+Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabled/gated.
+
 | Unit | Default | Notes |
 |------|---------|-------|
 | `deploy/keel-api.service` | **enable** | Primary API |
 | `deploy/keel-worker.service` | **enable** | Sole scheduler |
-| `deploy/r20-quantum.service` | **disabled** | Needs `data/.enable_legacy_r20_quantum` |
+| `deploy/r20-quantum.service` | **disabled** | Needs `data/.enable_legacy_r20_quantum` **and** sets `KEEL_ALLOW_LEGACY_BACKEND=1` |
 | `deploy/r20-gateway.service` | **disabled** | Needs `data/.enable_legacy_r20_gateway` |
 | `deploy/r20-scheduler.service` | **disabled** | `ConditionPathExists` + `/bin/false` |
 
@@ -54,18 +75,21 @@ gated by `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` (emergency only).
 
 | Path | Why it remains |
 |------|----------------|
-| `dashboard/` | Mounted by `r20_backend.app` as read-only legacy UI |
+| `dashboard/` | Mounted by `r20_backend.app` as read-only legacy UI (`/legacy` until U2) |
 | `dashboard/start.sh` / `stop.sh` | Old container-oriented lifecycle; **do not use** on Keel hosts |
 | `docs/images/*` (v540/v600 release cards, etc.) | Historical marketing / release screenshots |
 | `frontend/public/admin/legacy.html` | Static legacy admin stub |
+| `frontend/` monitor (U1) | **Supported** client of `keel.api` — not legacy |
 
-Physical `rm -rf` of `r20_*` is **out of scope** for Stage 7. Parent will
-decide live-demo keys vs mass delete next.
+Physical `rm -rf` of `r20_*` / `dashboard/` is **out of scope** until U2 inventory clear.
 
 ## Verification
 
 ```sh
 python -m r20_backend.scheduler          # must exit 2
+python -c "import r20_backend.app"       # must exit 2 without KEEL_ALLOW_LEGACY_BACKEND=1
+KEEL_ALLOW_LEGACY_BACKEND=1 python -c "import r20_backend.app"  # opt-in ok
 python -m r20_gateway.worker             # notify-only; no trader job ticks
 make test                                # Keel core tests
+python -m pytest tests/test_legacy_quarantine.py -v
 ```

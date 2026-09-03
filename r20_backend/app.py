@@ -1,20 +1,23 @@
-"""LEGACY control plane (Stage 7 quarantine — deprecated).
+"""LEGACY control plane (quarantine — not a supported deployment entrypoint).
 
-**Prefer** ``uvicorn keel.api.app:app`` / ``deploy/keel-api.service`` as the
-primary API entry for all new deployments.
+**Supported API:** ``uvicorn keel.api.app:app`` / ``deploy/keel-api.service``.
 
 This module remains temporarily for:
   - admin / control-plane routes still used by the transitional UI
-  - mounting the legacy read-only ``dashboard/`` at ``/``
+  - mounting the legacy read-only ``dashboard/`` (``/legacy`` until Phase U2)
 
 It does **NOT** spawn a second scheduler. Do not delete this file until the
-dashboard mount is fully retired. Accidental imports warn unless
-``KEEL_USE_LEGACY=1``. Inventory: ``LEGACY.md``.
+dashboard mount is fully retired.
+
+Running ``uvicorn r20_backend.app:app`` requires ``KEEL_ALLOW_LEGACY_BACKEND=1``
+(soft-block). Accidental imports also warn unless ``KEEL_USE_LEGACY=1``.
+Inventory: ``LEGACY.md``.
 """
 from __future__ import annotations
 
-from keel.legacy import warn_legacy
+from keel.legacy import require_legacy_backend, warn_legacy
 
+require_legacy_backend(component="r20_backend.app")
 warn_legacy(
     "r20_backend.app",
     prefer="uvicorn keel.api.app:app  (deploy/keel-api.service)",

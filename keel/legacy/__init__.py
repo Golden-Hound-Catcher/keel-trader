@@ -1,8 +1,12 @@
-"""Legacy quarantine helpers (Stage 7).
+"""Legacy quarantine helpers (Stage 7+).
 
 ``r20_*`` packages and historical scripts remain in-tree for rollback and the
 legacy admin/dashboard mount, but accidental use should be loud unless the
-operator explicitly opts in with ``KEEL_USE_LEGACY=1``.
+operator explicitly opts in.
+
+- ``KEEL_USE_LEGACY=1`` — acknowledge legacy scripts / silence import warnings
+- ``KEEL_ALLOW_LEGACY_BACKEND=1`` — permit running ``uvicorn r20_backend.app:app``
+  (still needed for ``/legacy`` until Phase U2). Prefer ``uvicorn keel.api.app:app``.
 """
 from __future__ import annotations
 
@@ -12,12 +16,50 @@ import warnings
 from typing import Final
 
 _LEGACY_ENV: Final = "KEEL_USE_LEGACY"
+_ALLOW_BACKEND_ENV: Final = "KEEL_ALLOW_LEGACY_BACKEND"
 _EMITTED: set[str] = set()
 
 
 def legacy_opt_in() -> bool:
     """True when the operator explicitly acknowledges legacy paths."""
     return os.environ.get(_LEGACY_ENV, "").strip() == "1"
+
+
+def legacy_backend_allowed() -> bool:
+    """True when running the legacy ASGI app is explicitly allowed.
+
+    Also true under pytest so transitional admin/API unit tests can import
+    ``r20_backend.app`` without setting the operator flag.
+    """
+    if os.environ.get(_ALLOW_BACKEND_ENV, "").strip() == "1":
+        return True
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    if "pytest" in sys.modules:
+        return True
+    return False
+
+
+def require_legacy_backend(*, component: str = "r20_backend.app") -> None:
+    """Soft-block accidental ``uvicorn r20_backend.app:app`` without opt-in.
+
+    Raises ``SystemExit(2)`` with a pointer to ``keel.api`` unless
+    ``KEEL_ALLOW_LEGACY_BACKEND=1`` (or pytest import path).
+    """
+    if legacy_backend_allowed():
+        return
+    print(
+        f"DISABLED: {component} is not a supported deployment entrypoint.\n"
+        "Use the Keel primary API instead:\n"
+        "  python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080\n"
+        "  # or: systemctl enable --now keel-api\n"
+        "\n"
+        "For the transitional /legacy dashboard mount only, set:\n"
+        f"  {_ALLOW_BACKEND_ENV}=1\n"
+        "See LEGACY.md and SPEC.md §11.\n",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 def warn_legacy(
@@ -47,4 +89,9 @@ def warn_legacy(
         print(message, file=sys.stderr)
 
 
-__all__ = ["legacy_opt_in", "warn_legacy"]
+__all__ = [
+    "legacy_opt_in",
+    "legacy_backend_allowed",
+    "require_legacy_backend",
+    "warn_legacy",
+]
