@@ -217,7 +217,7 @@ UI is a **client of the SPEC API**, not a second source of truth.
 | Done | Phase U2 — drop Jinja `dashboard/`; remove `/legacy` Vue route |
 | Done | Remove Vue `/admin/*` product surface; no HTML admin UI |
 | Done | Remove `r20_backend` `/api/v1/admin/*` + `admin_auth` (410 stub) |
-| Later | Delete unused scripts, `r20_gateway` job scheduler code |
+| Done | Delete unused dashboard/admin-era scripts; hard-gate `GatewayScheduler.tick` |
 | Last | Remove remaining `r20_backend` helpers once gateway/scripts no longer need them |
 
 Supported deployments: **keel-api** + **keel-worker** + optional **frontend** U1 monitor only.
@@ -315,3 +315,15 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - `r20_backend.app` is now a soft-blocked **410 stub** (any path → Gone; prefer `keel.api`).
 - Retired admin-coupled tests (`test_admin_*`, `test_control_plane_v2_api`, `test_custom_system_api`); kept `llm_manager` unit coverage without HTTP.
 - Remaining `r20_backend` modules exist for optional `r20_gateway` / historical `scripts/` only — not for product admin.
+
+## Addendum: Unused legacy scripts / gateway tick gate
+
+- Deleted orphan dashboard/admin-era scripts: `sync_web_data`, `daemon_web_sync`,
+  `generate_snapshots`, `debug_aggregate_orders`, `debug_audit_bills`,
+  `remove_retired_personal_wechat`, `cleanup_disk`, `calculus_replay`.
+- Kept trader shims (`ai_factor_trader`, `ai_brain_trader`) and scripts still
+  launched by `keel.worker` (factor/news/briefing/backup/self-improvement helpers).
+- `r20_gateway.worker` remains notify-only by default; `GatewayScheduler.tick()` /
+  `_execute` are no-ops unless `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1`.
+- Remaining `r20_backend` helpers stay until gateway/scripts no longer need them.
+

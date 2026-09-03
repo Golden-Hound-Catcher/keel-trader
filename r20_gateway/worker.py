@@ -61,8 +61,8 @@ def run() -> None:
     signal.signal(signal.SIGINT, stop)
     store = GatewayStore(DB_PATH)
     store.recover_processing()
-    # Stage 2: GatewayScheduler job ticks are disabled to prevent double-firing trader.
-    # Set KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1 only for emergency rollback.
+    # Job ticks stay off by default (Keel owns scheduling). Even if constructed,
+    # GatewayScheduler.tick() is a no-op unless KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1.
     enable_legacy = os.environ.get("KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER", "").strip() == "1"
     scheduler = None
     if enable_legacy:

@@ -9,7 +9,7 @@
 ## 1. 灾备架构概览
 
 - **交易核心**：`scripts/ai_brain_trader.py` + `scripts/ai_factor_trader.py`（聚焦 BTC/ETH/SOL/DOGE/SUI/LINK 6 标的，LLM 全权决策，Maker 限价挂单，OKX 云端 OCO 止盈止损 100% 保护）
-- **因子计算与同步守护**：`scripts/daemon_web_sync.py`（60 秒并发计算动量趋势、波动通道、资金流向、微观盘口与 Top100 聪明钱五大量化因子库）
+- **因子 / 调度**：由 `python -m keel.worker` 统一调度（`factor_library` / news / briefing / backup）；旧 `daemon_web_sync` 已删除
 - **自进化心法引擎**：`scripts/self_improvement_engine.py`（每日 20:00 深度复盘真实流水，提炼 3 大启发式心法沉淀至 `data/AI_TRADING_MEMORY.md`）
 - **全网快讯情报流**：`scripts/news_sentiment_harvester.py`（OKX 最新与重大快讯双路聚合）
 - **Web 监控大屏**：`dashboard/app.py` + `dashboard/templates/index.html`（Bloomberg/Linear 级 Dark Glassmorphism 极客交易终端，支持全局 Prompt 悬浮透视抽屉）
@@ -44,27 +44,27 @@ tar -zxvf r20_system_backup_*.tar.gz
   ```
   在浏览器打开提示的链接并输入设备验证码完成一键授权。
 
-### 步骤 3：一键启动 Web 监控大屏 (端口 8080)
+### 步骤 3：启动 Keel API + Monitor UI (端口 8080)
 ```bash
 cd /app/working/workspaces/default
-nohup /app/venv/bin/python3 -m uvicorn dashboard.app:app --host 0.0.0.0 --port 8080 --app-dir /app/working/workspaces/default > /tmp/dashboard.log 2>&1 &
+# Prefer: deploy/keel-api.service  (+ optional frontend/dist SPA)
+nohup python3 -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080 > /tmp/keel-api.log 2>&1 &
 ```
-验证访问：`http://<你的服务器IP>:8080`
+验证访问：`http://<你的服务器IP>:8080/health` （旧 `dashboard.app` 已删除）
 
-### 步骤 4：启动后台守护与 Cron 定时任务
+### 步骤 4：启动 Keel worker（sole scheduler）
 ```bash
-# 1. 启动 60 秒因子计算与快讯同步守护进程 (后台常驻)
-nohup python3 /app/working/workspaces/default/scripts/daemon_web_sync.py > /tmp/daemon_sync.log 2>&1 &
-
-# 2. 检查并恢复调度任务（15m主循环、20:00每日自进化、早8晚8战报、02:00插件化灾备）
-qwenpaw cron list --agent-id default
+# Prefer systemd: deploy/keel-worker.service
+# Or foreground / nohup:
+nohup python3 -m keel.worker > /tmp/keel-worker.log 2>&1 &
+# Optional one-shot: python3 -m keel.worker --once
 ```
 
 ---
 
 ## 3. 常用维护与测试命令
 
-- **查看 Web 监控状态**：`curl -s http://127.0.0.1:8080/api/all | head -c 100`
+- **查看 Keel 健康 / 监控 API**：`curl -s http://127.0.0.1:8080/health` ；`curl -s http://127.0.0.1:8080/api/v1/overview | head -c 200`
 - **手工执行一次全系统云端备份**：`python3 scripts/nightly_backup_and_clean.py`
 - **手工触发一次 AI 交易大脑推演**：`python3 scripts/ai_brain_trader.py`
 - **强制触发每日 AI 策略自进化复盘**：`python3 scripts/self_improvement_engine.py`
