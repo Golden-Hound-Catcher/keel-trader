@@ -17,7 +17,24 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Phase U1: proxy Keel API (keel.api.app on 8080)
       '/api': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+      },
+      '/ready': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+      },
+      '/docs': {
+        target: 'http://127.0.0.1:8080',
+        changeOrigin: true,
+      },
+      '/openapi.json': {
         target: 'http://127.0.0.1:8080',
         changeOrigin: true,
       },

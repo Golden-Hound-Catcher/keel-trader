@@ -1,3 +1,4 @@
+/** LEGACY: polls /api/all (r20_backend). U1 monitor uses stores/monitor.ts instead. */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { DashboardResponse, InstrumentFactor, PositionItem, PendingOrderItem } from '../types/dashboard'

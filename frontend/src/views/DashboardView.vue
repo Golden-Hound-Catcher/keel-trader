@@ -73,11 +73,11 @@ onUnmounted(() => {
     <!-- Global Cyber Footer -->
     <footer class="border-t border-[#1A2232] bg-[#0A0D14] py-3 text-center text-xs font-mono text-[#707E94]">
       <div class="flex items-center justify-center space-x-2">
-        <span>R20 QUANTUM TRADER v6.2.1</span>
+        <span>LEGACY R20 DASHBOARD (needs r20_backend /api/all)</span>
         <span>•</span>
         <span>VUE 3 + VITE + TAILWIND CSS</span>
         <span>•</span>
-        <a href="https://github.com/555cute/r20-quantum-trader" target="_blank" class="hover:text-blue-400">GitHub</a>
+        <a href="/" class="hover:text-cyan-400">← Keel Monitor (U1)</a>
       </div>
     </footer>
 

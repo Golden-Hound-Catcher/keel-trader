@@ -252,3 +252,19 @@ No mass-delete without inventory check against `LEGACY.md`.
 | Date | Note |
 |------|------|
 | 2026-09-03 | Initial SPEC v1 drafted after stages 2–7 refactor |
+
+---
+
+## Addendum: Phase U1 delivered
+
+Default O1 = **monitor-only**. Vue shell reused for layout/theme; data layer rebound to Keel:
+
+| Monitor data | Endpoint |
+|--------------|----------|
+| connectivity | `GET /health` |
+| status | `GET /api/v1/status` |
+| balance / positions | `GET /api/v1/balance`, `/api/v1/positions` |
+| decisions / trades / events | `GET /api/v1/decisions`, `/trades`, `/events` |
+| factors | `GET /api/v1/factors/{inst_id}` |
+
+Primary UI route: `/` (`MonitorView`). Legacy R20 dashboard at `/legacy`; admin under `/admin/*` (labeled legacy). Vite proxies `/api` + `/health` to `:8080`. See `frontend/README.md`.

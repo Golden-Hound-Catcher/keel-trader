@@ -1,3 +1,9 @@
+/**
+ * Legacy R20 admin API client (X-R20-Session).
+ *
+ * Phase U1 monitor path must use `useKeelApi` instead — do not send
+ * session headers to Keel `/api/v1/*` (no auth in v1 local/demo).
+ */
 import { ref } from 'vue'
 import { useAuthStore } from '../stores/auth'
 
