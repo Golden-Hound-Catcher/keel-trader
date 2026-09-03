@@ -3,11 +3,15 @@ Paper/demo vertical trading cycle for Keel Trader.
 
 Pipeline: factors → decision → risk → execution → ledger.
 
-Default path uses PaperAdapter (no shell OKX CLI, no live exchange).
+Default path uses PaperExchange when OKX keys are absent (no shell CLI).
+When KEEL_OKX_* (or OKX_* aliases) are set, uses OkxRestAdapter (signed V5).
+
 Legacy scripts/ai_factor_trader.py shims into this module when KEEL_USE_LEGACY is unset.
 
 Stage 4: persists factor_snapshots + coherent Decision↔risk↔ledger events so
 keel.api can read the latest cycle from SQLite without hitting live OKX.
+
+Stage 5: optional OkxRestAdapter via keel.exchange.factory.build_exchange.
 """
 from __future__ import annotations
 
@@ -21,8 +25,9 @@ from typing import Any
 
 from keel.config import get_settings
 from keel.domain.instruments import DEFAULT_CRYPTO_INSTRUMENTS, InstrumentPool
-from keel.exchange.paper import PaperAdapter
-from keel.exchange.protocol import Ticker
+from keel.exchange.factory import build_exchange, describe_exchange
+from keel.exchange.paper import PaperAdapter, PaperExchange
+from keel.exchange.protocol import ExchangeProtocol, Ticker
 from keel.execution.orchestrator import ExecutionOrchestrator, ExecutionResult
 from keel.factors.market_data import Candle, MarketSnapshot
 from keel.factors.technical import (
@@ -200,7 +205,7 @@ def decision_from_snapshot(snapshot: MarketSnapshot) -> Decision:
 
 
 def _seed_paper_tickers(
-    exchange: PaperAdapter,
+    exchange: PaperAdapter | PaperExchange,
     snapshots: dict[str, MarketSnapshot],
 ) -> None:
     for inst_id, snap in snapshots.items():
@@ -223,14 +228,19 @@ def _seed_paper_tickers(
 
 def run_paper_cycle(
     *,
-    exchange: PaperAdapter | None = None,
+    exchange: ExchangeProtocol | None = None,
     ledger: KeelLedger | None = None,
     instrument_ids: list[str] | None = None,
     seed_prices: dict[str, float] | None = None,
     force_action: str | None = None,
+    force_paper: bool = False,
 ) -> dict[str, Any]:
     """
-    Run one vertical paper/demo cycle through Keel.
+    Run one vertical trader cycle through Keel.
+
+    Exchange selection (when ``exchange`` is not injected):
+    - OkxRestAdapter if OKX keys are configured (unless force_paper)
+    - PaperExchange otherwise
 
     Returns a JSON-serializable summary for tests and CLI.
     """
@@ -239,7 +249,8 @@ def run_paper_cycle(
     ids = instrument_ids or [i.inst_id for i in pool.all()]
     prices = {**DEFAULT_SEED_PRICES, **(seed_prices or {})}
 
-    exchange = exchange or PaperAdapter(initial_balance=10_000.0)
+    exchange = exchange or build_exchange(settings, force_paper=force_paper)
+    adapter_label = describe_exchange(exchange)
     if ledger is None:
         ledger = KeelLedger(settings.ledger_path)
 
@@ -262,7 +273,9 @@ def run_paper_cycle(
         )
         snapshots[inst_id] = enrich_snapshot(snap)
 
-    _seed_paper_tickers(exchange, snapshots)
+    # Paper needs synthetic tickers; OKX REST serves tickers via public API.
+    if isinstance(exchange, PaperAdapter):
+        _seed_paper_tickers(exchange, snapshots)
 
     orchestrator = ExecutionOrchestrator(exchange=exchange, ledger=ledger)
     daily_pnl = ledger.get_daily_pnl()
@@ -379,14 +392,27 @@ def run_paper_cycle(
             }
         )
 
+    mode = "paper" if isinstance(exchange, PaperAdapter) else "okx_rest"
     ledger.record_event(
-        "paper_cycle_complete",
-        data={"instruments": len(ids), "results": len(results)},
+        "trader_cycle_complete",
+        data={
+            "instruments": len(ids),
+            "results": len(results),
+            "adapter": adapter_label,
+            "mode": mode,
+        },
     )
+    # Keep legacy event name for older API consumers / tests.
+    if mode == "paper":
+        ledger.record_event(
+            "paper_cycle_complete",
+            data={"instruments": len(ids), "results": len(results)},
+        )
 
     return {
         "ok": True,
-        "mode": "paper",
+        "mode": mode,
+        "adapter": adapter_label,
         "branding": "Keel Trader",
         "instruments": len(ids),
         "daily_pnl": daily_pnl,
@@ -397,7 +423,7 @@ def run_paper_cycle(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Keel Trader paper/demo vertical cycle")
+    parser = argparse.ArgumentParser(description="Keel Trader vertical cycle (paper or OKX REST)")
     parser.add_argument(
         "--force-action",
         default=os.environ.get("KEEL_FORCE_ACTION", ""),
@@ -415,7 +441,9 @@ def main(argv: list[str] | None = None) -> int:
     summary = run_paper_cycle(ledger=ledger, force_action=force)
     actions = [r["action"] for r in summary["results"]]
     print(
-        f"[Keel Trader] paper cycle ok instruments={summary['instruments']} "
+        f"[Keel Trader] cycle ok mode={summary.get('mode')} "
+        f"adapter={summary.get('adapter')} "
+        f"instruments={summary['instruments']} "
         f"positions={summary['positions']} actions={actions}"
     )
     return 0

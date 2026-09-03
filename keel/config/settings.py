@@ -8,6 +8,7 @@ This consolidates the credential sprawl from:
 - llm_models.json keys
 
 Strategy: environment variables for secrets, non-secret flags in config.
+Single settings path for OKX demo/live + LLM (Stage 5). Prefer KEEL_* names.
 """
 from __future__ import annotations
 
@@ -65,6 +66,13 @@ class Settings:
         return bool(self.llm_api_key)
 
     @property
+    def exchange_mode(self) -> str:
+        """Worker adapter selection: okx_rest when keys exist, else paper."""
+        if self.okx_configured:
+            return f"okx_rest:{self.okx_environment}"
+        return "paper"
+
+    @property
     def ledger_path(self) -> Path:
         if self.ledger_db:
             return Path(self.ledger_db)
@@ -109,21 +117,21 @@ def get_settings() -> Settings:
     if okx_env not in ("demo", "live"):
         okx_env = "demo"
 
-    # Support both R20 legacy names and simpler KEEL_ prefixed names
+    # Prefer KEEL_* then env-specific OKX_* then legacy single-key names.
     okx_api_key = (
-        _env(f"OKX_{okx_env.upper()}_API_KEY")
+        _env("KEEL_OKX_API_KEY")
+        or _env(f"OKX_{okx_env.upper()}_API_KEY")
         or _env("OKX_API_KEY")
-        or _env("KEEL_OKX_API_KEY")
     )
     okx_secret = (
-        _env(f"OKX_{okx_env.upper()}_SECRET_KEY")
+        _env("KEEL_OKX_SECRET_KEY")
+        or _env(f"OKX_{okx_env.upper()}_SECRET_KEY")
         or _env("OKX_SECRET_KEY")
-        or _env("KEEL_OKX_SECRET_KEY")
     )
     okx_pass = (
-        _env(f"OKX_{okx_env.upper()}_PASSPHRASE")
+        _env("KEEL_OKX_PASSPHRASE")
+        or _env(f"OKX_{okx_env.upper()}_PASSPHRASE")
         or _env("OKX_PASSPHRASE")
-        or _env("KEEL_OKX_PASSPHRASE")
     )
 
     return Settings(
@@ -131,10 +139,10 @@ def get_settings() -> Settings:
         okx_api_key=okx_api_key,
         okx_secret_key=okx_secret,
         okx_passphrase=okx_pass,
-        llm_base_url=_env("LLM_BASE_URL", "https://api.openai.com/v1"),
-        llm_api_key=_env("LLM_API_KEY") or _env("OPENAI_API_KEY"),
-        llm_model=_env("LLM_MODEL", "gpt-4o"),
-        llm_reasoning_effort=_env("LLM_REASONING_EFFORT", "high"),
+        llm_base_url=_env("KEEL_LLM_BASE_URL") or _env("LLM_BASE_URL", "https://api.openai.com/v1"),
+        llm_api_key=_env("KEEL_LLM_API_KEY") or _env("LLM_API_KEY") or _env("OPENAI_API_KEY"),
+        llm_model=_env("KEEL_LLM_MODEL") or _env("LLM_MODEL", "gpt-4o"),
+        llm_reasoning_effort=_env("KEEL_LLM_REASONING_EFFORT") or _env("LLM_REASONING_EFFORT", "high"),
         api_host=_env("KEEL_API_HOST", "0.0.0.0"),
         api_port=_env_int("KEEL_API_PORT", 8080),
         ledger_db=_env("KEEL_LEDGER_DB", ""),
