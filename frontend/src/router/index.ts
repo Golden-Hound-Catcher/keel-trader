@@ -4,14 +4,25 @@ import { useAuthStore } from '../stores/auth'
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    name: 'dashboard',
+    name: 'monitor',
+    component: () => import('../views/MonitorView.vue'),
+    meta: { isPublic: true, keelMonitor: true },
+  },
+  {
+    path: '/monitor',
+    redirect: '/',
+  },
+  {
+    // Legacy R20 5-tab dashboard — still calls /api/all (needs r20_backend). Not U1 path.
+    path: '/legacy',
+    name: 'legacy-dashboard',
     component: () => import('../views/DashboardView.vue'),
-    meta: { isPublic: true },
+    meta: { isPublic: true, legacy: true },
   },
   {
     path: '/admin',
     component: () => import('../views/AdminLayout.vue'),
-    meta: { requiresAuth: true, isPublic: false },
+    meta: { requiresAuth: true, isPublic: false, legacy: true },
     children: [
       { path: '', redirect: '/admin/overview' },
       { path: 'overview', name: 'admin-overview', component: () => import('../views/admin/OverviewPage.vue') },
@@ -34,7 +45,7 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/login',
     name: 'admin-login',
     component: () => import('../views/admin/LoginPage.vue'),
-    meta: { isPublic: true },
+    meta: { isPublic: true, legacy: true },
   },
 ]
 
@@ -49,13 +60,11 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
-    // Try restore session from localStorage
     auth.restoreSession()
     if (!auth.isAuthenticated) {
       return { name: 'admin-login' }
     }
   }
-  // Redirect logged-in users away from login page
   if (to.name === 'admin-login' && auth.isAuthenticated) {
     return { name: 'admin-overview' }
   }

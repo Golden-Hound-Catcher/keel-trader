@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// Root component — delegates to router-view
-// Dashboard route renders DashboardView.vue (the 5-tab trading terminal)
-// /admin/* routes render AdminLayout.vue (the unified control panel)
+// Root — router-view
+// `/` → MonitorView (Keel U1 read-only)
+// `/legacy` → DashboardView (R20 shell; needs r20_backend)
+// `/admin/*` → AdminLayout (legacy control panel)
 </script>
 
 <template>

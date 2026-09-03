@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// LEGACY R20 ADMIN — needs r20_backend; not Phase U1 Keel monitor
+
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'

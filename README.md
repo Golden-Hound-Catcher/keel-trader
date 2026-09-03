@@ -76,7 +76,12 @@ python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080
 - 健康检查: `http://localhost:8080/health`
 - API 文档: `http://localhost:8080/docs`
 
-### 4. 测试
+### 5. Phase U1 监控 UI（可选）
+
+只读 Vue monitor：见 frontend/README.md。Vite 开发服务器代理 /api 与 /health 到 8080。路由 / 为 Keel monitor；/legacy 与 /admin 为 R20 遗留。
+
+
+### 6. 测试
 
 ```bash
 make test
