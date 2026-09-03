@@ -1,5 +1,5 @@
 [Unit]
-Description=Keel Trader Sole Scheduler Worker
+Description=Keel Trader Sole Scheduler Worker (Stage 3 primary)
 After=network-online.target
 Wants=network-online.target
 # Ensure legacy dual schedulers stay off

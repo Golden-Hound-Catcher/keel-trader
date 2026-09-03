@@ -1922,7 +1922,8 @@ def execute_portfolio():
     print(log_entry.strip())
 
 if __name__ == "__main__":
-    # Stage 2 shim: default path delegates into Keel factors→decision→risk→execution→ledger.
+    # Stage 3 shim: default path delegates into Keel factors→decision→risk→execution→ledger.
+    # Prefer: python -m keel.worker --once  (or python -m keel.worker for the sole scheduler).
     # Set KEEL_USE_LEGACY=1 to force the historical OKX-CLI portfolio loop.
     import os as _os
     if _os.environ.get("KEEL_USE_LEGACY", "").strip() == "1":

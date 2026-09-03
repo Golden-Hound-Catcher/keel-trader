@@ -198,7 +198,7 @@ KEEL_MAX_ASSET_MARGIN=600
 2. **阶段 2**: 旧脚本通过 shim 调用 Keel 模块
 3. **阶段 3**: 移除旧代码，只保留 Keel
 
-当前状态: **阶段 2** - 旧 trader 脚本 shim 到 Keel；单一 Keel 调度器；paper/demo 垂直链路可用
+当前状态: **阶段 3** - Keel-only 运行时（`keel.api.app` + `keel.worker`）；`r20_*` 标为 legacy/deprecated；paper/demo 垂直链路可用
 
 ## 测试
 
@@ -210,10 +210,10 @@ python -m pytest tests/test_keel_*.py -v
 python -m pytest tests/ -v
 ```
 
-## 入口点
+## 入口点（Stage 3 唯一推荐）
 
 ```bash
-# 启动 API (只读控制面)
+# 启动 API (只读控制面) — 主入口 keel.api.app
 python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080
 
 # 启动唯一 Worker / 调度器
@@ -221,7 +221,13 @@ python -m keel.worker
 
 # 单次 paper/demo 循环
 python -m keel.worker --once
+
+# 测试
+make test
 ```
+
+`r20_backend.app` / dashboard 仅为 **legacy 只读 UI**，勿作为新部署默认 API。
+`r20_backend.scheduler` 与 `r20-scheduler.service` 已禁用。
 
 ## 免责声明
 

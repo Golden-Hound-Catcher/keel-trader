@@ -1,3 +1,5 @@
+> **Stage 3 note:** Prefer recovering with `python -m keel.worker` and `uvicorn keel.api.app:app`. Paths below that start `dashboard.app` / `r20-*` are **legacy**.
+
 # R20 AI 自进化量化交易系统 — 完整部署与灾备恢复手册 (QwenPaw)
 
 > 本文档用于在任何全新环境（新云服务器 / 重新安装的 QwenPaw）中，100% 快速恢复本套基于 Gemini 3.7 Flash High（Reasoning High）深度思考的大模型全权决策自进化量化交易系统。

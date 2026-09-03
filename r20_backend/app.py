@@ -1,4 +1,9 @@
-"""Standalone control plane: read-only monitoring plus process health."""
+"""LEGACY control plane (Stage 3 deprecated).
+
+Prefer ``uvicorn keel.api.app:app`` as the primary API entry.
+This module remains for admin routes and the legacy read-only dashboard UI mount.
+It does NOT spawn a second scheduler.
+"""
 from __future__ import annotations
 import copy
 import hashlib
@@ -98,7 +103,7 @@ async def lifespan(_: FastAPI):
     # DISABLED Stage 2: stop_gateway_supervisor()
 
 
-app = FastAPI(title="Keel Trader Control Plane (legacy backend)", version="6.2.1", lifespan=lifespan)
+app = FastAPI(title="Keel Trader LEGACY Control Plane (prefer keel.api.app)", version="6.2.1", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -1894,7 +1899,8 @@ def positions(x_r20_admin_token: str | None = Header(default=None)) -> dict[str,
         raise HTTPException(status_code=502, detail=f"OKX account request failed: {exc}") from exc
 
 
-# Preserve the existing public dashboard and its relative-path API contract at /.
+# LEGACY read-only UI only (Stage 3): public dashboard + relative-path API at /.
+# Prefer keel.api.app for new deployments. Do not treat this mount as the primary API.
 # Admin and /api/v1 routes above are evaluated before this catch-all mount.
 from dashboard.app import app as dashboard_app
 app.mount("/", dashboard_app)
