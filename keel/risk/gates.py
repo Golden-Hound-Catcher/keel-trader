@@ -18,13 +18,16 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from keel.config import get_settings
+from keel.domain.decision import Decision
+
+GateAction = Literal["open_long", "open_short", "scale_in", "close"]
 
 
 @dataclass(frozen=True)
 class GateContext:
     """Context for risk gate evaluation."""
     inst_id: str
-    action: Literal["open_long", "open_short", "scale_in", "close"]
+    action: GateAction
     size: float
     margin_required: float
     current_positions: int
@@ -233,6 +236,23 @@ class MinRiskRewardGate(RiskGate):
 
     def check(self, ctx: GateContext) -> GateResult:
         return GateResult(passed=True, gate_name=self.name)
+
+
+def gate_action_for_decision(
+    decision: Decision,
+    *,
+    same_side_position: bool,
+) -> GateAction:
+    """
+    Map a domain ``Decision`` to the risk-gate action vocabulary.
+
+    ``WAIT`` is not a gate action — callers must short-circuit before gates.
+    """
+    if decision.action == "BUY_LONG":
+        return "scale_in" if same_side_position else "open_long"
+    if decision.action == "SELL_SHORT":
+        return "scale_in" if same_side_position else "open_short"
+    raise ValueError(f"no gate action for decision action={decision.action!r}")
 
 
 def get_default_gates() -> list[RiskGate]:

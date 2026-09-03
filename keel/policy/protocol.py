@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from keel.factors.market_data import MarketSnapshot
-from keel.llm.client import Decision
+from keel.domain.decision import Decision
 
 
 @dataclass
@@ -44,7 +44,7 @@ class DecisionPolicy(Protocol):
     Worker cycle calls ``decide`` once per tick with market snapshots.
     Implementations must return one Decision per requested instrument id
     (WAIT is fine). Geometry / RR validation should use
-    ``keel.llm.client.validate_decision``.
+    ``keel.domain.decision.validate_decision``.
     """
 
     @property

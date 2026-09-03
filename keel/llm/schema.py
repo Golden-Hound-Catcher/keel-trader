@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from keel.llm.client import DECISION_SCHEMA, Decision
+from keel.domain.decision import Decision
+from keel.llm.client import DECISION_SCHEMA
 
 
 def validate_decision_payload(

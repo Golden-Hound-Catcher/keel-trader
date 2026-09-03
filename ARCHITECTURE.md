@@ -244,7 +244,7 @@ python -m pytest tests/ -v
 
 ## Stage 4（执行路径硬化）
 
-- Decision 几何 / RR 校验统一为 `keel.llm.client.validate_decision`
+- Decision 几何 / RR 校验统一为 `keel.domain.decision.validate_decision`（`keel.llm.client` 再导出兼容）
 - `ExecutionOrchestrator`：fill → trade；paper resting / risk / invalid → ledger events
 - Worker cycle 写入 `factor_snapshots`；`keel.api` 默认从 SQLite 读 decisions/trades/events/factors
 - 公共行情助手：`keel.exchange.okx_public`（无 shell CLI）
@@ -315,3 +315,9 @@ MIT
 - **API**: `/health`, `/ready`, and `/api/v1/{status,config,positions,balance,decisions,trades,events,factors}` return Pydantic models in `keel.api.schemas` so OpenAPI matches runtime JSON.
 - **Domain**: `Decision` (+ `validate_decision`), `TradeRecord`, `DecisionRecord`, `FactorSnapshot`, and `LedgerEvent` live under `keel.domain` and are reused by ledger / API / worker / execution. `keel.llm.client` re-exports `Decision` for compatibility.
 - **Factors**: unique pure math from `scripts/calculus_engine.py` ported to `keel.factors.kinematics` with honest names (`calculate_price_kinematics`, path integrals, return statistics). The scripts module is a thin deprecated shim.
+
+## Elegance pass: unify Decision on the execution chain
+
+- **Single source**: `keel.domain.decision.Decision` + `validate_decision` (plus `DecisionAction`) is the in-memory decision type for policy → risk → execution → worker cycle.
+- **Imports**: `keel.policy`, `keel.risk` (`gate_action_for_decision`), `keel.execution.orchestrator`, and `keel.worker.cycle` import from `keel.domain.decision`. `keel.llm.client` may re-export for compatibility; JSON payload checks stay in `keel.llm.schema`.
+- **Types**: orchestrator `ExecutionResult.action` and cycle `force_action` use `DecisionAction`; risk maps Decision → `GateAction` via `gate_action_for_decision`.

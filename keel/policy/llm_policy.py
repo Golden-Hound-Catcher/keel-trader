@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from keel.domain.decision import Decision
 from keel.llm.client import LLMClient
 from keel.llm.prompts.compose import PromptComposer, format_market_block
 from keel.policy.protocol import PolicyContext, PolicyResult
@@ -56,8 +57,6 @@ class LLMDecisionPolicy:
         }
 
         if not assembled.ok:
-            from keel.llm.client import Decision
-
             return PolicyResult(
                 decisions={
                     i: Decision(
@@ -84,8 +83,6 @@ class LLMDecisionPolicy:
         prompt_meta["model"] = response.model
 
         if not response.success:
-            from keel.llm.client import Decision
-
             return PolicyResult(
                 decisions={
                     i: Decision(
@@ -105,8 +102,6 @@ class LLMDecisionPolicy:
             )
 
         # Ensure every requested id has a decision
-        from keel.llm.client import Decision
-
         decisions = dict(response.decisions)
         for inst_id in ctx.instrument_ids:
             if inst_id not in decisions:

@@ -2,6 +2,8 @@
 from keel.risk.gates import (
     RiskGate,
     check_all_gates,
+    gate_action_for_decision,
+    GateAction,
     MaxPositionsGate,
     DailyLossGate,
     MaxMarginGate,
@@ -12,6 +14,8 @@ from keel.risk.gates import (
 __all__ = [
     "RiskGate",
     "check_all_gates",
+    "gate_action_for_decision",
+    "GateAction",
     "MaxPositionsGate",
     "DailyLossGate",
     "MaxMarginGate",

@@ -9,13 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+DecisionAction = Literal["BUY_LONG", "SELL_SHORT", "WAIT"]
+
 
 @dataclass
 class Decision:
     """Parsed / constructed trading decision."""
 
     inst_id: str
-    action: Literal["BUY_LONG", "SELL_SHORT", "WAIT"]
+    action: DecisionAction
     confidence: float = 0.0
     entry_price: float | None = None
     take_profit: float | None = None

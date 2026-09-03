@@ -43,7 +43,7 @@ from keel.factors.technical import (
     classify_trend,
 )
 from keel.ledger import DecisionRecord, FactorSnapshot, KeelLedger
-from keel.llm.client import Decision, validate_decision
+from keel.domain.decision import Decision, DecisionAction, validate_decision
 from keel.policy import (
     DecisionPolicy,
     PolicyContext,
@@ -185,7 +185,7 @@ def run_paper_cycle(
     ledger: KeelLedger | None = None,
     instrument_ids: list[str] | None = None,
     seed_prices: dict[str, float] | None = None,
-    force_action: str | None = None,
+    force_action: DecisionAction | str | None = None,
     force_paper: bool = False,
     policy: DecisionPolicy | None = None,
 ) -> dict[str, Any]:

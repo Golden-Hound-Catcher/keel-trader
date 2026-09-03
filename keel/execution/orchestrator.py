@@ -12,20 +12,19 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Literal
 
 from keel.exchange.paper import PaperAdapter
 from keel.exchange.protocol import ExchangeProtocol, OrderRequest, OrderResult
-from keel.risk.gates import GateContext, check_all_gates, RiskGate
+from keel.risk.gates import GateContext, check_all_gates, gate_action_for_decision, RiskGate
 from keel.ledger import KeelLedger, TradeRecord
-from keel.llm.client import Decision, validate_decision
+from keel.domain.decision import Decision, DecisionAction, validate_decision
 
 
 @dataclass
 class ExecutionResult:
     """Result of executing a decision."""
     inst_id: str
-    action: str
+    action: DecisionAction | str
     success: bool
     order_id: str | None = None
     error: str | None = None
@@ -122,17 +121,14 @@ class ExecutionOrchestrator:
         short_count = sum(1 for p in positions if p.side == "short")
         existing_margin = current_position.margin if current_position else 0.0
 
-        action_type: Literal["open_long", "open_short", "scale_in", "close"]
-        if decision.action == "BUY_LONG":
-            if current_position and current_position.side == "long":
-                action_type = "scale_in"
-            else:
-                action_type = "open_long"
-        else:
-            if current_position and current_position.side == "short":
-                action_type = "scale_in"
-            else:
-                action_type = "open_short"
+        same_side = bool(
+            current_position
+            and (
+                (decision.action == "BUY_LONG" and current_position.side == "long")
+                or (decision.action == "SELL_SHORT" and current_position.side == "short")
+            )
+        )
+        action_type = gate_action_for_decision(decision, same_side_position=same_side)
 
         ctx = GateContext(
             inst_id=decision.inst_id,
