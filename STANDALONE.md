@@ -80,7 +80,7 @@ Without `KEEL_ALLOW_LEGACY_BACKEND=1`, importing/serving `r20_backend.app` exits
 | `r20_backend.app` / `deploy/r20-quantum.service` | legacy; gated + soft-blocked |
 | `r20_backend.scheduler` / `deploy/r20-scheduler.service` | disabled (exits / cannot start) |
 | Backend lifespan gateway auto-spawn | removed |
-| Gateway `GatewayScheduler.tick` | off unless `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` |
+| Gateway `GatewayScheduler.tick` | hard no-op unless `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` (worker notify-only) |
 
 ## systemd
 

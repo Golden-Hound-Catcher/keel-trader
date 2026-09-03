@@ -184,5 +184,35 @@ class TestAdminApiRemoved(unittest.TestCase):
 
 
 
+
+class TestDeletedLegacyScripts(unittest.TestCase):
+    def test_dashboard_era_scripts_removed(self):
+        gone = [
+            "sync_web_data.py",
+            "daemon_web_sync.py",
+            "generate_snapshots.py",
+            "debug_aggregate_orders.py",
+            "debug_audit_bills.py",
+            "remove_retired_personal_wechat.py",
+            "cleanup_disk.py",
+            "calculus_replay.py",
+        ]
+        for name in gone:
+            self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)
+
+    def test_trader_shims_remain(self):
+        self.assertTrue((ROOT / "scripts" / "ai_factor_trader.py").exists())
+        self.assertTrue((ROOT / "scripts" / "ai_brain_trader.py").exists())
+
+    def test_gateway_scheduler_tick_gated(self):
+        from r20_gateway.scheduler import legacy_gateway_jobs_enabled
+
+        with patch.dict(os.environ, {"KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER": ""}, clear=False):
+            os.environ.pop("KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER", None)
+            self.assertFalse(legacy_gateway_jobs_enabled())
+        with patch.dict(os.environ, {"KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER": "1"}):
+            self.assertTrue(legacy_gateway_jobs_enabled())
+
+
 if __name__ == "__main__":
     unittest.main()

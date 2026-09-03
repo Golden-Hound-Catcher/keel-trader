@@ -1,9 +1,18 @@
-"""DEPRECATED Stage 2: Legacy gateway job scheduler.\n\nJob scheduling is owned exclusively by keel.worker. This module remains for\nunit tests and emergency rollback (KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1).\nr20_gateway.worker no longer ticks jobs by default.\n"""
+"""DEPRECATED: Legacy gateway job scheduler (quarantined).
+
+Job scheduling is owned exclusively by ``keel.worker``. This module keeps
+``JobSpec`` / ``due()`` helpers for unit tests and emergency rollback.
+
+``GatewayScheduler.tick()`` **never** launches subprocess jobs unless
+``KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1`` (defense-in-depth; worker is also
+notify-only by default). See LEGACY.md.
+"""
 from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import os
 import subprocess
 import sys
 from typing import Any
@@ -15,6 +24,11 @@ from r20_gateway.store import GatewayStore
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 BJ_TZ = timezone(timedelta(hours=8))
+
+
+def legacy_gateway_jobs_enabled() -> bool:
+    """True only when emergency gateway job ticks are explicitly opted in."""
+    return os.environ.get("KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER", "").strip() == "1"
 
 
 @dataclass(frozen=True)
@@ -116,6 +130,8 @@ class GatewayScheduler:
         return not last or last.date() != now.date() or last.strftime("%H:%M") != minute
 
     def _execute(self, spec: JobSpec) -> None:
+        if not legacy_gateway_jobs_enabled():
+            return
         run_id = self.store.begin_job(spec.name)
         try:
             command = [sys.executable, str(SCRIPTS / spec.script)]
@@ -136,6 +152,12 @@ class GatewayScheduler:
             self.store.finish_job(run_id, 1, f"{type(exc).__name__}: {exc}")
 
     def tick(self, now: datetime | None = None) -> list[str]:
+        """Launch due jobs only when ``KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1``.
+
+        Without the flag this is a no-op (returns ``[]``) even if jobs are due.
+        """
+        if not legacy_gateway_jobs_enabled():
+            return []
         now = now or datetime.now(BJ_TZ)
         self.running = {name: future for name, future in self.running.items() if not future.done()}
         schedule = load_schedule()
