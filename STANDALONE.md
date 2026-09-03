@@ -1,4 +1,4 @@
-# Keel Trader Standalone Deployment (Stage 3)
+# Keel Trader Standalone Deployment (Stage 3 topology / Stage 7 quarantine)
 
 **Run only two processes in normal operation:**
 
@@ -7,7 +7,8 @@
 | **keel-api** | `uvicorn keel.api.app:app` / `deploy/keel-api.service` | Primary read-only API control plane |
 | **keel-worker** | `python -m keel.worker` / `deploy/keel-worker.service` | **Sole** job scheduler + paper/demo cycle |
 
-Everything under `r20_*` is **legacy / deprecated**.
+Everything under `r20_*` is **legacy / deprecated**. Inventory: [`LEGACY.md`](LEGACY.md).
+New installs enable **only** `keel-api` + `keel-worker`. `r20-quantum` / `r20-gateway` units require opt-in marker files under `data/`.
 
 ## Components
 

@@ -227,7 +227,7 @@ KEEL_MAX_ASSET_MARGIN=600
 2. **阶段 2**: 旧脚本通过 shim 调用 Keel 模块
 3. **阶段 3**: 移除旧代码，只保留 Keel
 
-当前状态: **阶段 6** - 可替换 `DecisionPolicy` + 模块化提示词；默认 Rule（离线）；LLM 为可选适配器；`r20_*` 保持 legacy
+当前状态: **阶段 7** - legacy `r20_*` 隔离（警告 + 默认禁用 unit）；阶段 6 DecisionPolicy 仍为决策默认路径
 
 ## 测试
 
@@ -263,6 +263,15 @@ python -m pytest tests/ -v
 - Worker cycle 经 `build_decision_policy()` 注入策略；离线测试默认 Rule/Stub，不强制 LLM
 - `keel.llm.schema.validate_decision_payload`：决策 JSON 结构校验（与 `DECISION_SCHEMA` 对齐）
 - **不做** Vue Prompt Studio UI / QQ / council（R20 Prompt Studio 的有价值部分已收敛为上述端口）
+
+
+## Stage 7（legacy 隔离 / quarantine）
+
+- 不批量删除 `r20_*`；`r20_backend.app` 仍挂载 legacy dashboard（docstring 弃用横幅）
+- `keel.legacy.warn_legacy`：无 `KEEL_USE_LEGACY=1` 时对主要 legacy 包/脚本发出弃用警告
+- `r20_backend.scheduler` 仍硬退出；`r20_gateway.worker` 默认无 trader job tick（验证保留）
+- `deploy/r20-*.service`：仅 `keel-api` + `keel-worker` 为推荐启用示例；r20 units 默认 `ConditionPathExists` 关闭
+- 清单见根目录 [`LEGACY.md`](LEGACY.md)
 
 ## 入口点（Stage 3 唯一推荐）
 

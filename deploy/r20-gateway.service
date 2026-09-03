@@ -1,8 +1,19 @@
+# DISABLED BY DEFAULT (Stage 7 quarantine) — do not enable for new installs.
+# Preferred units: deploy/keel-api.service + deploy/keel-worker.service
+#
+# This unit is optional LEGACY notification delivery only (no job scheduler).
+# To intentionally re-enable on a host that still needs QQ/Telegram delivery:
+#   sudo touch /opt/r20-quantum-trader/data/.enable_legacy_r20_gateway
+#   sudo systemctl enable --now r20-gateway.service
+# Prefer KEEL_USE_LEGACY=1 awareness; never enable GatewayScheduler ticks
+# unless KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1 (emergency rollback only).
+
 [Unit]
-Description=LEGACY Keel notification delivery worker (deprecated optional; no job scheduler)
+Description=DISABLED-by-default LEGACY Keel notification delivery (deprecated)
 After=network-online.target
 Wants=network-online.target
 # Job scheduling is owned exclusively by keel-worker.service
+ConditionPathExists=/opt/r20-quantum-trader/data/.enable_legacy_r20_gateway
 
 [Service]
 Type=simple

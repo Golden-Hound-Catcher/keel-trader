@@ -1918,6 +1918,13 @@ def execute_portfolio():
     print(log_entry.strip())
 
 if __name__ == "__main__":
+    from keel.legacy import warn_legacy as _warn_legacy
+    _warn_legacy(
+        "scripts/ai_factor_trader.py",
+        prefer="python -m keel.worker --once / python -m keel.worker",
+        stacklevel=2,
+        loud=True,
+    )
     # Stage 3 shim: default path delegates into Keel factors→decision→risk→execution→ledger.
     # Prefer: python -m keel.worker --once  (or python -m keel.worker for the sole scheduler).
     # Set KEEL_USE_LEGACY=1 to force the historical OKX-CLI portfolio loop.

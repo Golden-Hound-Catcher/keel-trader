@@ -1077,6 +1077,13 @@ def get_latest_ai_decision(inst_id: str, max_age_seconds: int = DECISION_MAX_AGE
     return None
 
 if __name__ == "__main__":
+    from keel.legacy import warn_legacy
+    warn_legacy(
+        "scripts/ai_brain_trader.py",
+        prefer="python -m keel.worker --once  (or KEEL_BRAIN_SHIM=1)",
+        stacklevel=2,
+        loud=True,
+    )
     # Stage 3: optional Keel paper cycle when KEEL_BRAIN_SHIM=1 (no LLM / no CLI).
     # Prefer: python -m keel.worker --once. Default keeps legacy brain for admin preview.
     import os as _os
