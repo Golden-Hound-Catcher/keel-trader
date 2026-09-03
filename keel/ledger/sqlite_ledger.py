@@ -14,66 +14,20 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Iterator
 
-BJ_TZ = timezone(timedelta(hours=8))
+from keel.domain.records import (
+    BJ_TZ,
+    DecisionRecord,
+    FactorSnapshot,
+    LedgerEvent,
+    TradeRecord,
+)
 
-
-@dataclass
-class TradeRecord:
-    """Immutable trade record for the ledger."""
-    id: int | None = None
-    timestamp: float = 0.0
-    inst_id: str = ""
-    action: Literal["open", "close", "scale_in"] = "open"
-    direction: Literal["long", "short"] = "long"
-    size: float = 0.0
-    price: float = 0.0
-    pnl: float | None = None
-    fee: float = 0.0
-    strategy_tag: str = ""
-    reason: str = ""
-    metadata: dict[str, Any] | None = None
-
-    @property
-    def time_str(self) -> str:
-        return datetime.fromtimestamp(self.timestamp, tz=BJ_TZ).strftime("%Y-%m-%d %H:%M:%S")
-
-
-@dataclass
-class DecisionRecord:
-    """AI decision record for audit trail."""
-    id: int | None = None
-    timestamp: float = 0.0
-    inst_id: str = ""
-    action: str = "WAIT"
-    confidence: float = 0.0
-    entry_price: float | None = None
-    take_profit: float | None = None
-    stop_loss: float | None = None
-    reason: str = ""
-    calculus_data: dict[str, Any] | None = None
-    raw_response: str | None = None
-
-
-@dataclass
-class FactorSnapshot:
-    """Technical factor snapshot persisted after each cycle."""
-    id: int | None = None
-    timestamp: float = 0.0
-    inst_id: str = ""
-    price: float = 0.0
-    rsi_14: float = 0.0
-    ema_9: float = 0.0
-    ema_21: float = 0.0
-    atr_14: float = 0.0
-    macd_histogram: float = 0.0
-    trend_15m: str = "neutral"
-    volume_ratio: float = 1.0
-    payload: dict[str, Any] | None = None
+# Re-export for ``from keel.ledger.sqlite_ledger import TradeRecord`` callers
+__all__ = ["KeelLedger", "TradeRecord", "DecisionRecord", "FactorSnapshot", "LedgerEvent"]
 
 
 class KeelLedger:
@@ -425,7 +379,7 @@ class KeelLedger:
         event_type: str | None = None,
         inst_id: str | None = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[LedgerEvent]:
         """Query ledger events (risk blocks, cycle completes, resting orders)."""
         conn = self._get_conn()
         query = "SELECT * FROM events WHERE 1=1"
@@ -439,18 +393,16 @@ class KeelLedger:
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
         rows = conn.execute(query, params).fetchall()
-        out: list[dict[str, Any]] = []
-        for row in rows:
-            out.append(
-                {
-                    "id": row["id"],
-                    "timestamp": row["timestamp"],
-                    "event_type": row["event_type"],
-                    "inst_id": row["inst_id"],
-                    "data": json.loads(row["data"]) if row["data"] else None,
-                }
+        return [
+            LedgerEvent(
+                id=row["id"],
+                timestamp=row["timestamp"],
+                event_type=row["event_type"],
+                inst_id=row["inst_id"],
+                data=json.loads(row["data"]) if row["data"] else None,
             )
-        return out
+            for row in rows
+        ]
 
     def _row_to_factor(self, row: sqlite3.Row) -> FactorSnapshot:
         return FactorSnapshot(
