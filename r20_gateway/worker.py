@@ -31,10 +31,12 @@ def stop(*_: object) -> None:
 
 
 def format_message(row: dict[str, object]) -> str:
-    return f"【R20 Quantum Trader】{row['created_at']}\n{row['title']}\n{str(row['message']).strip()}"
+    return f"【Keel Trader】{row['created_at']}\n{row['title']}\n{str(row['message']).strip()}"
 
 
 def run() -> None:
+    """Notification delivery only. Job scheduling owned by keel.worker (Stage 2)."""
+    import os
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     lock_handle = LOCK_FILE.open("w", encoding="utf-8")
     try:
@@ -46,13 +48,21 @@ def run() -> None:
     signal.signal(signal.SIGINT, stop)
     store = GatewayStore(DB_PATH)
     store.recover_processing()
-    scheduler = GatewayScheduler(store)
-    scheduler.initialize_migration_baseline()
-    log("gateway worker started with scheduler ownership")
+    # Stage 2: GatewayScheduler job ticks are disabled to prevent double-firing trader.
+    # Set KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1 only for emergency rollback.
+    enable_legacy = os.environ.get("KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER", "").strip() == "1"
+    scheduler = None
+    if enable_legacy:
+        scheduler = GatewayScheduler(store)
+        scheduler.initialize_migration_baseline()
+        log("WARNING: legacy GatewayScheduler ENABLED (KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1)")
+    else:
+        log("gateway worker started as notification delivery only (Keel owns scheduling)")
     while RUNNING:
-        launched = scheduler.tick()
-        for job_name in launched:
-            log(f"scheduled job={job_name}")
+        if scheduler is not None:
+            launched = scheduler.tick()
+            for job_name in launched:
+                log(f"scheduled job={job_name}")
         deliveries = store.claim_due(20)
         if not deliveries:
             time.sleep(1)
@@ -69,7 +79,8 @@ def run() -> None:
             except Exception as exc:
                 store.fail(int(delivery["id"]), int(delivery["attempts"]), str(exc))
                 log(f"delivery exception event={delivery['event_id']} channel={delivery['channel']} type={type(exc).__name__}")
-    scheduler.shutdown()
+    if scheduler is not None:
+        scheduler.shutdown()
     log("gateway worker stopped")
 
 

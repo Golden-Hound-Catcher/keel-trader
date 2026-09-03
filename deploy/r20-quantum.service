@@ -1,5 +1,5 @@
 [Unit]
-Description=R20 Quantum Trader Standalone Backend
+Description=Keel Trader / legacy control-plane backend (no scheduler spawn)
 After=network-online.target
 Wants=network-online.target
 
