@@ -20,82 +20,88 @@
 
 ---
 
-## 🚀 快速开始
+## 🚀 快速开始（Keel-only）
 
-### 1. 克隆仓库
+生产 / 本地开发只需两个进程：
+
+| 进程 | 命令 | 作用 |
+|------|------|------|
+| **keel-api** | `uvicorn keel.api.app:app` | 只读控制面（推荐 API 入口） |
+| **keel-worker** | `python -m keel.worker` | **唯一**调度器 + paper/demo 交易循环 |
+
+`r20_backend` / `r20_gateway` / `r20-*.service` 均为 **legacy / deprecated**，勿作为新部署默认路径。
+
+### 1. 克隆与安装
 
 ```bash
 git clone https://github.com/Golden-Hound-Catcher/keel-trader.git
 cd keel-trader
-```
-
-### 2. 安装依赖
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 3. 配置环境变量
-
-```bash
 cp env.example .env
 chmod 600 .env
 ```
 
-编辑 `.env` 文件:
+### 2. 配置（摘要）
 
 ```bash
-# OKX 环境 (demo 模拟盘 / live 实盘)
+# OKX 环境 (demo 模拟盘 / live 实盘) — 默认 demo
 R20_OKX_ENV=demo
 
-# OKX 凭证 (模拟盘)
 OKX_DEMO_API_KEY=your_api_key
 OKX_DEMO_SECRET_KEY=your_secret_key
 OKX_DEMO_PASSPHRASE=your_passphrase
 
-# LLM 配置 (OpenAI 兼容接口)
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_API_KEY=your_llm_api_key
 LLM_MODEL=gpt-4o
 ```
 
-### 4. 启动服务
+Paper 垂直链路（`python -m keel.worker --once`）不需要交易所凭证。
 
-**方式一：只读 API 控制面**
+### 3. 启动（推荐）
 
 ```bash
+# 终端 1：唯一调度器
+python -m keel.worker
+
+# 一次性 paper/demo 垂直链路（factors→decision→risk→execution→ledger）
+python -m keel.worker --once
+
+# 终端 2：Keel 只读 API（主入口）
 python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080
 ```
 
 - 健康检查: `http://localhost:8080/health`
 - API 文档: `http://localhost:8080/docs`
 
-**方式二：Keel 调度器 + 控制面（推荐）**
+### 4. 测试
 
 ```bash
-# 终端 1：唯一调度器（paper/demo 交易循环 + 定时任务）
-python -m keel.worker
+make test
+# 或: sh scripts/run_keel_tests.sh
+# 或: python -m pytest tests/test_keel_*.py -v
+```
 
-# 一次性 paper/demo 垂直链路（factors→decision→risk→execution→ledger）
-python -m keel.worker --once
+---
 
-# 终端 2：只读/管理控制面（不再自动拉起第二调度器）
+## ⚠️ Legacy（请勿作为默认路径）
+
+| 组件 | 状态 |
+|------|------|
+| `keel.api.app` + `keel.worker` | ✅ **唯一推荐运行时** |
+| `r20_backend.app`（含 dashboard 挂载） | ⚠️ **legacy** 只读/管理 UI；不自动拉起调度器 |
+| `r20_gateway` | ⚠️ **legacy** 通知投递（可选）；默认无 job tick |
+| `r20_backend.scheduler` / `r20-scheduler.service` | ❌ **已禁用**（立即退出 / 无法启动） |
+| `scripts/ai_*_trader.py` | ⚠️ shim：默认委托 `keel.worker.cycle` |
+
+```bash
+# LEGACY ONLY — 旧控制面（dashboard 为只读 UI；勿与 keel-api 同端口双开）
 python -m uvicorn r20_backend.app:app --host 0.0.0.0 --port 8080
 ```
 
 > 不要同时运行 `r20_backend.scheduler`、`r20-scheduler.service` 或启用 legacy Gateway 调度。
-
-### 5. 运行测试
-
-```bash
-# 运行所有测试
-python -m pytest tests/ -v
-
-# 只运行 Keel 核心测试
-python -m pytest tests/test_keel_*.py -v
-```
 
 ---
 
@@ -103,23 +109,19 @@ python -m pytest tests/test_keel_*.py -v
 
 ```
 keel-trader/
-├── keel/                    # 新架构核心包
-│   ├── config/              # 配置管理
-│   ├── domain/              # 领域模型
-│   ├── exchange/            # 交易所适配器 (Protocol)
-│   ├── factors/             # 技术因子 (纯函数)
-│   ├── ledger/              # SQLite 账本
-│   ├── llm/                 # LLM 客户端
-│   ├── risk/                # 硬风控门禁
-│   ├── execution/           # 执行编排
-│   ├── worker/              # 调度器
-│   └── api/                 # FastAPI 控制面
-├── r20_backend/             # 旧版后端 (过渡期)
-├── r20_gateway/             # 旧版网关 (过渡期)
-├── scripts/                 # 脚本 (过渡期)
-├── tests/                   # 测试
-├── ARCHITECTURE.md          # 架构文档
-└── README.md                # 本文件
+├── keel/                    # 主架构（api + worker + domain）
+│   ├── api/                 # FastAPI 只读控制面 ★ 推荐入口
+│   ├── worker/              # 唯一调度器 + paper cycle ★
+│   ├── config/ exchange/ factors/ ledger/ llm/ risk/ execution/
+├── r20_backend/             # LEGACY 控制面（过渡期）
+├── r20_gateway/             # LEGACY 通知（过渡期）
+├── dashboard/               # LEGACY 只读 UI（由 r20_backend 挂载）
+├── scripts/                 # LEGACY / shim 脚本
+├── deploy/                  # systemd：优先 keel-api + keel-worker
+├── tests/                   # 含 test_keel_*.py
+├── ARCHITECTURE.md
+├── STANDALONE.md
+└── README.md
 ```
 
 ---
@@ -139,8 +141,6 @@ keel-trader/
 
 ## ⚙️ 配置说明
 
-### 环境变量
-
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `R20_OKX_ENV` | OKX 环境 (`demo`/`live`) | `demo` |
@@ -153,12 +153,14 @@ keel-trader/
 | `KEEL_MAX_POSITIONS` | 最大持仓数 | `6` |
 | `KEEL_MAX_DAILY_LOSS` | 单日最大亏损 (USDT) | `150` |
 | `KEEL_MAX_ASSET_MARGIN` | 单标的最大保证金 (USDT) | `600` |
+| `KEEL_API_HOST` / `KEEL_API_PORT` | Keel API 监听 | `0.0.0.0` / `8080` |
 
 ---
 
-## 📖 架构文档
+## 📖 文档
 
-详见 [ARCHITECTURE.md](ARCHITECTURE.md)
+- [ARCHITECTURE.md](ARCHITECTURE.md) — 架构与迁移阶段
+- [STANDALONE.md](STANDALONE.md) — 独立部署拓扑（Stage 3）
 
 ---
 
@@ -171,7 +173,6 @@ keel-trader/
 
 def calculate_my_indicator(prices: list[float], period: int) -> float:
     """纯函数，可离线测试"""
-    # 实现你的指标
     ...
 ```
 
@@ -184,9 +185,8 @@ class MyRiskGate(RiskGate):
     @property
     def name(self) -> str:
         return "my_gate"
-    
+
     def check(self, ctx: GateContext) -> GateResult:
-        # 实现你的风控逻辑
         ...
 ```
 
@@ -195,9 +195,10 @@ class MyRiskGate(RiskGate):
 ## ⚠️ 重要提示
 
 1. **单一调度器**: 只运行 `python -m keel.worker`；已禁用 `r20_backend.scheduler` / `r20-scheduler.service` / 后端 lifespan 自动拉起 Gateway 调度
-2. **默认模拟盘**: `R20_OKX_ENV=demo` 是默认值，实盘需显式设置
-3. **风控独立**: 风控门禁不可被 LLM 决策覆盖
-4. **无收益承诺**: 这是研究项目，不保证任何收益
+2. **默认 API**: 使用 `keel.api.app`；`r20_backend` dashboard 仅为 legacy 只读 UI
+3. **默认模拟盘**: `R20_OKX_ENV=demo` 是默认值，实盘需显式设置
+4. **风控独立**: 风控门禁不可被 LLM 决策覆盖
+5. **无收益承诺**: 这是研究项目，不保证任何收益
 
 ---
 

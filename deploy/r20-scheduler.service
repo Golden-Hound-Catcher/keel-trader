@@ -1,9 +1,9 @@
-# DISABLED (Stage 2) — do not enable this unit.
+# DISABLED (Stage 2/3) — do not enable this unit.
 # Keel Trader sole scheduler: deploy/keel-worker.service
 #   python -m keel.worker
 #
 # This legacy unit previously ran `python -m r20_backend.scheduler`, which
-# double-fired the trader alongside the gateway worker. It now exits immediately.
+# double-fired the trader alongside the gateway worker. It now cannot start.
 
 [Unit]
 Description=DISABLED legacy R20 scheduler (use keel-worker.service)

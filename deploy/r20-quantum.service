@@ -1,7 +1,9 @@
 [Unit]
-Description=Keel Trader / legacy control-plane backend (no scheduler spawn)
+Description=LEGACY Keel/R20 control-plane backend (deprecated; prefer keel-api.service)
 After=network-online.target
 Wants=network-online.target
+# Stage 3: prefer deploy/keel-api.service (uvicorn keel.api.app:app)
+# This unit remains for legacy admin + read-only dashboard UI only.
 
 [Service]
 Type=simple

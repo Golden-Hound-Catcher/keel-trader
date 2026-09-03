@@ -1,5 +1,5 @@
 """
-DISABLED (Stage 2): Legacy standalone scheduler.
+DISABLED (Stage 2/3): Legacy standalone scheduler.
 
 Keel Trader uses a single scheduler owner:
     python -m keel.worker

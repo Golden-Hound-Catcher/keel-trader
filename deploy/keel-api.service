@@ -1,8 +1,9 @@
 [Unit]
-Description=LEGACY Keel notification delivery worker (deprecated optional; no job scheduler)
+Description=Keel Trader Primary Read-Only API (keel.api.app)
 After=network-online.target
 Wants=network-online.target
-# Job scheduling is owned exclusively by keel-worker.service
+# Prefer this over legacy r20-quantum.service
+Conflicts=r20-quantum.service
 
 [Service]
 Type=simple
@@ -10,13 +11,13 @@ User=r20
 Group=r20
 Environment=HOME=/home/r20
 Environment=PATH=/opt/r20-quantum-trader/.venv/bin:/usr/local/bin:/usr/bin:/bin
-Environment=KEEL_DISABLE_GATEWAY_SCHEDULER=1
 WorkingDirectory=/opt/r20-quantum-trader
 EnvironmentFile=/opt/r20-quantum-trader/.env
-ExecStart=/usr/bin/python3 -m r20_gateway.worker
+ExecStart=/usr/bin/env python3 -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
