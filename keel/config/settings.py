@@ -43,6 +43,9 @@ class Settings:
     api_host: str = "0.0.0.0"
     api_port: int = 8080
 
+    # Ledger (SQLite). Override with KEEL_LEDGER_DB for tests / alternate data dirs.
+    ledger_db: str = ""
+
     # Risk Limits
     max_concurrent_positions: int = 6
     max_same_direction_positions: int = 6
@@ -60,6 +63,12 @@ class Settings:
     @property
     def llm_configured(self) -> bool:
         return bool(self.llm_api_key)
+
+    @property
+    def ledger_path(self) -> Path:
+        if self.ledger_db:
+            return Path(self.ledger_db)
+        return self.data_dir / "keel_ledger.db"
 
 
 def _env(key: str, default: str = "") -> str:
@@ -96,7 +105,7 @@ def _env_float(key: str, default: float) -> float:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Load settings from environment. Cached for performance."""
-    okx_env = _env("R20_OKX_ENV", "demo").lower()
+    okx_env = (_env("KEEL_OKX_ENV") or _env("R20_OKX_ENV", "demo")).lower()
     if okx_env not in ("demo", "live"):
         okx_env = "demo"
 
@@ -128,6 +137,7 @@ def get_settings() -> Settings:
         llm_reasoning_effort=_env("LLM_REASONING_EFFORT", "high"),
         api_host=_env("KEEL_API_HOST", "0.0.0.0"),
         api_port=_env_int("KEEL_API_PORT", 8080),
+        ledger_db=_env("KEEL_LEDGER_DB", ""),
         max_concurrent_positions=_env_int("KEEL_MAX_POSITIONS", 6),
         max_daily_loss_usdt=_env_float("KEEL_MAX_DAILY_LOSS", 150.0),
         max_single_asset_margin=_env_float("KEEL_MAX_ASSET_MARGIN", 600.0),

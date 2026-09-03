@@ -210,6 +210,14 @@ python -m pytest tests/test_keel_*.py -v
 python -m pytest tests/ -v
 ```
 
+## Stage 4（执行路径硬化）
+
+- Decision 几何 / RR 校验统一为 `keel.llm.client.validate_decision`
+- `ExecutionOrchestrator`：fill → trade；paper resting / risk / invalid → ledger events
+- Worker cycle 写入 `factor_snapshots`；`keel.api` 默认从 SQLite 读 decisions/trades/events/factors
+- 公共行情助手：`keel.exchange.okx_public`（无 shell CLI）
+- 配置：`KEEL_OKX_ENV` / `KEEL_LEDGER_DB` + 精简 `env.example`
+
 ## 入口点（Stage 3 唯一推荐）
 
 ```bash

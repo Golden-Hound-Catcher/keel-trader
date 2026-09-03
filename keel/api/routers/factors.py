@@ -1,8 +1,10 @@
-"""Factor calculation endpoints."""
+"""Factor endpoints — prefer SQLite snapshots from the last worker cycle."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
+from keel.api.deps import get_ledger
+from keel.exchange.okx_public import fetch_candles
 from keel.factors import (
     calculate_ema,
     calculate_rsi,
@@ -10,44 +12,62 @@ from keel.factors import (
     calculate_macd,
     calculate_bollinger,
 )
-from keel.exchange import OKXRestAdapter, PaperAdapter
-from keel.config import get_settings
 
 router = APIRouter()
 
 
-def _fetch_candles(inst_id: str, bar: str = "15m", limit: int = 50) -> list[list[float]]:
-    """Fetch candles from OKX public API."""
-    import urllib.request
-    import json
-
-    url = f"https://www.okx.com/api/v5/market/candles?instId={inst_id}&bar={bar}&limit={limit}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Keel-Trader/0.1"})
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-        if data.get("code") != "0":
-            raise ValueError(data.get("msg", "API error"))
-        return [[float(x) for x in c[:6]] for c in reversed(data.get("data", []))]
-
-
 @router.get("/factors/{inst_id}")
-def get_factors(inst_id: str):
-    """Calculate technical factors for an instrument."""
+def get_factors(
+    inst_id: str,
+    live: bool = Query(default=False, description="If true, fetch live OKX candles (network)"),
+    max_age: int = Query(default=3600, le=86400),
+):
+    """
+    Return technical factors for an instrument.
+
+    Default: latest factor_snapshot from the Keel ledger (written by worker cycle).
+    Pass live=1 to compute from public OKX candles (no credentials).
+    """
+    if not live:
+        ledger = get_ledger()
+        snap = ledger.get_latest_factor_snapshot(inst_id, max_age_seconds=max_age)
+        if snap is not None:
+            payload = snap.payload or {}
+            return {
+                "inst_id": inst_id,
+                "source": "ledger",
+                "timestamp": snap.timestamp,
+                "price": snap.price,
+                "ema_9": round(snap.ema_9, 4),
+                "ema_21": round(snap.ema_21, 4),
+                "ema_55": round(float(payload.get("ema_55", 0) or 0), 4),
+                "rsi_14": round(snap.rsi_14, 2),
+                "rsi_7": round(float(payload.get("rsi_7", 0) or 0), 2),
+                "atr_14": round(snap.atr_14, 4),
+                "macd": {
+                    "line": round(float(payload.get("macd_line", 0) or 0), 4),
+                    "signal": round(float(payload.get("macd_signal", 0) or 0), 4),
+                    "histogram": round(snap.macd_histogram, 4),
+                },
+                "trend_15m": snap.trend_15m,
+                "volume_ratio": snap.volume_ratio,
+            }
+
     try:
-        candles = _fetch_candles(inst_id, "15m", 50)
+        candles = fetch_candles(inst_id, bar="15m", limit=50)
         if not candles:
             raise HTTPException(status_code=404, detail="No candle data")
 
         closes = [c[4] for c in candles]
         highs = [c[2] for c in candles]
         lows = [c[3] for c in candles]
-        volumes = [c[5] for c in candles]
 
         macd = calculate_macd(closes)
         bb = calculate_bollinger(closes)
 
         return {
             "inst_id": inst_id,
+            "source": "okx_public",
             "price": closes[-1] if closes else 0,
             "ema_9": round(calculate_ema(closes, 9), 4),
             "ema_21": round(calculate_ema(closes, 21), 4),

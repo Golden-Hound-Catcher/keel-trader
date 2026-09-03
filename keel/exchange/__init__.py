@@ -8,6 +8,7 @@ from keel.exchange.protocol import (
 )
 from keel.exchange.okx_rest import OKXRestAdapter
 from keel.exchange.paper import PaperAdapter
+from keel.exchange import okx_public
 
 __all__ = [
     "ExchangeProtocol",
@@ -17,4 +18,5 @@ __all__ = [
     "AccountBalance",
     "OKXRestAdapter",
     "PaperAdapter",
+    "okx_public",
 ]

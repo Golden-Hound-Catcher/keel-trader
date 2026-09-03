@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 """
-R20 High-Alpha Quantitative Multi-Factor Trading Matrix & Execution Engine (R20 Quantum Trader v6.2.1)
-Architecture:
-1. Multi-Dimensional Quant Factor Sub-Engine:
-   - Trend Momentum: EMA Slope (9/21/55), Multi-Timeframe Alignment (15M, 1H, 4H)
-   - Volume & Price Dynamics: MACD Histogram Acceleration, OBV Flow Divergence, Volume Expansion Ratio
-   - Mean Reversion & Volatility: Multi-Scale VWAP Bias, RSI 14/7 Dynamic Zones, Bollinger Bandwidth & Squeeze
-   - Market Microstructure: Dynamic High/Low Dow Theory, Wick Absorption Geometry, Volatility Quantile (ATR%)
-2. Continuous Non-Linear Alpha Scoring (-5.0 to +5.0 Score Distribution):
-   - Dynamic weight synthesis across Momentum, Volume, Volatility, and Macro Sentiment
-3. 6 Institutional Quant Setups:
-   - 🌊 Institutional Pullback (顺势机构回踩)
-   - 🚀 Momentum Squeeze Breakout (动量挤压突破)
-   - 💎 Extreme Mean Reversion (极值均值回归)
-   - ⚡ Resistance Exhaustion Short (阻力抛压做空)
-   - 🌪️ Breakdown Acceleration Short (破位放量追空)
-   - 🛡️ Liquidity Sweep Reversal (流动性猎杀反转)
-4. Dynamic Adaptive Position Sizing, Volatility-Trailing Exits & Cooldown Protection.
+Legacy R20 factor-trader entry (kept for KEEL_USE_LEGACY=1 only).
+
+DEFAULT PATH (Stage 3+): this module shims into ``keel.worker.cycle`` — the
+Keel paper/demo vertical path (factors → decision → risk → execution → ledger).
+Prefer::
+
+    python -m keel.worker --once
+    python -m keel.worker          # sole scheduler
+
+Set ``KEEL_USE_LEGACY=1`` to run the historical OKX-CLI portfolio loop below.
+That body is intentionally left intact for rollback; new work belongs in
+``keel.*`` (exchange helpers live in ``keel.exchange``, not shell).
+Do not add new OKX CLI / credential sprawl here.
 """
 
 import os

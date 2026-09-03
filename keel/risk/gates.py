@@ -100,10 +100,14 @@ class MaxSameDirectionGate(RiskGate):
         if ctx.action == "close":
             return GateResult(passed=True, gate_name=self.name)
 
-        if ctx.action in ("open_long", "scale_in") and "long" in ctx.action:
+        # scale_in counts toward the direction of the existing book side we are adding to.
+        if ctx.action == "open_long":
             current = ctx.long_positions
-        elif ctx.action in ("open_short",) or (ctx.action == "scale_in" and "short" in str(ctx)):
+        elif ctx.action == "open_short":
             current = ctx.short_positions
+        elif ctx.action == "scale_in":
+            # Prefer the side that already has size; fall back to long if both zero.
+            current = ctx.long_positions if ctx.long_positions >= ctx.short_positions else ctx.short_positions
         else:
             return GateResult(passed=True, gate_name=self.name)
 

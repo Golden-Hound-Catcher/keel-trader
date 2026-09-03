@@ -3,6 +3,10 @@ Execution orchestrator for Keel Trader.
 
 Handles the decision → risk check → order flow.
 Limit-first execution strategy.
+
+Stage 4: Decision.valid (shared validate_decision) → risk gates → place order →
+ledger trade only on fills (paper) / acceptance (live REST); resting limits and
+failures become ledger events so API can audit the path.
 """
 from __future__ import annotations
 
@@ -10,10 +14,11 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
+from keel.exchange.paper import PaperAdapter
 from keel.exchange.protocol import ExchangeProtocol, OrderRequest, OrderResult
 from keel.risk.gates import GateContext, check_all_gates, RiskGate
 from keel.ledger import KeelLedger, TradeRecord
-from keel.llm.client import Decision
+from keel.llm.client import Decision, validate_decision
 
 
 @dataclass
@@ -27,18 +32,21 @@ class ExecutionResult:
     risk_gate_failed: str | None = None
     price: float | None = None
     size: float | None = None
+    filled: bool = False
+    resting: bool = False
 
 
 class ExecutionOrchestrator:
     """
     Orchestrates the execution of trading decisions.
-    
+
     Flow:
-    1. Receive decision from LLM
-    2. Check all risk gates
-    3. Calculate position size
-    4. Submit limit order with TP/SL
-    5. Record to ledger
+    1. Receive decision (LLM or rule-based)
+    2. Re-validate Decision schema / RR geometry
+    3. Check all risk gates
+    4. Calculate position size
+    5. Submit limit order with TP/SL
+    6. Record fill/trade or resting/failure events to ledger
     """
 
     def __init__(
@@ -60,17 +68,31 @@ class ExecutionOrchestrator:
     ) -> ExecutionResult:
         """
         Execute a trading decision.
-        
+
         Args:
-            decision: The LLM decision to execute
+            decision: The LLM/rule decision to execute
             daily_pnl: Today's realized PnL
             cooldown_until: Timestamp when cooldown ends
             kill_switch: Whether emergency stop is active
-            
+
         Returns:
             ExecutionResult
         """
+        decision = validate_decision(decision)
+
         if decision.action == "WAIT":
+            if not decision.valid and decision.validation_error:
+                self._ledger.record_event(
+                    "decision_invalid",
+                    inst_id=decision.inst_id,
+                    data={"error": decision.validation_error},
+                )
+                return ExecutionResult(
+                    inst_id=decision.inst_id,
+                    action="WAIT",
+                    success=False,
+                    error=decision.validation_error,
+                )
             return ExecutionResult(
                 inst_id=decision.inst_id,
                 action="WAIT",
@@ -78,6 +100,11 @@ class ExecutionOrchestrator:
             )
 
         if not decision.valid:
+            self._ledger.record_event(
+                "decision_invalid",
+                inst_id=decision.inst_id,
+                data={"error": decision.validation_error or "Invalid decision"},
+            )
             return ExecutionResult(
                 inst_id=decision.inst_id,
                 action=decision.action,
@@ -124,16 +151,28 @@ class ExecutionOrchestrator:
         passed, results = check_all_gates(ctx, self._risk_gates)
         if not passed:
             failed_gate = next((r for r in results if not r.passed), None)
+            gate_name = failed_gate.gate_name if failed_gate else "unknown"
+            reason = failed_gate.reason if failed_gate else "Risk gate failed"
+            self._ledger.record_event(
+                "risk_gate_blocked",
+                inst_id=decision.inst_id,
+                data={"gate": gate_name, "error": reason, "action": decision.action},
+            )
             return ExecutionResult(
                 inst_id=decision.inst_id,
                 action=decision.action,
                 success=False,
-                risk_gate_failed=failed_gate.gate_name if failed_gate else "unknown",
-                error=failed_gate.reason if failed_gate else "Risk gate failed",
+                risk_gate_failed=gate_name,
+                error=reason,
             )
 
         ticker = self._exchange.get_ticker(decision.inst_id)
         if not ticker:
+            self._ledger.record_event(
+                "order_failed",
+                inst_id=decision.inst_id,
+                data={"error": "Failed to get ticker data"},
+            )
             return ExecutionResult(
                 inst_id=decision.inst_id,
                 action=decision.action,
@@ -151,6 +190,11 @@ class ExecutionOrchestrator:
         )
 
         if size <= 0:
+            self._ledger.record_event(
+                "order_failed",
+                inst_id=decision.inst_id,
+                data={"error": "Calculated size is zero"},
+            )
             return ExecutionResult(
                 inst_id=decision.inst_id,
                 action=decision.action,
@@ -171,26 +215,119 @@ class ExecutionOrchestrator:
             )
         )
 
-        if order_result.success:
+        return self._finalize_order(
+            decision=decision,
+            order_result=order_result,
+            entry_price=entry_price,
+            size=size,
+            had_position=current_position is not None,
+        )
+
+    def _finalize_order(
+        self,
+        *,
+        decision: Decision,
+        order_result: OrderResult,
+        entry_price: float,
+        size: float,
+        had_position: bool,
+    ) -> ExecutionResult:
+        """Ledger trade on fills; resting paper limits and failures become events."""
+        if not order_result.success:
+            self._ledger.record_event(
+                "order_failed",
+                inst_id=decision.inst_id,
+                data={"error": order_result.error or "order rejected", "action": decision.action},
+            )
+            return ExecutionResult(
+                inst_id=decision.inst_id,
+                action=decision.action,
+                success=False,
+                order_id=order_result.order_id,
+                error=order_result.error,
+                price=entry_price,
+                size=size,
+            )
+
+        order = order_result.order
+        is_paper = isinstance(self._exchange, PaperAdapter)
+        is_filled = (
+            order is None
+            or order.state == "filled"
+            or order.filled_size > 0
+        )
+        # Paper resting limit (accepted but not filled) — do not invent a trade.
+        if is_paper and order is not None and order.state == "live" and order.filled_size <= 0:
+            self._ledger.record_event(
+                "order_resting",
+                inst_id=decision.inst_id,
+                data={
+                    "order_id": order_result.order_id,
+                    "price": entry_price,
+                    "size": size,
+                    "action": decision.action,
+                },
+            )
+            return ExecutionResult(
+                inst_id=decision.inst_id,
+                action=decision.action,
+                success=True,
+                order_id=order_result.order_id,
+                price=entry_price,
+                size=size,
+                resting=True,
+            )
+
+        if is_filled or not is_paper:
             self._ledger.record_trade(
                 TradeRecord(
                     timestamp=time.time(),
                     inst_id=decision.inst_id,
-                    action="open" if not current_position else "scale_in",
+                    action="open" if not had_position else "scale_in",
                     direction="long" if decision.action == "BUY_LONG" else "short",
                     size=size,
                     price=entry_price,
                     strategy_tag="keel-llm",
                     reason=decision.reason,
+                    metadata={
+                        "order_id": order_result.order_id,
+                        "leverage": decision.leverage,
+                        "margin_usdt": decision.margin_usdt,
+                        "take_profit": decision.take_profit,
+                        "stop_loss": decision.stop_loss,
+                    },
                 )
             )
+            self._ledger.record_event(
+                "order_filled",
+                inst_id=decision.inst_id,
+                data={
+                    "order_id": order_result.order_id,
+                    "price": entry_price,
+                    "size": size,
+                    "action": decision.action,
+                },
+            )
+            return ExecutionResult(
+                inst_id=decision.inst_id,
+                action=decision.action,
+                success=True,
+                order_id=order_result.order_id,
+                price=entry_price,
+                size=size,
+                filled=True,
+            )
 
+        self._ledger.record_event(
+            "order_accepted",
+            inst_id=decision.inst_id,
+            data={"order_id": order_result.order_id, "action": decision.action},
+        )
         return ExecutionResult(
             inst_id=decision.inst_id,
             action=decision.action,
-            success=order_result.success,
+            success=True,
             order_id=order_result.order_id,
-            error=order_result.error,
             price=entry_price,
             size=size,
         )

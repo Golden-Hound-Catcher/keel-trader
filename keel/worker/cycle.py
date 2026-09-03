@@ -4,7 +4,10 @@ Paper/demo vertical trading cycle for Keel Trader.
 Pipeline: factors → decision → risk → execution → ledger.
 
 Default path uses PaperAdapter (no shell OKX CLI, no live exchange).
-Legacy scripts/ai_factor_trader.py shims into this module.
+Legacy scripts/ai_factor_trader.py shims into this module when KEEL_USE_LEGACY is unset.
+
+Stage 4: persists factor_snapshots + coherent Decision↔risk↔ledger events so
+keel.api can read the latest cycle from SQLite without hitting live OKX.
 """
 from __future__ import annotations
 
@@ -32,8 +35,8 @@ from keel.factors.technical import (
     calculate_vwap,
     classify_trend,
 )
-from keel.ledger import DecisionRecord, KeelLedger
-from keel.llm.client import Decision
+from keel.ledger import DecisionRecord, FactorSnapshot, KeelLedger
+from keel.llm.client import Decision, validate_decision
 
 
 DEFAULT_SEED_PRICES: dict[str, float] = {
@@ -191,6 +194,11 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     )
 
 
+def decision_from_snapshot(snapshot: MarketSnapshot) -> Decision:
+    """Rule-based decision with shared schema / RR validation."""
+    return validate_decision(rule_based_decision(snapshot))
+
+
 def _seed_paper_tickers(
     exchange: PaperAdapter,
     snapshots: dict[str, MarketSnapshot],
@@ -233,8 +241,7 @@ def run_paper_cycle(
 
     exchange = exchange or PaperAdapter(initial_balance=10_000.0)
     if ledger is None:
-        db_path = settings.data_dir / "keel_ledger.db"
-        ledger = KeelLedger(db_path)
+        ledger = KeelLedger(settings.ledger_path)
 
     now = time.time()
     snapshots: dict[str, MarketSnapshot] = {}
@@ -264,24 +271,69 @@ def run_paper_cycle(
     decisions: dict[str, Decision] = {}
 
     for inst_id, snap in snapshots.items():
-        decision = rule_based_decision(snap)
+        ledger.record_factor_snapshot(
+            FactorSnapshot(
+                timestamp=now,
+                inst_id=inst_id,
+                price=snap.price,
+                rsi_14=snap.rsi_14,
+                ema_9=snap.ema_9,
+                ema_21=snap.ema_21,
+                atr_14=snap.atr_14,
+                macd_histogram=snap.macd_histogram,
+                trend_15m=str(snap.trend_15m),
+                volume_ratio=snap.volume_ratio,
+                payload={
+                    "rsi_7": snap.rsi_7,
+                    "ema_55": snap.ema_55,
+                    "atr_pct": snap.atr_pct,
+                    "vwap": snap.vwap,
+                    "vwap_bias_pct": snap.vwap_bias_pct,
+                    "macd_line": snap.macd_line,
+                    "macd_signal": snap.macd_signal,
+                    "data_valid": snap.data_valid,
+                },
+            )
+        )
+
+        decision = decision_from_snapshot(snap)
         if force_action and inst_id == ids[0]:
-            # Test hook: force a fillable long on first instrument.
+            # Test hook: force a fillable action on first instrument.
             price = snap.price
             atr = max(snap.atr_14, price * 0.01)
-            if force_action.upper() == "BUY_LONG":
-                decision = Decision(
-                    inst_id=inst_id,
-                    action="BUY_LONG",
-                    confidence=80.0,
-                    entry_price=price * 1.001,  # >= ask → paper fill
-                    take_profit=price + 2.2 * atr,
-                    stop_loss=price - 1.0 * atr,
-                    leverage=3,
-                    margin_usdt=50.0,
-                    reason="forced paper long",
+            action = force_action.upper()
+            if action == "BUY_LONG":
+                # Anchor TP/SL to entry so RR stays >= 2 after the fill premium.
+                entry = price * 1.001  # >= ask → paper fill
+                decision = validate_decision(
+                    Decision(
+                        inst_id=inst_id,
+                        action="BUY_LONG",
+                        confidence=80.0,
+                        entry_price=entry,
+                        take_profit=entry + 2.2 * atr,
+                        stop_loss=entry - 1.0 * atr,
+                        leverage=3,
+                        margin_usdt=50.0,
+                        reason="forced paper long",
+                    )
                 )
-            elif force_action.upper() == "WAIT":
+            elif action == "SELL_SHORT":
+                entry = price * 0.999  # <= bid → paper fill
+                decision = validate_decision(
+                    Decision(
+                        inst_id=inst_id,
+                        action="SELL_SHORT",
+                        confidence=80.0,
+                        entry_price=entry,
+                        take_profit=entry - 2.2 * atr,
+                        stop_loss=entry + 1.0 * atr,
+                        leverage=3,
+                        margin_usdt=50.0,
+                        reason="forced paper short",
+                    )
+                )
+            elif action == "WAIT":
                 decision = Decision(inst_id=inst_id, action="WAIT", reason="forced wait")
 
         decisions[inst_id] = decision
@@ -295,6 +347,14 @@ def run_paper_cycle(
                 take_profit=decision.take_profit,
                 stop_loss=decision.stop_loss,
                 reason=decision.reason,
+                calculus_data={
+                    "leverage": decision.leverage,
+                    "margin_usdt": decision.margin_usdt,
+                    "valid": decision.valid,
+                    "validation_error": decision.validation_error or None,
+                    "rsi_14": snap.rsi_14,
+                    "trend_15m": snap.trend_15m,
+                },
             )
         )
 
@@ -312,16 +372,12 @@ def run_paper_cycle(
                 "risk_gate_failed": exec_result.risk_gate_failed,
                 "price": exec_result.price,
                 "size": exec_result.size,
+                "filled": exec_result.filled,
+                "resting": exec_result.resting,
                 "rsi": round(snap.rsi_14, 2),
                 "trend": snap.trend_15m,
             }
         )
-        if exec_result.risk_gate_failed:
-            ledger.record_event(
-                "risk_gate_blocked",
-                inst_id=inst_id,
-                data={"gate": exec_result.risk_gate_failed, "error": exec_result.error},
-            )
 
     ledger.record_event(
         "paper_cycle_complete",
@@ -345,7 +401,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--force-action",
         default=os.environ.get("KEEL_FORCE_ACTION", ""),
-        help="Optional test hook: BUY_LONG or WAIT on first instrument",
+        help="Optional test hook: BUY_LONG / SELL_SHORT / WAIT on first instrument",
     )
     parser.add_argument(
         "--db",

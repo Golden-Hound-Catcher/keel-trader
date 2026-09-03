@@ -59,6 +59,23 @@ class DecisionRecord:
     raw_response: str | None = None
 
 
+@dataclass
+class FactorSnapshot:
+    """Technical factor snapshot persisted after each cycle."""
+    id: int | None = None
+    timestamp: float = 0.0
+    inst_id: str = ""
+    price: float = 0.0
+    rsi_14: float = 0.0
+    ema_9: float = 0.0
+    ema_21: float = 0.0
+    atr_14: float = 0.0
+    macd_histogram: float = 0.0
+    trend_15m: str = "neutral"
+    volume_ratio: float = 1.0
+    payload: dict[str, Any] | None = None
+
+
 class KeelLedger:
     """
     Append-only SQLite ledger for trades and decisions.
@@ -69,7 +86,7 @@ class KeelLedger:
     def __init__(self, db_path: Path | str | None = None):
         if db_path is None:
             from keel.config import get_settings
-            db_path = get_settings().data_dir / "keel_ledger.db"
+            db_path = get_settings().ledger_path
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
@@ -152,6 +169,25 @@ class KeelLedger:
                 
                 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+
+                CREATE TABLE IF NOT EXISTS factor_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    inst_id TEXT NOT NULL,
+                    price REAL DEFAULT 0,
+                    rsi_14 REAL DEFAULT 0,
+                    ema_9 REAL DEFAULT 0,
+                    ema_21 REAL DEFAULT 0,
+                    atr_14 REAL DEFAULT 0,
+                    macd_histogram REAL DEFAULT 0,
+                    trend_15m TEXT DEFAULT 'neutral',
+                    volume_ratio REAL DEFAULT 1,
+                    payload TEXT,
+                    created_at REAL DEFAULT (strftime('%s', 'now'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_factors_timestamp ON factor_snapshots(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_factors_inst_id ON factor_snapshots(inst_id);
             """)
 
     def record_trade(self, trade: TradeRecord) -> int:
@@ -322,6 +358,114 @@ class KeelLedger:
             reason=row["reason"],
             calculus_data=json.loads(row["calculus_data"]) if row["calculus_data"] else None,
             raw_response=row["raw_response"],
+        )
+
+
+    def record_factor_snapshot(self, snap: FactorSnapshot) -> int:
+        """Append a factor snapshot for API/history reads."""
+        with self._transaction() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO factor_snapshots (
+                    timestamp, inst_id, price, rsi_14, ema_9, ema_21,
+                    atr_14, macd_histogram, trend_15m, volume_ratio, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snap.timestamp or time.time(),
+                    snap.inst_id,
+                    snap.price,
+                    snap.rsi_14,
+                    snap.ema_9,
+                    snap.ema_21,
+                    snap.atr_14,
+                    snap.macd_histogram,
+                    snap.trend_15m,
+                    snap.volume_ratio,
+                    json.dumps(snap.payload) if snap.payload else None,
+                ),
+            )
+            return cursor.lastrowid or 0
+
+    def get_latest_factor_snapshot(
+        self, inst_id: str, max_age_seconds: int = 3600
+    ) -> FactorSnapshot | None:
+        """Get the most recent factor snapshot for an instrument if still fresh."""
+        cutoff = time.time() - max_age_seconds
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            SELECT * FROM factor_snapshots
+            WHERE inst_id = ? AND timestamp >= ?
+            ORDER BY timestamp DESC LIMIT 1
+            """,
+            (inst_id, cutoff),
+        ).fetchone()
+        return self._row_to_factor(row) if row else None
+
+    def get_factor_snapshots(
+        self,
+        inst_id: str | None = None,
+        limit: int = 50,
+    ) -> list[FactorSnapshot]:
+        """Query recent factor snapshots."""
+        conn = self._get_conn()
+        query = "SELECT * FROM factor_snapshots WHERE 1=1"
+        params: list[Any] = []
+        if inst_id is not None:
+            query += " AND inst_id = ?"
+            params.append(inst_id)
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+        return [self._row_to_factor(row) for row in rows]
+
+    def get_events(
+        self,
+        event_type: str | None = None,
+        inst_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Query ledger events (risk blocks, cycle completes, resting orders)."""
+        conn = self._get_conn()
+        query = "SELECT * FROM events WHERE 1=1"
+        params: list[Any] = []
+        if event_type is not None:
+            query += " AND event_type = ?"
+            params.append(event_type)
+        if inst_id is not None:
+            query += " AND inst_id = ?"
+            params.append(inst_id)
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            out.append(
+                {
+                    "id": row["id"],
+                    "timestamp": row["timestamp"],
+                    "event_type": row["event_type"],
+                    "inst_id": row["inst_id"],
+                    "data": json.loads(row["data"]) if row["data"] else None,
+                }
+            )
+        return out
+
+    def _row_to_factor(self, row: sqlite3.Row) -> FactorSnapshot:
+        return FactorSnapshot(
+            id=row["id"],
+            timestamp=row["timestamp"],
+            inst_id=row["inst_id"],
+            price=row["price"],
+            rsi_14=row["rsi_14"],
+            ema_9=row["ema_9"],
+            ema_21=row["ema_21"],
+            atr_14=row["atr_14"],
+            macd_histogram=row["macd_histogram"],
+            trend_15m=row["trend_15m"],
+            volume_ratio=row["volume_ratio"],
+            payload=json.loads(row["payload"]) if row["payload"] else None,
         )
 
     def close(self) -> None:
