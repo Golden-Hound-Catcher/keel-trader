@@ -63,7 +63,7 @@ python -m keel.worker --once
 
 Legacy `r20_backend` / `r20_gateway` / `dashboard` are **not** supported entrypoints for new deployments (see `LEGACY.md`).
 `frontend/` U1 monitor **is** supported as a read-only client of `keel.api`.
-`uvicorn r20_backend.app:app` requires `KEEL_ALLOW_LEGACY_BACKEND=1` or exits pointing at `keel.api`.
+`uvicorn r20_backend.app:app` requires `KEEL_ALLOW_LEGACY_BACKEND=1` or exits pointing at `keel.api`; even with opt-in it is a **410 stub** (admin HTTP API removed).
 
 ---
 
@@ -195,11 +195,12 @@ LLM cannot bypass gates.
 - Vue monitor at `/` + `/monitor` is the supported read-only UI; `/legacy` route removed.  
 - Admin mutations (prompt edit, keys) only through explicit Keel admin APIs (future spec addendum).
 
-### Admin UI removal (**done**)
+### Admin UI + admin API removal (**done**)
 
 - Removed R20 Vue `/admin/*` product surface (`AdminLayout`, `views/admin/**`, auth/`useApi`).  
 - Removed `frontend/public/admin/legacy.html` and `r20_backend/admin.html`.  
-- Soft-blocked `r20_backend.app` may still expose `/api/v1/admin/*` for tests/opt-in; HTML `/admin` returns 410.  
+- Removed `r20_backend.admin_auth` and all `/api/v1/admin/*` FastAPI routes.  
+- Soft-blocked `r20_backend.app` is a **410 stub** only (no admin HTTP surface).  
 - **Do not** build a full Keel admin in the monitor SPA — deferred to a SPEC addendum.
 
 UI is a **client of the SPEC API**, not a second source of truth.
@@ -215,8 +216,9 @@ UI is a **client of the SPEC API**, not a second source of truth.
 | Done | Stop documenting `r20_backend.app` as runnable; soft-block via `KEEL_ALLOW_LEGACY_BACKEND=1` |
 | Done | Phase U2 — drop Jinja `dashboard/`; remove `/legacy` Vue route |
 | Done | Remove Vue `/admin/*` product surface; no HTML admin UI |
+| Done | Remove `r20_backend` `/api/v1/admin/*` + `admin_auth` (410 stub) |
 | Later | Delete unused scripts, `r20_gateway` job scheduler code |
-| Last | Remove `r20_backend` once admin APIs migrate to Keel |
+| Last | Remove remaining `r20_backend` helpers once gateway/scripts no longer need them |
 
 Supported deployments: **keel-api** + **keel-worker** + optional **frontend** U1 monitor only.
 No mass-delete without inventory check against `LEGACY.md`.
@@ -248,7 +250,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 |----|----------|------------------------|
 | O1 | Vue reuse depth (full admin vs monitor-only) | **Monitor-only** (R20 `/admin` removed; Keel admin = future addendum) |
 | O2 | API auth for non-local binds | None in v1 local/demo |
-| O3 | When to hard-delete `r20_*` packages | After admin APIs migrate to Keel (post-U2) |
+| O3 | When to hard-delete `r20_*` packages | After gateway/scripts stop needing helpers (admin API already gone) |
 
 ---
 
@@ -260,7 +262,8 @@ No mass-delete without inventory check against `LEGACY.md`.
 4. Retire `r20_backend.app` as a documented/runnable entry (soft-block) — **done**  
 5. Phase U2 drop Jinja `dashboard/` — **done**  
 6. Remove Vue `/admin` product surface — **done**
-7. Continue legacy deletion behind inventory (`r20_*` API remnant → Keel admin API)  
+7. Remove `r20_backend` `/api/v1/admin/*` + `admin_auth` — **done**
+8. Continue legacy deletion behind inventory (remaining helpers / gateway / scripts)  
 
 ---
 
@@ -272,6 +275,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-03 | §11: U1 done; soft-block `r20_backend.app`; supported = keel-api + keel-worker + U1 UI |
 | 2026-09-03 | §10/§11: U2 done — Jinja `dashboard/` removed; `/legacy` gone; `r20_backend` admin-only remnant |
 | 2026-09-03 | Removed Vue `/admin/*` product surface; admin features deferred to future Keel admin API |
+| 2026-09-03 | Removed `r20_backend` `/api/v1/admin/*` + `admin_auth`; stub returns 410 |
 
 ---
 
@@ -302,6 +306,12 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 
 - Deleted Vue `views/admin/**`, `AdminLayout.vue`, admin router/nav, `stores/auth.ts`, `composables/useApi.ts`.
 - Deleted `frontend/public/admin/legacy.html` and `r20_backend/admin.html`.
-- Soft-blocked `r20_backend.app` `/admin` HTML route now returns **410** with a clear retirement message.
-- `/api/v1/admin/*` may remain as a soft-blocked remnant until a Keel admin API lands (future SPEC addendum).
+- Soft-blocked `r20_backend.app` `/admin` HTML route returned **410** (prior PR).
 - Supported product UI: Keel monitor only (`/`, `/monitor`).
+
+## Addendum: Legacy `/api/v1/admin/*` removed
+
+- Deleted `r20_backend/admin_auth.py` and all `/api/v1/admin/*` FastAPI routes from `r20_backend/app.py`.
+- `r20_backend.app` is now a soft-blocked **410 stub** (any path → Gone; prefer `keel.api`).
+- Retired admin-coupled tests (`test_admin_*`, `test_control_plane_v2_api`, `test_custom_system_api`); kept `llm_manager` unit coverage without HTTP.
+- Remaining `r20_backend` modules exist for optional `r20_gateway` / historical `scripts/` only — not for product admin.

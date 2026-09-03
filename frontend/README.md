@@ -2,7 +2,7 @@
 
 Monitor-only Vue UI bound to Keel keel.api.app (/health + /api/v1/*).
 
-Jinja dashboard/, Vue /legacy, and R20 Vue /admin/* are removed. Admin features deferred to a future Keel admin API (SPEC addendum).
+Jinja dashboard/, Vue /legacy, R20 Vue /admin/*, and r20_backend /api/v1/admin/* are removed. Admin features deferred to a future Keel admin API (SPEC addendum).
 
 ## Forbidden (U1 path)
 

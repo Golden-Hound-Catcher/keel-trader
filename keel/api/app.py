@@ -3,7 +3,7 @@ Keel API - Primary read-only FastAPI control plane (Stage 3).
 
 Documented entry: ``uvicorn keel.api.app:app``.
 This is a thin wrapper that composes routers.
-Prefer this over legacy ``r20_backend.app`` (admin remnant; dashboard removed in U2).
+Prefer this over legacy ``r20_backend.app`` (retired 410 stub; admin API removed).
 
 Phase U1: optionally serves ``frontend/dist`` as a static SPA when present.
 """
@@ -34,7 +34,7 @@ def create_app() -> FastAPI:
     """Create the Keel API application."""
     app = FastAPI(
         title="Keel Trader API",
-        description="Primary read-only control plane for Keel Trader (prefer over r20_backend.app)",
+        description="Primary read-only control plane for Keel Trader",
         version=__version__,
         lifespan=lifespan,
     )

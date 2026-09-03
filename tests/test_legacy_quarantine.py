@@ -160,5 +160,29 @@ class TestLegacyBackendSoftBlock(unittest.TestCase):
         )
 
 
+
+class TestAdminApiRemoved(unittest.TestCase):
+    def test_admin_auth_module_gone(self):
+        self.assertFalse((ROOT / "r20_backend" / "admin_auth.py").exists())
+
+    def test_stub_returns_410_for_former_admin_paths(self):
+        from fastapi.testclient import TestClient
+        import r20_backend.app as app_module
+
+        client = TestClient(app_module.app)
+        for path in (
+            "/api/v1/admin/overview",
+            "/api/v1/admin/auth/login",
+            "/admin",
+            "/health",
+        ):
+            response = client.get(path)
+            self.assertEqual(response.status_code, 410, msg=path)
+            body = response.json()
+            self.assertEqual(body.get("status"), "gone")
+            self.assertIn("keel.api", body.get("prefer", ""))
+
+
+
 if __name__ == "__main__":
     unittest.main()

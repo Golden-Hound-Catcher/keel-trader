@@ -1,12 +1,13 @@
 """Legacy quarantine helpers (Stage 7+).
 
-``r20_*`` packages and historical scripts remain in-tree for rollback and the
-legacy admin control plane, but accidental use should be loud unless the
-operator explicitly opts in. Jinja ``dashboard/`` was removed in Phase U2.
+``r20_*`` packages and historical scripts remain in-tree for rollback and
+helper modules (notifications, llm_manager, backups), but accidental use
+should be loud unless the operator explicitly opts in. Jinja ``dashboard/``,
+Vue ``/admin``, and ``/api/v1/admin/*`` were removed.
 
 - ``KEEL_USE_LEGACY=1`` — acknowledge legacy scripts / silence import warnings
-- ``KEEL_ALLOW_LEGACY_BACKEND=1`` — permit running ``uvicorn r20_backend.app:app``
-  (admin remnant only). Prefer ``uvicorn keel.api.app:app``.
+- ``KEEL_ALLOW_LEGACY_BACKEND=1`` — permit importing the retired
+  ``r20_backend.app`` stub (410 only). Prefer ``uvicorn keel.api.app:app``.
 """
 from __future__ import annotations
 
@@ -28,8 +29,8 @@ def legacy_opt_in() -> bool:
 def legacy_backend_allowed() -> bool:
     """True when running the legacy ASGI app is explicitly allowed.
 
-    Also true under pytest so transitional admin/API unit tests can import
-    ``r20_backend.app`` without setting the operator flag.
+    Also true under pytest so quarantine tests can import the retired
+    ``r20_backend.app`` stub without setting the operator flag.
     """
     if os.environ.get(_ALLOW_BACKEND_ENV, "").strip() == "1":
         return True
@@ -54,7 +55,8 @@ def require_legacy_backend(*, component: str = "r20_backend.app") -> None:
         "  python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080\n"
         "  # or: systemctl enable --now keel-api\n"
         "\n"
-        "For rare admin-only remnant use only, set:\n"
+        "The admin HTTP API is removed; this entrypoint is a 410 stub only.\n"
+        "To import the stub intentionally, set:\n"
         f"  {_ALLOW_BACKEND_ENV}=1\n"
         "See LEGACY.md and SPEC.md §11.\n",
         file=sys.stderr,

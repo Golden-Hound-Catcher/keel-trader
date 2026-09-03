@@ -96,7 +96,7 @@ make test
 | 组件 | 状态 |
 |------|------|
 | `keel.api.app` + `keel.worker` + `frontend/` U1 | ✅ **唯一支持的运行时** |
-| `r20_backend.app`（`/api/v1/admin/*` 遗留，无 HTML `/admin`） | ❌ **软拦截**：需 `KEEL_ALLOW_LEGACY_BACKEND=1`；无 Vue admin UI |
+| `r20_backend.app`（admin API 已移除，仅 410 stub） | ❌ **软拦截**：需 `KEEL_ALLOW_LEGACY_BACKEND=1`；任意路径 410 |
 | `r20_gateway` | ⚠️ **legacy** 通知投递（可选）；默认无 job tick |
 | `r20_backend.scheduler` / `r20-*.service` | ❌ **已禁用/门禁**（非 install 示例） |
 | `scripts/ai_*_trader.py` | ⚠️ shim：默认委托 `keel.worker.cycle` |
@@ -202,7 +202,7 @@ class MyRiskGate(RiskGate):
 ## ⚠️ 重要提示
 
 1. **单一调度器**: 只运行 `python -m keel.worker`；已禁用 `r20_backend.scheduler` / `r20-scheduler.service` / 后端 lifespan 自动拉起 Gateway 调度
-2. **默认 API/UI**: `keel.api.app` + U1 `frontend/` monitor；`r20_backend.app` 已软拦截（非支持入口）
+2. **默认 API/UI**: `keel.api.app` + U1 `frontend/` monitor；`r20_backend.app` 为已软拦截的 410 stub（admin API 已移除）
 3. **默认模拟盘**: `R20_OKX_ENV=demo` 是默认值，实盘需显式设置
 4. **风控独立**: 风控门禁不可被 LLM 决策覆盖
 5. **无收益承诺**: 这是研究项目，不保证任何收益
