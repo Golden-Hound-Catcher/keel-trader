@@ -35,9 +35,19 @@ keel/
 ├── ledger/              # SQLite 账本
 │   ├── __init__.py
 │   └── sqlite_ledger.py # 追加式账本
-├── llm/                 # LLM 决策集成
+├── llm/                 # LLM 决策集成 + 模块化提示词
 │   ├── __init__.py
-│   └── client.py        # OpenAI 兼容客户端
+│   ├── client.py        # OpenAI 兼容客户端 + Decision / schema
+│   ├── schema.py        # 决策 JSON 结构校验助手
+│   └── prompts/         # 版本化提示词模块与组装器
+│       ├── compose.py
+│       └── modules/     # *.v1.txt 默认模块
+├── policy/              # 可替换决策策略端口
+│   ├── __init__.py
+│   ├── protocol.py      # DecisionPolicy Protocol
+│   ├── stub.py          # Stub / Rule（离线确定性）
+│   ├── llm_policy.py    # LLM JSON 策略
+│   └── factory.py       # build_decision_policy
 ├── risk/                # 风险控制
 │   ├── __init__.py
 │   └── gates.py         # 硬风控门禁
@@ -74,8 +84,8 @@ keel/
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      LLM Decision                                │
-│  llm/client.py → OpenAI 兼容接口 → JSON Schema 验证              │
+│                   DecisionPolicy Port                            │
+│  policy/ (Stub|Rule|LLM) + llm/prompts 模块组装 → JSON 校验      │
 └─────────────────────┬───────────────────────────────────────────┘
                       │
                       ▼
@@ -158,6 +168,23 @@ LLM_API_KEY=your-key
 LLM_MODEL=your-model
 ```
 
+### 5. 自定义决策策略（DecisionPolicy）
+
+实现 `keel.policy.DecisionPolicy`（与交易所 `ExchangeProtocol` 同级的端口）:
+
+```python
+class MyPolicy:
+    @property
+    def name(self) -> str:
+        return "mine"
+
+    def decide(self, ctx: PolicyContext) -> PolicyResult:
+        ...
+```
+
+或设置 `KEEL_DECISION_POLICY=rule|stub|llm`。Worker 默认 `rule`（无需 LLM）。
+提示词模块见 `keel/llm/prompts/modules/*.v1.txt`，可用 `KEEL_PROMPT_MODULES_DIR` 覆盖。
+
 ## 调度器所有权
 
 **重要**：只有一个调度器可以运行。
@@ -200,7 +227,7 @@ KEEL_MAX_ASSET_MARGIN=600
 2. **阶段 2**: 旧脚本通过 shim 调用 Keel 模块
 3. **阶段 3**: 移除旧代码，只保留 Keel
 
-当前状态: **阶段 5** - OKX demo REST 适配器（`OkxRestAdapter`）+ 配置收敛；无密钥时仍走 `PaperExchange`；`r20_*` 保持 legacy
+当前状态: **阶段 6** - 可替换 `DecisionPolicy` + 模块化提示词；默认 Rule（离线）；LLM 为可选适配器；`r20_*` 保持 legacy
 
 ## 测试
 
@@ -228,6 +255,14 @@ python -m pytest tests/ -v
 - Worker cycle 记录 `adapter` / `mode`；CI 用 mock HTTP，不依赖外网
 - 配置单一入口：`keel.config.settings`（`KEEL_OKX_*` + `KEEL_LLM_*` / 兼容别名）
 - 仍不扩展 Vue / QQ / council / backup；不批量删除 `r20_*`
+
+## Stage 6（DecisionPolicy + 模块化提示词）
+
+- `keel.policy.DecisionPolicy`：可替换决策端口（`StubDecisionPolicy` / `RuleDecisionPolicy` / `LLMDecisionPolicy`）
+- `keel.llm.prompts.PromptComposer`：从包内或目录加载版本化 `*.v1.txt` 模块，组装 system/user，并做长度与安全基础校验
+- Worker cycle 经 `build_decision_policy()` 注入策略；离线测试默认 Rule/Stub，不强制 LLM
+- `keel.llm.schema.validate_decision_payload`：决策 JSON 结构校验（与 `DECISION_SCHEMA` 对齐）
+- **不做** Vue Prompt Studio UI / QQ / council（R20 Prompt Studio 的有价值部分已收敛为上述端口）
 
 ## 入口点（Stage 3 唯一推荐）
 

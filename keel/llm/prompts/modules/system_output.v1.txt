@@ -1,0 +1,7 @@
+【输出契约】
+仅输出一个 JSON 对象，字段：
+- macro_assessment: string（简短宏观/结构评估）
+- decisions: object，键为 instrument id，值为：
+  { "action", "confidence"(0-100), "leverage", "margin_usdt",
+    "entry_price", "take_profit_price", "stop_loss_price", "summary_reason" }
+不要输出 markdown 代码块或额外说明文字。
