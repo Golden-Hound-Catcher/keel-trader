@@ -30,4 +30,4 @@ sudo systemctl enable --now keel-worker keel-api
 New installs should **not** enable any `r20-*.service`. Inventory and rationale: [`../LEGACY.md`](../LEGACY.md).
 Do not run two schedulers. See [`../STANDALONE.md`](../STANDALONE.md).
 
-`uvicorn r20_backend.app:app` is soft-blocked unless `KEEL_ALLOW_LEGACY_BACKEND=1` (the gated `r20-quantum.service` sets that env when intentionally enabled).
+`uvicorn r20_backend.app:app` is soft-blocked unless `KEEL_ALLOW_LEGACY_BACKEND=1`; even then it is a 410 stub (admin API removed). Prefer `keel-api.service`.

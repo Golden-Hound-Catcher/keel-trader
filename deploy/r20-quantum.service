@@ -1,7 +1,7 @@
 # DISABLED BY DEFAULT (Stage 7 quarantine) — do not enable for new installs.
 # Preferred API: deploy/keel-api.service (uvicorn keel.api.app:app)
 #
-# This unit remains for legacy admin control-plane only (dashboard removed in U2).
+# This unit remains gated for the retired r20_backend.app 410 stub only (admin API removed).
 # Not an install example — preferred API is keel-api.service.
 # To intentionally re-enable:
 #   sudo touch /opt/r20-quantum-trader/data/.enable_legacy_r20_quantum
@@ -10,11 +10,11 @@
 # Conflicts with keel-api on the same port — do not run both.
 
 [Unit]
-Description=DISABLED-by-default LEGACY R20 control-plane backend (deprecated)
+Description=DISABLED-by-default LEGACY R20 410 stub (deprecated; admin API removed)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=/opt/r20-quantum-trader/data/.enable_legacy_r20_quantum
-# Prefer deploy/keel-api.service; this unit is legacy admin remnant only.
+# Prefer deploy/keel-api.service; this unit would only serve the 410 stub.
 
 [Service]
 Type=simple

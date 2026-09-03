@@ -267,7 +267,7 @@ python -m pytest tests/ -v
 
 ## Stage 7（legacy 隔离 / quarantine）
 
-- 不批量删除 `r20_*`；U2 已卸载并删除 Jinja `dashboard/`；`r20_backend.app` 为 API remnant（无 HTML /admin；soft-block；Vue /admin 已移除）
+- 不批量删除 `r20_*` helpers；U2 已删 Jinja `dashboard/`；Vue /admin 与 `/api/v1/admin/*`/`admin_auth` 已移除；`r20_backend.app` 为 soft-block 410 stub
 - `keel.legacy.warn_legacy`：无 `KEEL_USE_LEGACY=1` 时对主要 legacy 包/脚本发出弃用警告
 - `r20_backend.scheduler` 仍硬退出；`r20_gateway.worker` 默认无 trader job tick（验证保留）
 - `deploy/r20-*.service`：仅 `keel-api` + `keel-worker` 为推荐启用示例；r20 units 默认 `ConditionPathExists` 关闭
@@ -295,7 +295,7 @@ python -m keel.worker --once
 make test
 ```
 
-`r20_backend.app` 为 **legacy API remnant**（无 dashboard、无 HTML /admin）；勿作为新部署默认 API。监控 UI 走 `keel.api` + `frontend/`。
+`r20_backend.app` 为 **legacy 410 stub**（admin HTTP 已移除）；勿作为新部署默认 API。监控 UI 走 `keel.api` + `frontend/`。
 `r20_backend.scheduler` 与 `r20-scheduler.service` 已禁用。
 
 ## 免责声明

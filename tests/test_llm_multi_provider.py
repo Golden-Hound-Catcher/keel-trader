@@ -1,18 +1,17 @@
 """Unit tests for Unified LLM Management, Multi-Format API Support (OpenAI Chat, OpenAI Responses, Claude Messages),
-standard reasoning effort adaptation, and connection testing."""
+standard reasoning effort adaptation, and connection testing.
+
+Admin HTTP routes that previously wrapped llm_manager were removed; these tests
+exercise the library directly.
+"""
 from __future__ import annotations
-import io
 import json
 import tempfile
 import unittest
-import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from fastapi.testclient import TestClient
-import r20_backend.app as app_module
 import r20_backend.llm_manager as llm_manager
-from r20_backend.admin_auth import AdminAuthStore
 
 
 class LLMMultiProviderTests(unittest.TestCase):
@@ -20,28 +19,17 @@ class LLMMultiProviderTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.temp_path = Path(self.temp.name)
 
-        # Isolate LLM config files across both modules
         self.orig_models_file = llm_manager.LLM_CONFIG_FILE
         self.orig_legacy_file = llm_manager.LEGACY_PROVIDERS_FILE
-        self.orig_app_providers_file = app_module.LLM_PROVIDERS_FILE
         test_file = self.temp_path / "llm_models.json"
         llm_manager.LLM_CONFIG_FILE = test_file
         llm_manager.LLM_PROVIDERS_FILE = test_file
         llm_manager.LEGACY_PROVIDERS_FILE = self.temp_path / "non_existent_legacy.json"
-        app_module.LLM_PROVIDERS_FILE = test_file
 
-        # Isolate admin auth
-        self.orig_auth = app_module.admin_auth
-        app_module.admin_auth = AdminAuthStore(self.temp_path / "admin.db")
-        app_module.admin_auth.initialize_from_legacy("TestAdminPass123456")
-
-        # Isolate production environment and secrets from test mutations
         self.patcher_env = patch("r20_backend.settings_store.update_env")
         self.patcher_sec = patch("r20_gateway.secrets.save_secrets")
         self.mock_update_env = self.patcher_env.start()
         self.mock_save_secrets = self.patcher_sec.start()
-
-        self.client = TestClient(app_module.app)
 
     def tearDown(self):
         self.patcher_env.stop()
@@ -49,14 +37,7 @@ class LLMMultiProviderTests(unittest.TestCase):
         llm_manager.LLM_CONFIG_FILE = self.orig_models_file
         llm_manager.LLM_PROVIDERS_FILE = self.orig_models_file
         llm_manager.LEGACY_PROVIDERS_FILE = self.orig_legacy_file
-        app_module.LLM_PROVIDERS_FILE = self.orig_app_providers_file
-        app_module.admin_auth = self.orig_auth
         self.temp.cleanup()
-
-    def login(self) -> dict[str, str]:
-        resp = self.client.post("/api/v1/admin/auth/login", json={"username": "admin", "password": "TestAdminPass123456"})
-        self.assertEqual(resp.status_code, 200, resp.text)
-        return {"X-R20-Session": resp.json()["session_token"]}
 
     def test_init_and_load_models_clean_no_bloat(self):
         config = llm_manager.load_llm_config(mask_keys=True)
@@ -219,65 +200,6 @@ class LLMMultiProviderTests(unittest.TestCase):
         self.assertTrue(res["reasoning_detected"])
         self.assertEqual(res["api_format"], "openai_responses")
 
-    def test_admin_api_endpoints_models_crud(self):
-        headers = self.login()
-
-        # 1. GET /api/v1/admin/llm/models
-        resp = self.client.get("/api/v1/admin/llm/models", headers=headers)
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertIn("models", data)
-        self.assertIn("supported_api_formats", data)
-
-        # 2. POST /api/v1/admin/llm/models (create new model with custom api_format)
-        add_m = self.client.post("/api/v1/admin/llm/models", headers=headers, json={
-            "id": "test-claude-api",
-            "name": "Test Claude API",
-            "provider_name": "Anthropic",
-            "base_url": "https://api.anthropic.com/v1",
-            "api_key": "sk-ant-test",
-            "api_format": "claude_messages",
-            "default_effort": "high",
-        })
-        self.assertEqual(add_m.status_code, 200)
-        self.assertEqual(add_m.json()["api_format"], "claude_messages")
-
-        # 3. POST /api/v1/admin/llm/activate
-        act_resp = self.client.post("/api/v1/admin/llm/activate", headers=headers, json={
-            "model_id": "test-claude-api",
-            "reasoning_effort": "high"
-        })
-        self.assertEqual(act_resp.status_code, 200)
-        self.assertEqual(act_resp.json()["active_model_id"], "test-claude-api")
-
-        # 4. POST /api/v1/admin/llm/test with mock
-        with patch.object(app_module, "test_llm_connection") as mock_test:
-            mock_test.return_value = {
-                "ok": True,
-                "status_code": 200,
-                "latency_ms": 320,
-                "model": "test-claude-api",
-                "api_format": "claude_messages",
-                "response_preview": "PONG",
-                "reasoning_detected": True,
-            }
-            test_resp = self.client.post("/api/v1/admin/llm/test", headers=headers, json={
-                "model": "test-claude-api",
-                "api_format": "claude_messages",
-                "reasoning_effort": "high",
-            })
-            self.assertEqual(test_resp.status_code, 200)
-            self.assertTrue(test_resp.json()["ok"])
-            self.assertEqual(test_resp.json()["api_format"], "claude_messages")
-
-        # 5. Activate fallback then DELETE model
-        self.client.post("/api/v1/admin/llm/models", headers=headers, json={
-            "id": "model-temp", "base_url": "https://api.openai.com/v1"
-        })
-        self.client.post("/api/v1/admin/llm/activate", headers=headers, json={"model_id": "model-temp"})
-        del_m = self.client.delete("/api/v1/admin/llm/models/test-claude-api", headers=headers)
-        self.assertEqual(del_m.status_code, 200)
-        self.assertTrue(del_m.json()["deleted"])
 
 
 if __name__ == "__main__":

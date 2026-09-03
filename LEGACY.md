@@ -1,9 +1,10 @@
-# Legacy inventory (quarantine after admin UI removal)
+# Legacy inventory (quarantine after admin API removal)
 
-Keel Trader keeps historical R20 paths in-tree so rollback and soft-blocked
-`/api/v1/admin/*` remnant APIs still exist for tests and rare opt-in use.
-**New deployments must not use them.** The Vue `/admin/*` product surface,
-Jinja `dashboard/`, and the Vue `/legacy` route are **gone**.
+Keel Trader keeps historical R20 helper modules in-tree so gateway/scripts and
+rollback paths still work. **The Vue `/admin/*` UI, Jinja `dashboard/`, Vue
+`/legacy`, `admin_auth`, and `/api/v1/admin/*` HTTP routes are gone.**
+`r20_backend.app` is a soft-blocked **410 stub** only.
+**New deployments must not use legacy entrypoints.**
 
 ## Supported runtime (only)
 
@@ -18,7 +19,7 @@ Opt-in flags:
 | Env | Purpose |
 |-----|---------|
 | `KEEL_USE_LEGACY=1` | Acknowledge legacy scripts; silence import quarantine warnings |
-| `KEEL_ALLOW_LEGACY_BACKEND=1` | **Required** to run `uvicorn r20_backend.app:app` (soft-block otherwise) — API remnant only, **no HTML /admin** |
+| `KEEL_ALLOW_LEGACY_BACKEND=1` | **Required** to import/serve `r20_backend.app` (410 stub only) |
 | `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` | Emergency: re-enable gateway job ticks |
 
 Gateway job ticks remain separately gated. Prefer Keel units only.
@@ -34,7 +35,8 @@ Gateway job ticks remain separately gated. Prefer Keel units only.
 | Soft-block `r20_backend.app` as a deployment entrypoint | **Done** |
 | Phase U2 — drop Jinja `dashboard/` + Vue `/legacy` | **Done** |
 | Remove Vue `/admin/*` product surface + `admin.html` | **Done** |
-| Delete unused scripts / `r20_gateway` scheduler / `r20_backend` | Last (after Keel admin API) |
+| Remove `r20_backend` `/api/v1/admin/*` + `admin_auth` | **Done** |
+| Delete unused scripts / `r20_gateway` scheduler / remaining helpers | Later (inventory-gated) |
 
 ---
 
@@ -42,12 +44,22 @@ Gateway job ticks remain separately gated. Prefer Keel units only.
 
 | Path | Why it remains | Accidental-use guard |
 |------|----------------|----------------------|
-| `r20_backend/` | Soft-blocked **`/api/v1/admin/*` remnant** (no HTML UI) until Keel admin API | Import warn; prefer `keel.api` |
-| `r20_backend/app.py` | Soft-blocked ASGI remnant; `/admin` returns **410** (UI removed) | **`KEEL_ALLOW_LEGACY_BACKEND=1` required** to run via uvicorn; else exit `2` |
+| `r20_backend/` | Helper modules for optional gateway/scripts (notifications, llm_manager, backup_*, OKX helpers, council, qq_*, etc.) | Import warn; prefer `keel.api` |
+| `r20_backend/app.py` | Soft-blocked **410 stub** (admin HTTP API removed) | **`KEEL_ALLOW_LEGACY_BACKEND=1` required** to import via uvicorn; else exit `2` |
 | `r20_backend/scheduler.py` | Hard guard against double-firing | Immediate exit code `2` |
 | `r20_gateway/` | Optional notification delivery | Import warn; no job ticks by default |
 | `r20_gateway/worker.py` | Notify-only loop | Loud stderr warn on `run()`; scheduler off |
 | `r20_gateway/scheduler.py` | Unit tests / emergency rollback | Off unless `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` |
+
+### Removed from `r20_backend`
+
+| Path | Status |
+|------|--------|
+| `r20_backend/admin_auth.py` | **Deleted** |
+| `r20_backend/app.py` admin FastAPI routes (`/api/v1/admin/*`, HTML `/admin`) | **Deleted** (replaced by 410 stub) |
+| `r20_backend/admin.html` | **Deleted** (prior PR) |
+
+Keel code does **not** import these helpers; they remain for `r20_gateway` and historical `scripts/` only.
 
 ## Deploy units
 
@@ -57,7 +69,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 |------|---------|-------|
 | `deploy/keel-api.service` | **enable** | Primary API (+ optional `frontend/dist` SPA) |
 | `deploy/keel-worker.service` | **enable** | Sole scheduler |
-| `deploy/r20-quantum.service` | **disabled** | Needs `data/.enable_legacy_r20_quantum` **and** sets `KEEL_ALLOW_LEGACY_BACKEND=1` (API remnant) |
+| `deploy/r20-quantum.service` | **disabled** | Gated; would serve the 410 stub only — prefer keel-api |
 | `deploy/r20-gateway.service` | **disabled** | Needs `data/.enable_legacy_r20_gateway` |
 | `deploy/r20-scheduler.service` | **disabled** | `ConditionPathExists` + `/bin/false` |
 
@@ -75,7 +87,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/qq_notifier.py` | Bridge into gateway events |
 | `r20_backend/qq_gateway_daemon.py` | Legacy QQ daemon helper |
 
-## Removed UI artifacts
+## Removed UI / admin artifacts
 
 | Path | Status |
 |------|--------|
@@ -84,21 +96,21 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | Vue `/admin/*` + `AdminLayout` + `views/admin/**` + auth/`useApi` | **Deleted** |
 | `frontend/public/admin/legacy.html` | **Deleted** |
 | `r20_backend/admin.html` | **Deleted** |
-| `docs/images/*` (v540/v600 release cards, admin screenshots) | Historical marketing / release screenshots |
+| `r20_backend/admin_auth.py` | **Deleted** |
+| `/api/v1/admin/*` HTTP routes | **Deleted** (stub returns 410) |
 | `frontend/` monitor | **Supported** client of `keel.api` (`/`, `/monitor`) |
 
-Physical `rm -rf` of remaining `r20_*` packages is **out of scope** until admin APIs migrate to Keel (SPEC future addendum).
+Physical `rm -rf` of remaining `r20_*` helper packages is **out of scope** until gateway/scripts no longer need them (SPEC later stage).
 
 ## Verification
 
 ```sh
 python -m r20_backend.scheduler          # must exit 2
 python -c "import r20_backend.app"       # must exit 2 without KEEL_ALLOW_LEGACY_BACKEND=1
-KEEL_ALLOW_LEGACY_BACKEND=1 python -c "import r20_backend.app"  # opt-in ok (no HTML /admin)
+KEEL_ALLOW_LEGACY_BACKEND=1 python -c "import r20_backend.app"  # opt-in ok (410 stub only)
+test ! -f r20_backend/admin_auth.py
 test ! -d dashboard
 test ! -d frontend/src/views/admin
-test ! -f frontend/public/admin/legacy.html
-test ! -f r20_backend/admin.html
 make test                                # Keel core tests
 python -m pytest tests/test_legacy_quarantine.py -v
 ```
