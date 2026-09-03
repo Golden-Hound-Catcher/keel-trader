@@ -13,13 +13,6 @@ const routes: RouteRecordRaw[] = [
     redirect: '/',
   },
   {
-    // Legacy R20 5-tab dashboard — still calls /api/all (needs r20_backend). Not U1 path.
-    path: '/legacy',
-    name: 'legacy-dashboard',
-    component: () => import('../views/DashboardView.vue'),
-    meta: { isPublic: true, legacy: true },
-  },
-  {
     path: '/admin',
     component: () => import('../views/AdminLayout.vue'),
     meta: { requiresAuth: true, isPublic: false, legacy: true },

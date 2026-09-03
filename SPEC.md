@@ -189,9 +189,10 @@ LLM cannot bypass gates.
 - **Rebind data layer** to Keel `/api/v1/*` only.  
 - **Forbidden:** reading `data/*.json` or calling legacy `r20_backend` private routes from the new UI path.
 
-### Phase U2
+### Phase U2 (**done**)
 
-- Drop Jinja `dashboard/` once Vue+Keel parity for read-only monitoring exists.  
+- Dropped Jinja `dashboard/` (unmounted from `r20_backend.app`; package removed).  
+- Vue monitor at `/` + `/monitor` is the supported read-only UI; `/legacy` route removed.  
 - Admin mutations (prompt edit, keys) only through explicit Keel admin APIs (future spec addendum).
 
 UI is a **client of the SPEC API**, not a second source of truth.
@@ -205,9 +206,9 @@ UI is a **client of the SPEC API**, not a second source of truth.
 | Done | Shim traders → Keel cycle; kill dual schedulers; quarantine warnings; `LEGACY.md` |
 | Done | Phase U1 monitor rebind to Keel `/api/v1` + `/health` |
 | Done | Stop documenting `r20_backend.app` as runnable; soft-block via `KEEL_ALLOW_LEGACY_BACKEND=1` |
-| Next | Phase U2 — drop Jinja `dashboard/` once monitor parity is enough |
+| Done | Phase U2 — drop Jinja `dashboard/`; remove `/legacy` Vue route |
 | Later | Delete unused scripts, `r20_gateway` job scheduler code |
-| Last | Remove `r20_backend` once no mounts remain |
+| Last | Remove `r20_backend` once admin APIs migrate to Keel |
 
 Supported deployments: **keel-api** + **keel-worker** + optional **frontend** U1 monitor only.
 No mass-delete without inventory check against `LEGACY.md`.
@@ -239,7 +240,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 |----|----------|------------------------|
 | O1 | Vue reuse depth (full admin vs monitor-only) | Monitor-only U1 first |
 | O2 | API auth for non-local binds | None in v1 local/demo |
-| O3 | When to hard-delete `r20_*` packages | After U2 (dashboard unmount) |
+| O3 | When to hard-delete `r20_*` packages | After admin APIs migrate to Keel (post-U2) |
 
 ---
 
@@ -249,7 +250,8 @@ No mass-delete without inventory check against `LEGACY.md`.
 2. Demo trial (keys in local `.env`, not chat)  
 3. Phase U1 UI rebind to Keel API — **done**  
 4. Retire `r20_backend.app` as a documented/runnable entry (soft-block) — **done**  
-5. Phase U2 / continue legacy deletion behind inventory  
+5. Phase U2 drop Jinja `dashboard/` — **done**  
+6. Continue legacy deletion behind inventory (`r20_*` admin remnant)  
 
 ---
 
@@ -259,6 +261,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 |------|------|
 | 2026-09-03 | Initial SPEC v1 drafted after stages 2–7 refactor |
 | 2026-09-03 | §11: U1 done; soft-block `r20_backend.app`; supported = keel-api + keel-worker + U1 UI |
+| 2026-09-03 | §10/§11: U2 done — Jinja `dashboard/` removed; `/legacy` gone; `r20_backend` admin-only remnant |
 
 ---
 
@@ -274,4 +277,13 @@ Default O1 = **monitor-only**. Vue shell reused for layout/theme; data layer reb
 | decisions / trades / events | `GET /api/v1/decisions`, `/trades`, `/events` |
 | factors | `GET /api/v1/factors/{inst_id}` |
 
-Primary UI route: `/` (`MonitorView`). Legacy R20 dashboard at `/legacy`; admin under `/admin/*` (labeled legacy). Vite proxies `/api` + `/health` to `:8080`. See `frontend/README.md`.
+Primary UI route: `/` (`MonitorView`). Jinja dashboard and `/legacy` removed in U2. Admin under `/admin/*` remains labeled legacy (needs `r20_backend` opt-in). Vite proxies `/api` + `/health` to `:8080`. See `frontend/README.md`.
+
+---
+
+## Addendum: Phase U2 delivered
+
+- Deleted `dashboard/` (Jinja templates, static JS, `app.py`, start/stop scripts).
+- `r20_backend.app` no longer imports or mounts `dashboard`; soft-block kept for rare admin-only use.
+- Frontend: removed `/legacy` + `DashboardView` and R20 shell components bound to `/api/all`.
+- Supported UI remains `/` + `/monitor` on Keel `/health` + `/api/v1/*`.

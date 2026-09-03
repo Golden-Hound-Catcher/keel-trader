@@ -29,7 +29,7 @@ BJ_TZ = timezone(timedelta(hours=8))
 MAGIC = b"R20GCM2\x00"
 MANDATORY_EXCLUDES = (".git/**", ".env", ".okx/**", ".bypy/**", "backups/**", "logs/**", "data/r20_admin.db*", "data/*.enc", "data/.*_key", "data/credentials/**", "data/*.db-wal", "data/*.db-shm", "**/__pycache__/**", "*.pyc")
 SCOPE_PATHS = {
-    "data": ("data",), "scripts": ("scripts",), "dashboard": ("dashboard",), "r20_backend": ("r20_backend",), "r20_gateway": ("r20_gateway",),
+    "data": ("data",), "scripts": ("scripts",), "r20_backend": ("r20_backend",), "r20_gateway": ("r20_gateway",),
     "tests": ("tests",), "recovery_guide": ("RECOVERY_GUIDE.md",), "agent_profile": ("SOUL.md", "PROFILE.md", "AGENTS.md", "MEMORY.md"),
     "root_configs": ("README.md", "requirements.txt", "pyproject.toml", "docker-compose.yml", "Dockerfile", ".gitignore"),
 }

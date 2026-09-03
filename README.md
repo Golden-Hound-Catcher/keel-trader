@@ -78,7 +78,7 @@ python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080
 
 ### 5. Phase U1 监控 UI（可选）
 
-只读 Vue monitor：见 frontend/README.md。Vite 开发服务器代理 /api 与 /health 到 8080。路由 / 为 Keel monitor；/legacy 与 /admin 为 R20 遗留。
+只读 Vue monitor：见 frontend/README.md。Vite 开发服务器代理 /api 与 /health 到 8080。路由 / 与 /monitor 为 Keel monitor；/admin 为 R20 遗留（需 opt-in）。Jinja dashboard 与 /legacy 已在 U2 移除。
 
 
 ### 6. 测试
@@ -96,7 +96,7 @@ make test
 | 组件 | 状态 |
 |------|------|
 | `keel.api.app` + `keel.worker` + `frontend/` U1 | ✅ **唯一支持的运行时** |
-| `r20_backend.app`（含 dashboard 挂载） | ❌ **软拦截**：需 `KEEL_ALLOW_LEGACY_BACKEND=1`；保留至 U2 |
+| `r20_backend.app`（admin 遗留，无 dashboard） | ❌ **软拦截**：需 `KEEL_ALLOW_LEGACY_BACKEND=1`；U2 后仅 admin remnant |
 | `r20_gateway` | ⚠️ **legacy** 通知投递（可选）；默认无 job tick |
 | `r20_backend.scheduler` / `r20-*.service` | ❌ **已禁用/门禁**（非 install 示例） |
 | `scripts/ai_*_trader.py` | ⚠️ shim：默认委托 `keel.worker.cycle` |
@@ -120,8 +120,7 @@ keel-trader/
 │   ├── config/ exchange/ factors/ ledger/ llm/ risk/ execution/
 ├── r20_backend/             # LEGACY 控制面（过渡期）
 ├── r20_gateway/             # LEGACY 通知（过渡期）
-├── frontend/                # U1 监控 UI（绑定 keel.api）
-├── dashboard/               # LEGACY 只读 UI（由 r20_backend 挂载，直至 U2）
+├── frontend/                # U1/U2 监控 UI（绑定 keel.api；无 /legacy）
 ├── scripts/                 # LEGACY / shim 脚本
 ├── deploy/                  # systemd：仅 keel-*.service 为安装示例
 ├── tests/                   # 含 test_keel_*.py
