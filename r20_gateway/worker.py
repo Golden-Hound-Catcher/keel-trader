@@ -1,4 +1,9 @@
-"""Single-owner R20 Gateway delivery worker."""
+"""LEGACY R20 Gateway delivery worker (Stage 7 quarantine).
+
+Notification delivery only. Job scheduling is owned by ``keel.worker``.
+Do not enable ``KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER`` except emergency rollback.
+See LEGACY.md.
+"""
 from __future__ import annotations
 import fcntl
 import signal
@@ -37,6 +42,14 @@ def format_message(row: dict[str, object]) -> str:
 def run() -> None:
     """Notification delivery only. Job scheduling owned by keel.worker (Stage 2)."""
     import os
+    from keel.legacy import warn_legacy
+
+    warn_legacy(
+        "r20_gateway.worker",
+        prefer="python -m keel.worker  (sole scheduler); gateway is optional notify-only",
+        stacklevel=2,
+        loud=True,
+    )
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
     lock_handle = LOCK_FILE.open("w", encoding="utf-8")
     try:

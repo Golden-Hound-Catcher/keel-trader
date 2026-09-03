@@ -101,5 +101,12 @@ def generate_daily_briefing_and_backup():
     return briefing_text
 
 if __name__ == "__main__":
+    from keel.legacy import warn_legacy
+    warn_legacy(
+        "scripts/daily_summary_and_backup.py",
+        prefer="python -m keel.worker  (owns briefing schedule)",
+        stacklevel=2,
+        loud=True,
+    )
     rep = generate_daily_briefing_and_backup()
     print("Daily Briefing Result:\n" + rep)

@@ -1,11 +1,12 @@
 """
-DISABLED (Stage 2/3): Legacy standalone scheduler.
+DISABLED (Stage 2/3/7): Legacy standalone scheduler — hard quarantine.
 
 Keel Trader uses a single scheduler owner:
     python -m keel.worker
 
-Do NOT run this module. deploy/r20-scheduler.service is also disabled.
-This file remains only as a hard guard against accidental double-firing.
+Do NOT run this module. deploy/r20-scheduler.service cannot start
+(ConditionPathExists + ExecStart=/bin/false). This file remains only as a
+hard guard against accidental double-firing. See LEGACY.md.
 """
 from __future__ import annotations
 import sys

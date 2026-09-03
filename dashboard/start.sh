@@ -1,4 +1,7 @@
 #!/bin/bash
+# LEGACY (Stage 7) — do not use on Keel Trader hosts.
+# Prefer: deploy/keel-api.service + deploy/keel-worker.service
+# See LEGACY.md. Paths below assume an old container layout.
 # Start script for Quant Trading Dashboard & Sync Daemon
 
 PID_FILE="/app/working/workspaces/default/dashboard/dashboard.pid"

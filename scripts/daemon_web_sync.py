@@ -44,4 +44,11 @@ def main():
         time.sleep(10)
 
 if __name__ == "__main__":
+    from keel.legacy import warn_legacy
+    warn_legacy(
+        "scripts/daemon_web_sync.py",
+        prefer="keel.worker scheduled jobs (do not run this daemon on Keel hosts)",
+        stacklevel=2,
+        loud=True,
+    )
     main()

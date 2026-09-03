@@ -473,6 +473,13 @@ def run_self_evolution(force: bool = False):
     return report_payload
 
 if __name__ == "__main__":
+    from keel.legacy import warn_legacy
+    warn_legacy(
+        "scripts/self_improvement_engine.py",
+        prefer="python -m keel.worker  (owns evolution schedule)",
+        stacklevel=2,
+        loud=True,
+    )
     force_run = "--force" in sys.argv or "-f" in sys.argv
     res = run_self_evolution(force=force_run)
     print(json.dumps(res, indent=2, ensure_ascii=False))

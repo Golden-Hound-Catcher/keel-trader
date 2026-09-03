@@ -29,7 +29,7 @@
 | **keel-api** | `uvicorn keel.api.app:app` | 只读控制面（推荐 API 入口） |
 | **keel-worker** | `python -m keel.worker` | **唯一**调度器 + paper/demo 交易循环 |
 
-`r20_backend` / `r20_gateway` / `r20-*.service` 均为 **legacy / deprecated**，勿作为新部署默认路径。
+`r20_backend` / `r20_gateway` / `r20-*.service` 均为 **legacy / deprecated**（Stage 7 默认禁用 unit；见 [LEGACY.md](LEGACY.md)），勿作为新部署默认路径。
 
 ### 1. 克隆与安装
 
@@ -161,7 +161,8 @@ keel-trader/
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 架构与迁移阶段
 - [STANDALONE.md](STANDALONE.md) — 独立部署拓扑（Stage 3）
-- [ARCHITECTURE.md](ARCHITECTURE.md) — Stage 6：`DecisionPolicy` + 模块化提示词
+- [ARCHITECTURE.md](ARCHITECTURE.md) — Stage 7：legacy quarantine + DecisionPolicy
+- [LEGACY.md](LEGACY.md) — `r20_*` / 旧脚本 / 旧 unit 库存与为何保留
 
 ---
 
