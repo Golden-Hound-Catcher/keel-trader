@@ -7,7 +7,7 @@ No LLM calls. Uses the same RSI/MACD/trend heuristics previously inline in
 from __future__ import annotations
 
 from keel.factors.market_data import MarketSnapshot
-from keel.llm.client import Decision, validate_decision
+from keel.domain.decision import Decision, validate_decision
 from keel.policy.protocol import DecisionPolicy, PolicyContext, PolicyResult
 
 

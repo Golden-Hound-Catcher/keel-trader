@@ -9,7 +9,7 @@ from keel.exchange.paper import PaperAdapter
 from keel.exchange.protocol import Ticker
 from keel.execution.orchestrator import ExecutionOrchestrator
 from keel.ledger import KeelLedger
-from keel.llm.client import Decision, validate_decision
+from keel.domain.decision import Decision, validate_decision
 from keel.risk.gates import KillSwitchGate
 
 
