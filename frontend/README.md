@@ -1,8 +1,8 @@
-# Keel Trader Frontend — Phase U1/U2 Monitor
+# Keel Trader Frontend — Monitor only
 
 Monitor-only Vue UI bound to Keel keel.api.app (/health + /api/v1/*).
 
-Jinja dashboard/ and /legacy were removed in Phase U2. /admin/* still expects opt-in r20_backend.
+Jinja dashboard/, Vue /legacy, and R20 Vue /admin/* are removed. Admin features deferred to a future Keel admin API (SPEC addendum).
 
 ## Forbidden (U1 path)
 
@@ -31,7 +31,7 @@ Vite proxies /api, /health, /ready, /docs, /openapi.json to http://127.0.0.1:808
 ## Routes
 
 - / or /monitor — Keel monitor (useKeelApi + stores/monitor)
-- /admin/* — Legacy admin panel (optional; needs r20_backend)
+- /admin/* — gone (not a product surface)
 
 ## API mapping (U1)
 
@@ -55,4 +55,3 @@ When frontend/dist exists, keel.api may mount it as a static SPA (see keel/api/a
 - src/composables/useKeelApi.ts — monitor client (no R20 session header)
 - src/stores/monitor.ts — aggregates Keel endpoints
 - src/views/MonitorView.vue — monitor UI
-- src/composables/useApi.ts — legacy admin only

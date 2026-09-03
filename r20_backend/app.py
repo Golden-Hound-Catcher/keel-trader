@@ -2,9 +2,11 @@
 
 **Supported API:** ``uvicorn keel.api.app:app`` / ``deploy/keel-api.service``.
 
-Phase U2 removed the Jinja ``dashboard/`` mount. This module remains as an
-**admin-only remnant** (prompt/LLM/backup/gateway admin routes still used by
-the transitional ``/admin/*`` UI). It does **NOT** spawn a second scheduler.
+Phase U2 removed the Jinja ``dashboard/`` mount. The Vue ``/admin/*`` product
+surface was removed afterward; this module remains a soft-blocked remnant of
+``/api/v1/admin/*`` APIs only (no HTML admin UI). It does **NOT** spawn a
+second scheduler. Future admin features belong on a Keel admin API (SPEC
+addendum) — do not reintroduce an R20 dashboard here.
 
 Running ``uvicorn r20_backend.app:app`` requires ``KEEL_ALLOW_LEGACY_BACKEND=1``
 (soft-block). Accidental imports also warn unless ``KEEL_USE_LEGACY=1``.
@@ -39,7 +41,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from pydantic import BaseModel, Field
@@ -123,9 +125,6 @@ async def admin_session_context(request: Request, call_next):
 
 okx = OKXClient()
 admin_auth = AdminAuthStore()
-ADMIN_HTML = ROOT / "r20_backend" / "admin.html"
-
-
 class AdminLoginRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=1, max_length=128)
@@ -510,12 +509,22 @@ def update_status() -> dict[str, Any]:
 
 
 @app.get("/admin", include_in_schema=False)
-def admin_page() -> FileResponse:
-    # Check for Vue SPA build first; fall back to legacy admin.html
-    vue_index = ROOT / "frontend" / "dist" / "index.html"
-    if vue_index.is_file():
-        return FileResponse(str(vue_index), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
-    return FileResponse(ADMIN_HTML, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+@app.get("/admin/{path:path}", include_in_schema=False)
+def admin_ui_retired(path: str = "") -> JSONResponse:
+    """Product surface removed — Vue /admin UI and admin.html are gone."""
+    return JSONResponse(
+        status_code=410,
+        content={
+            "ok": False,
+            "error": "admin_ui_removed",
+            "message": (
+                "Legacy R20 /admin UI has been removed. "
+                "Use the Keel monitor at / (keel.api.app). "
+                "Admin features are deferred to a future Keel admin API (SPEC addendum)."
+            ),
+            "prefer": "uvicorn keel.api.app:app",
+        },
+    )
 
 
 @app.get("/api/v1/admin/auth/status")
@@ -1906,7 +1915,7 @@ def positions(x_r20_admin_token: str | None = Header(default=None)) -> dict[str,
 
 
 # Phase U2: Jinja dashboard/ unmounted. Prefer keel.api.app (+ frontend/dist SPA).
-# This ASGI app is admin/control-plane only under KEEL_ALLOW_LEGACY_BACKEND=1.
+# Soft-blocked remnant: /api/v1/admin/* only (no HTML /admin UI) under KEEL_ALLOW_LEGACY_BACKEND=1.
 
 
 if __name__ == "__main__":
