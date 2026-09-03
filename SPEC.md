@@ -195,6 +195,13 @@ LLM cannot bypass gates.
 - Vue monitor at `/` + `/monitor` is the supported read-only UI; `/legacy` route removed.  
 - Admin mutations (prompt edit, keys) only through explicit Keel admin APIs (future spec addendum).
 
+### Admin UI removal (**done**)
+
+- Removed R20 Vue `/admin/*` product surface (`AdminLayout`, `views/admin/**`, auth/`useApi`).  
+- Removed `frontend/public/admin/legacy.html` and `r20_backend/admin.html`.  
+- Soft-blocked `r20_backend.app` may still expose `/api/v1/admin/*` for tests/opt-in; HTML `/admin` returns 410.  
+- **Do not** build a full Keel admin in the monitor SPA — deferred to a SPEC addendum.
+
 UI is a **client of the SPEC API**, not a second source of truth.
 
 ---
@@ -207,6 +214,7 @@ UI is a **client of the SPEC API**, not a second source of truth.
 | Done | Phase U1 monitor rebind to Keel `/api/v1` + `/health` |
 | Done | Stop documenting `r20_backend.app` as runnable; soft-block via `KEEL_ALLOW_LEGACY_BACKEND=1` |
 | Done | Phase U2 — drop Jinja `dashboard/`; remove `/legacy` Vue route |
+| Done | Remove Vue `/admin/*` product surface; no HTML admin UI |
 | Later | Delete unused scripts, `r20_gateway` job scheduler code |
 | Last | Remove `r20_backend` once admin APIs migrate to Keel |
 
@@ -238,7 +246,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | ID | Question | Default until decided |
 |----|----------|------------------------|
-| O1 | Vue reuse depth (full admin vs monitor-only) | Monitor-only U1 first |
+| O1 | Vue reuse depth (full admin vs monitor-only) | **Monitor-only** (R20 `/admin` removed; Keel admin = future addendum) |
 | O2 | API auth for non-local binds | None in v1 local/demo |
 | O3 | When to hard-delete `r20_*` packages | After admin APIs migrate to Keel (post-U2) |
 
@@ -251,7 +259,8 @@ No mass-delete without inventory check against `LEGACY.md`.
 3. Phase U1 UI rebind to Keel API — **done**  
 4. Retire `r20_backend.app` as a documented/runnable entry (soft-block) — **done**  
 5. Phase U2 drop Jinja `dashboard/` — **done**  
-6. Continue legacy deletion behind inventory (`r20_*` admin remnant)  
+6. Remove Vue `/admin` product surface — **done**
+7. Continue legacy deletion behind inventory (`r20_*` API remnant → Keel admin API)  
 
 ---
 
@@ -262,6 +271,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-03 | Initial SPEC v1 drafted after stages 2–7 refactor |
 | 2026-09-03 | §11: U1 done; soft-block `r20_backend.app`; supported = keel-api + keel-worker + U1 UI |
 | 2026-09-03 | §10/§11: U2 done — Jinja `dashboard/` removed; `/legacy` gone; `r20_backend` admin-only remnant |
+| 2026-09-03 | Removed Vue `/admin/*` product surface; admin features deferred to future Keel admin API |
 
 ---
 
@@ -277,13 +287,21 @@ Default O1 = **monitor-only**. Vue shell reused for layout/theme; data layer reb
 | decisions / trades / events | `GET /api/v1/decisions`, `/trades`, `/events` |
 | factors | `GET /api/v1/factors/{inst_id}` |
 
-Primary UI route: `/` (`MonitorView`). Jinja dashboard and `/legacy` removed in U2. Admin under `/admin/*` remains labeled legacy (needs `r20_backend` opt-in). Vite proxies `/api` + `/health` to `:8080`. See `frontend/README.md`.
+Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/admin/*` are removed. Admin features deferred to a future Keel admin API (SPEC addendum). Vite proxies `/api` + `/health` to `:8080`. See `frontend/README.md`.
 
 ---
 
 ## Addendum: Phase U2 delivered
 
 - Deleted `dashboard/` (Jinja templates, static JS, `app.py`, start/stop scripts).
-- `r20_backend.app` no longer imports or mounts `dashboard`; soft-block kept for rare admin-only use.
+- `r20_backend.app` no longer imports or mounts `dashboard`; soft-block kept for rare API remnant use.
 - Frontend: removed `/legacy` + `DashboardView` and R20 shell components bound to `/api/all`.
 - Supported UI remains `/` + `/monitor` on Keel `/health` + `/api/v1/*`.
+
+## Addendum: Legacy `/admin` UI removed
+
+- Deleted Vue `views/admin/**`, `AdminLayout.vue`, admin router/nav, `stores/auth.ts`, `composables/useApi.ts`.
+- Deleted `frontend/public/admin/legacy.html` and `r20_backend/admin.html`.
+- Soft-blocked `r20_backend.app` `/admin` HTML route now returns **410** with a clear retirement message.
+- `/api/v1/admin/*` may remain as a soft-blocked remnant until a Keel admin API lands (future SPEC addendum).
+- Supported product UI: Keel monitor only (`/`, `/monitor`).
