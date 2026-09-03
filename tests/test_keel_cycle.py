@@ -1,0 +1,136 @@
+"""Tests for Keel paper/demo vertical cycle (Stage 2)."""
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from keel.exchange.paper import PaperAdapter
+from keel.ledger import KeelLedger
+from keel.worker.cycle import (
+    build_synthetic_candles,
+    enrich_snapshot,
+    rule_based_decision,
+    run_paper_cycle,
+)
+from keel.worker.scheduler import KeelScheduler, JobSpec
+from keel.factors.market_data import MarketSnapshot
+
+
+class TestSyntheticFactors(unittest.TestCase):
+    def test_build_and_enrich_snapshot(self):
+        candles = build_synthetic_candles(65000.0, count=64)
+        self.assertEqual(len(candles), 64)
+        snap = MarketSnapshot(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=candles[-1].timestamp,
+            candles_15m=candles,
+        )
+        enrich_snapshot(snap)
+        self.assertTrue(snap.data_valid)
+        self.assertGreater(snap.price, 0)
+        self.assertGreater(snap.atr_14, 0)
+        decision = rule_based_decision(snap)
+        self.assertIn(decision.action, ("BUY_LONG", "SELL_SHORT", "WAIT"))
+
+
+class TestPaperCycle(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "cycle.db"
+        self.ledger = KeelLedger(self.db)
+        self.exchange = PaperAdapter(initial_balance=10_000.0)
+
+    def tearDown(self):
+        self.ledger.close()
+        self.temp.cleanup()
+
+    def test_wait_cycle_records_decisions(self):
+        summary = run_paper_cycle(
+            exchange=self.exchange,
+            ledger=self.ledger,
+            instrument_ids=["BTC-USDT-SWAP"],
+            force_action="WAIT",
+        )
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["branding"], "Keel Trader")
+        self.assertEqual(summary["results"][0]["action"], "WAIT")
+        latest = self.ledger.get_latest_decision("BTC-USDT-SWAP", max_age_seconds=60)
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.action, "WAIT")
+
+    def test_forced_long_executes_and_ledgers_trade(self):
+        summary = run_paper_cycle(
+            exchange=self.exchange,
+            ledger=self.ledger,
+            instrument_ids=["BTC-USDT-SWAP"],
+            force_action="BUY_LONG",
+        )
+        self.assertTrue(summary["ok"])
+        result = summary["results"][0]
+        self.assertEqual(result["action"], "BUY_LONG")
+        self.assertTrue(result["success"], msg=result)
+        self.assertIsNotNone(result["order_id"])
+        trades = self.ledger.get_trades(inst_id="BTC-USDT-SWAP")
+        self.assertGreaterEqual(len(trades), 1)
+        self.assertEqual(len(self.exchange.get_positions()), 1)
+
+    def test_multi_instrument_paper_cycle(self):
+        summary = run_paper_cycle(
+            exchange=self.exchange,
+            ledger=self.ledger,
+            instrument_ids=["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"],
+        )
+        self.assertEqual(summary["instruments"], 3)
+        self.assertEqual(len(summary["results"]), 3)
+
+
+class TestKeelSchedulerTraderJob(unittest.TestCase):
+    def test_trader_job_invokes_keel_cycle_module(self):
+        scheduler = KeelScheduler(jobs=[JobSpec("trader", interval_seconds=60, timeout_seconds=30)])
+        with patch("keel.worker.scheduler.subprocess.run") as run_mock:
+            run_mock.return_value = type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+            scheduler._run_job(scheduler._jobs["trader"])
+            args = run_mock.call_args[0][0]
+            self.assertEqual(args[1:3], ["-m", "keel.worker.cycle"])
+        scheduler._executor.shutdown(wait=False, cancel_futures=True)
+
+
+class TestLegacySchedulerDisabled(unittest.TestCase):
+    def test_backend_scheduler_refuses(self):
+        import subprocess, sys
+        result = subprocess.run(
+            [sys.executable, "-m", "r20_backend.scheduler"],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("DISABLED", result.stderr)
+
+    def test_factor_trader_shim_defaults_to_keel(self):
+        import subprocess, sys
+        env = os.environ.copy()
+        env.pop("KEEL_USE_LEGACY", None)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "shim.db"
+            result = subprocess.run(
+                [sys.executable, "scripts/ai_factor_trader.py", "--db", str(db)],
+                cwd=Path(__file__).resolve().parents[1],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
+            # cycle main accepts --db; shim passes argv through when using cycle.main()
+            # Our shim calls cycle.main() with no argv — still should succeed.
+            self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+            self.assertIn("Keel Trader", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

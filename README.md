@@ -72,12 +72,20 @@ python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080
 - 健康检查: `http://localhost:8080/health`
 - API 文档: `http://localhost:8080/docs`
 
-**方式二：完整系统 (API + 后台)**
+**方式二：Keel 调度器 + 控制面（推荐）**
 
 ```bash
-# 启动后端 (兼容旧版，会启动 Gateway 调度器)
+# 终端 1：唯一调度器（paper/demo 交易循环 + 定时任务）
+python -m keel.worker
+
+# 一次性 paper/demo 垂直链路（factors→decision→risk→execution→ledger）
+python -m keel.worker --once
+
+# 终端 2：只读/管理控制面（不再自动拉起第二调度器）
 python -m uvicorn r20_backend.app:app --host 0.0.0.0 --port 8080
 ```
+
+> 不要同时运行 `r20_backend.scheduler`、`r20-scheduler.service` 或启用 legacy Gateway 调度。
 
 ### 5. 运行测试
 
@@ -186,7 +194,7 @@ class MyRiskGate(RiskGate):
 
 ## ⚠️ 重要提示
 
-1. **单一调度器**: 只运行一个调度器实例，使用文件锁防止重复
+1. **单一调度器**: 只运行 `python -m keel.worker`；已禁用 `r20_backend.scheduler` / `r20-scheduler.service` / 后端 lifespan 自动拉起 Gateway 调度
 2. **默认模拟盘**: `R20_OKX_ENV=demo` 是默认值，实盘需显式设置
 3. **风控独立**: 风控门禁不可被 LLM 决策覆盖
 4. **无收益承诺**: 这是研究项目，不保证任何收益

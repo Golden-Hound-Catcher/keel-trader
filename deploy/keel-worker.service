@@ -1,7 +1,9 @@
 [Unit]
-Description=Keel Trader / legacy control-plane backend (no scheduler spawn)
+Description=Keel Trader Sole Scheduler Worker
 After=network-online.target
 Wants=network-online.target
+# Ensure legacy dual schedulers stay off
+Conflicts=r20-scheduler.service
 
 [Service]
 Type=simple
@@ -11,10 +13,11 @@ Environment=HOME=/home/r20
 Environment=PATH=/opt/r20-quantum-trader/.venv/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/opt/r20-quantum-trader
 EnvironmentFile=/opt/r20-quantum-trader/.env
-ExecStart=/usr/bin/env python3 -m uvicorn r20_backend.app:app --host 0.0.0.0 --port 8080
+ExecStart=/usr/bin/env python3 -m keel.worker
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

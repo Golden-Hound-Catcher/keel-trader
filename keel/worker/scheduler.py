@@ -135,20 +135,27 @@ class KeelScheduler:
 
     def _run_job(self, spec: JobSpec) -> None:
         """Run a job in a subprocess."""
+        # Stage 2: trader job runs Keel paper/demo cycle (shim), not dual legacy paths.
+        module_map = {
+            "trader": "keel.worker.cycle",
+        }
         script_map = {
-            "trader": "scripts/ai_factor_trader.py",
             "factor_library": "scripts/factor_library.py",
             "news": "scripts/news_sentiment_harvester.py",
             "daily_briefing": "scripts/daily_summary_and_backup.py",
             "nightly_backup": "scripts/nightly_backup_and_clean.py",
         }
 
-        script = self._root / script_map.get(spec.name, f"scripts/{spec.name}.py")
         run = JobRun(name=spec.name, started_at=datetime.now(BJ_TZ))
 
         try:
+            if spec.name in module_map:
+                command = [sys.executable, "-m", module_map[spec.name]]
+            else:
+                script = self._root / script_map.get(spec.name, f"scripts/{spec.name}.py")
+                command = [sys.executable, str(script)]
             result = subprocess.run(
-                [sys.executable, str(script)],
+                command,
                 cwd=self._root,
                 text=True,
                 capture_output=True,
@@ -244,3 +251,32 @@ class KeelScheduler:
                 for r in self._runs[-20:]
             ],
         }
+
+
+def main() -> int:
+    """CLI entry for `python -m keel.worker.scheduler`."""
+    import signal
+    import time as _time
+
+    scheduler = KeelScheduler()
+    if not scheduler.start():
+        print("Keel scheduler already running (lock held)", file=sys.stderr)
+        return 1
+    stop = False
+
+    def _stop(*_: object) -> None:
+        nonlocal stop
+        stop = True
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+    try:
+        while not stop:
+            _time.sleep(1.0)
+    finally:
+        scheduler.stop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

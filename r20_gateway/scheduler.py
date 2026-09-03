@@ -1,4 +1,4 @@
-"""Gateway-owned scheduler running existing jobs in isolated subprocesses."""
+"""DEPRECATED Stage 2: Legacy gateway job scheduler.\n\nJob scheduling is owned exclusively by keel.worker. This module remains for\nunit tests and emergency rollback (KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1).\nr20_gateway.worker no longer ticks jobs by default.\n"""
 from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass

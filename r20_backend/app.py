@@ -75,9 +75,15 @@ REQUEST_SESSION: ContextVar[str] = ContextVar("r20_admin_session", default="")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    """Control-plane only. Does NOT spawn a second scheduler/gateway worker.
+
+    Stage 2: job scheduling is owned exclusively by `python -m keel.worker`.
+    Auto-spawning r20_gateway.worker here previously double-fired the trader.
+    Start notification delivery separately via deploy/r20-gateway.service if needed.
+    """
     refresh_settings()
     admin_auth.initialize_from_legacy(settings.admin_token or settings.setup_token)
-    start_gateway_supervisor()
+    # DISABLED Stage 2: start_gateway_supervisor()  # would start GatewayScheduler jobs
     try:
         from dashboard.app import start_dashboard_background_worker
         start_dashboard_background_worker()
@@ -89,10 +95,10 @@ async def lifespan(_: FastAPI):
         stop_dashboard_background_worker()
     except Exception:
         pass
-    stop_gateway_supervisor()
+    # DISABLED Stage 2: stop_gateway_supervisor()
 
 
-app = FastAPI(title="R20 Quantum Trader Standalone Backend", version="6.2.1", lifespan=lifespan)
+app = FastAPI(title="Keel Trader Control Plane (legacy backend)", version="6.2.1", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -1184,7 +1190,7 @@ def update_application(payload: UpdateRequest, x_r20_admin_token: str | None = H
         "after": status_after,
         "git_output": output,
         "restart_required": True,
-        "restart_note": "请重启 r20-quantum 与 r20-scheduler 服务，让新代码接管后台与调度。",
+        "restart_note": "请重启 r20-quantum 与 keel-worker 服务，让新代码接管后台与调度。勿启用已废弃的 r20-scheduler。",
     }
 
 
