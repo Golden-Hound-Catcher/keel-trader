@@ -46,19 +46,19 @@ chmod 600 .env
 ### 2. 配置（摘要）
 
 ```bash
-# OKX 环境 (demo 模拟盘 / live 实盘) — 默认 demo
-R20_OKX_ENV=demo
-
-OKX_DEMO_API_KEY=your_api_key
-OKX_DEMO_SECRET_KEY=your_secret_key
-OKX_DEMO_PASSPHRASE=your_passphrase
+# Prefer KEEL_* (aliases OKX_DEMO_* / R20_OKX_ENV still work)
+KEEL_OKX_ENV=demo
+KEEL_OKX_API_KEY=your_api_key
+KEEL_OKX_SECRET_KEY=your_secret_key
+KEEL_OKX_PASSPHRASE=your_passphrase
 
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_API_KEY=your_llm_api_key
 LLM_MODEL=gpt-4o
 ```
 
-Paper 垂直链路（`python -m keel.worker --once`）不需要交易所凭证。
+无 OKX 密钥时 worker 使用 `PaperExchange`；配置 `KEEL_OKX_*` 后改用 `OkxRestAdapter`（demo 默认）。
+Paper / 规则决策循环（`python -m keel.worker --once`）不强制需要 LLM 或交易所凭证。
 
 ### 3. 启动（推荐）
 

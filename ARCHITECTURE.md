@@ -25,7 +25,9 @@ keel/
 │   ├── __init__.py
 │   ├── protocol.py      # 类型化 Protocol 接口
 │   ├── okx_rest.py      # OKX REST API 适配器
-│   └── paper.py         # 模拟交易适配器
+│   ├── okx_rest.py      # OKX V5 REST（OkxRestAdapter）
+│   ├── factory.py       # build_exchange：OKX keys → REST else paper
+│   └── paper.py         # PaperExchange 模拟交易适配器
 ├── factors/             # 技术因子计算
 │   ├── __init__.py
 │   ├── market_data.py   # 行情数据结构
@@ -173,15 +175,15 @@ LLM_MODEL=your-model
 所有配置通过环境变量:
 
 ```bash
-# OKX 凭证
-R20_OKX_ENV=demo              # demo 或 live
-OKX_DEMO_API_KEY=xxx
-OKX_DEMO_SECRET_KEY=xxx
-OKX_DEMO_PASSPHRASE=xxx
+# OKX（优先 KEEL_*；有密钥 → OkxRestAdapter，否则 PaperExchange）
+KEEL_OKX_ENV=demo
+KEEL_OKX_API_KEY=xxx
+KEEL_OKX_SECRET_KEY=xxx
+KEEL_OKX_PASSPHRASE=xxx
 
-# LLM 配置
+# LLM（可选；paper 规则决策不需要）
+KEEL_LLM_API_KEY=xxx          # 或 LLM_API_KEY
 LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=xxx
 LLM_MODEL=gpt-4o
 
 # 风控参数
@@ -198,7 +200,7 @@ KEEL_MAX_ASSET_MARGIN=600
 2. **阶段 2**: 旧脚本通过 shim 调用 Keel 模块
 3. **阶段 3**: 移除旧代码，只保留 Keel
 
-当前状态: **阶段 3** - Keel-only 运行时（`keel.api.app` + `keel.worker`）；`r20_*` 标为 legacy/deprecated；paper/demo 垂直链路可用
+当前状态: **阶段 5** - OKX demo REST 适配器（`OkxRestAdapter`）+ 配置收敛；无密钥时仍走 `PaperExchange`；`r20_*` 保持 legacy
 
 ## 测试
 
@@ -217,6 +219,15 @@ python -m pytest tests/ -v
 - Worker cycle 写入 `factor_snapshots`；`keel.api` 默认从 SQLite 读 decisions/trades/events/factors
 - 公共行情助手：`keel.exchange.okx_public`（无 shell CLI）
 - 配置：`KEEL_OKX_ENV` / `KEEL_LEDGER_DB` + 精简 `env.example`
+
+
+## Stage 5（OKX demo REST 适配器）
+
+- `keel.exchange.OkxRestAdapter`：OKX V5 REST（有密钥签名；公开行情可无密钥）
+- `keel.exchange.build_exchange()`：密钥齐全 → OKX REST，否则 → `PaperExchange`
+- Worker cycle 记录 `adapter` / `mode`；CI 用 mock HTTP，不依赖外网
+- 配置单一入口：`keel.config.settings`（`KEEL_OKX_*` + `KEEL_LLM_*` / 兼容别名）
+- 仍不扩展 Vue / QQ / council / backup；不批量删除 `r20_*`
 
 ## 入口点（Stage 3 唯一推荐）
 

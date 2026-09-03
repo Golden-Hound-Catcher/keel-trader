@@ -19,12 +19,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--once",
         action="store_true",
-        help="Run a single paper/demo vertical cycle and exit (no scheduler loop)",
+        help="Run a single trader cycle (paper or OKX REST) and exit (no scheduler loop)",
     )
     parser.add_argument(
         "--force-action",
         default="",
-        help="Optional paper cycle force action (BUY_LONG / WAIT)",
+        help="Optional cycle force action (BUY_LONG / SELL_SHORT / WAIT)",
     )
     args = parser.parse_args(argv)
 

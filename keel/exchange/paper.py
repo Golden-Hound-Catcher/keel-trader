@@ -43,6 +43,10 @@ class PaperAdapter:
     def is_demo(self) -> bool:
         return True
 
+    @property
+    def adapter_name(self) -> str:
+        return "paper"
+
     def set_ticker(self, ticker: Ticker) -> None:
         """Set a ticker for paper trading (normally fed from market data)."""
         with self._lock:
@@ -223,3 +227,6 @@ class PaperAdapter:
                         upl=upl,
                         upl_ratio=upl_ratio,
                     )
+
+# Stage 5 preferred alias
+PaperExchange = PaperAdapter
