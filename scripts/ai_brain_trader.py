@@ -1077,6 +1077,12 @@ def get_latest_ai_decision(inst_id: str, max_age_seconds: int = DECISION_MAX_AGE
     return None
 
 if __name__ == "__main__":
+    # Stage 2: optional Keel paper cycle when KEEL_BRAIN_SHIM=1 (no LLM / no CLI).
+    # Default keeps the legacy brain for admin prompt preview compatibility.
+    import os as _os
+    if _os.environ.get("KEEL_BRAIN_SHIM", "").strip() == "1":
+        from keel.worker.cycle import main as _keel_cycle_main
+        raise SystemExit(_keel_cycle_main())
     res = execute_batch_ai_brain_cycle("当前无持仓")
     if res:
         print("\n--- 示例标的 AI 决策结果 ---")

@@ -162,9 +162,11 @@ LLM_MODEL=your-model
 
 | 组件 | 状态 | 说明 |
 |------|------|------|
-| `keel/worker/scheduler.py` | ✅ 主调度器 | 使用此调度器 |
-| `r20_gateway/scheduler.py` | ⚠️ 过渡期 | 逐步迁移 |
-| `r20_backend/scheduler.py` | ❌ 废弃 | 不要使用 |
+| `keel/worker` (`python -m keel.worker`) | ✅ 唯一调度器 | Stage 2  sole owner |
+| `keel/worker/cycle.py` | ✅ paper/demo 垂直链路 | factors→decision→risk→execution→ledger |
+| `r20_gateway/scheduler.py` | ❌ 默认禁用 | 仅紧急回滚 `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` |
+| `r20_backend/scheduler.py` | ❌ 硬退出 | 调用即失败 |
+| `deploy/r20-scheduler.service` | ❌ 禁用 | 改用 `deploy/keel-worker.service` |
 
 ## 配置
 
@@ -196,7 +198,7 @@ KEEL_MAX_ASSET_MARGIN=600
 2. **阶段 2**: 旧脚本通过 shim 调用 Keel 模块
 3. **阶段 3**: 移除旧代码，只保留 Keel
 
-当前状态: **阶段 1** - Keel 包已创建，旧代码仍可运行
+当前状态: **阶段 2** - 旧 trader 脚本 shim 到 Keel；单一 Keel 调度器；paper/demo 垂直链路可用
 
 ## 测试
 
@@ -214,8 +216,11 @@ python -m pytest tests/ -v
 # 启动 API (只读控制面)
 python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080
 
-# 启动 Worker (调度器)
-python -m keel.worker.scheduler
+# 启动唯一 Worker / 调度器
+python -m keel.worker
+
+# 单次 paper/demo 循环
+python -m keel.worker --once
 ```
 
 ## 免责声明
