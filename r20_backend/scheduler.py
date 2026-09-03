@@ -1,8 +1,22 @@
-"""Standalone process scheduler for R20 maintenance jobs.
-
-It owns scheduling but deliberately invokes existing scripts as isolated processes,
-which preserves each script's file lock and fail-closed behavior.
 """
+DEPRECATED: Legacy standalone scheduler.
+
+This scheduler is deprecated in favor of the unified Keel scheduler.
+Do NOT run this scheduler directly. Use the gateway scheduler instead,
+which is started automatically by r20_backend.app lifespan.
+
+If you need to run a standalone scheduler, use:
+    python -m keel.worker.scheduler
+
+This file is kept for backwards compatibility but will be removed
+in a future release.
+"""
+import warnings
+warnings.warn(
+    "r20_backend.scheduler is deprecated. Use keel.worker.scheduler or the gateway scheduler.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 from __future__ import annotations
 import fcntl
 import logging
