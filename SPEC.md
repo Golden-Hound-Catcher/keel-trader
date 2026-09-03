@@ -276,6 +276,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-03 | §10/§11: U2 done — Jinja `dashboard/` removed; `/legacy` gone; `r20_backend` admin-only remnant |
 | 2026-09-03 | Removed Vue `/admin/*` product surface; admin features deferred to future Keel admin API |
 | 2026-09-03 | Removed `r20_backend` `/api/v1/admin/*` + `admin_auth`; stub returns 410 |
+| 2026-09-03 | Elegance: Pydantic API schemas; domain owns Decision/records; kinematics in keel.factors; calculus_engine shim |
 
 ---
 
@@ -327,3 +328,8 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
   `_execute` are no-ops unless `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1`.
 - Remaining `r20_backend` helpers stay until gateway/scripts no longer need them.
 
+## Addendum: Typed API + domain / factors elegance
+
+- Introduced `keel.api.schemas` Pydantic models for health/status/positions/balance/decisions/trades/events/factors.
+- Moved ledger record dataclasses and `Decision` into `keel.domain` (llm re-exports Decision).
+- Ported `scripts/calculus_engine` pure math into `keel.factors.kinematics` (honest names); scripts module is a deprecated shim for legacy imports.

@@ -20,24 +20,26 @@ keel/
 │   └── settings.py      # 集中式配置，支持环境变量
 ├── domain/              # 核心领域模型
 │   ├── __init__.py
-│   └── instruments.py   # 交易标的定义
+│   ├── instruments.py   # 交易标的定义
+│   ├── decision.py      # Decision + validate_decision（policy/execution 共用）
+│   └── records.py       # TradeRecord / DecisionRecord / FactorSnapshot / LedgerEvent
 ├── exchange/            # 交易所适配器
 │   ├── __init__.py
 │   ├── protocol.py      # 类型化 Protocol 接口
-│   ├── okx_rest.py      # OKX REST API 适配器
 │   ├── okx_rest.py      # OKX V5 REST（OkxRestAdapter）
 │   ├── factory.py       # build_exchange：OKX keys → REST else paper
 │   └── paper.py         # PaperExchange 模拟交易适配器
 ├── factors/             # 技术因子计算
 │   ├── __init__.py
 │   ├── market_data.py   # 行情数据结构
-│   └── technical.py     # 纯函数技术指标
-├── ledger/              # SQLite 账本
+│   ├── technical.py     # 纯函数技术指标
+│   └── kinematics.py    # 价格运动学 / 路径积分 / 收益统计（诚实命名）
+├── ledger/              # SQLite 账本（持久化；形状来自 domain.records）
 │   ├── __init__.py
 │   └── sqlite_ledger.py # 追加式账本
 ├── llm/                 # LLM 决策集成 + 模块化提示词
 │   ├── __init__.py
-│   ├── client.py        # OpenAI 兼容客户端 + Decision / schema
+│   ├── client.py        # OpenAI 兼容客户端（再导出 domain.Decision）
 │   ├── schema.py        # 决策 JSON 结构校验助手
 │   └── prompts/         # 版本化提示词模块与组装器
 │       ├── compose.py
@@ -60,7 +62,8 @@ keel/
 └── api/                 # API 控制面
     ├── __init__.py
     ├── app.py           # FastAPI 入口
-    └── routers/         # 路由模块
+    ├── schemas.py       # Pydantic 响应模型（诚实 OpenAPI）
+    └── routers/         # 路由模块（返回 schemas，非 ad-hoc dict）
         ├── health.py
         ├── status.py
         ├── positions.py
@@ -306,3 +309,9 @@ Keel Trader 是研究型开源项目，不构成投资建议，不保证任何�
 ## License
 
 MIT
+
+## Elegance pass (2026-09-03): typed API + domain ownership
+
+- **API**: `/health`, `/ready`, and `/api/v1/{status,config,positions,balance,decisions,trades,events,factors}` return Pydantic models in `keel.api.schemas` so OpenAPI matches runtime JSON.
+- **Domain**: `Decision` (+ `validate_decision`), `TradeRecord`, `DecisionRecord`, `FactorSnapshot`, and `LedgerEvent` live under `keel.domain` and are reused by ledger / API / worker / execution. `keel.llm.client` re-exports `Decision` for compatibility.
+- **Factors**: unique pure math from `scripts/calculus_engine.py` ported to `keel.factors.kinematics` with honest names (`calculate_price_kinematics`, path integrals, return statistics). The scripts module is a thin deprecated shim.
