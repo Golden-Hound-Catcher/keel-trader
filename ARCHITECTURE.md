@@ -267,11 +267,17 @@ python -m pytest tests/ -v
 
 ## Stage 7（legacy 隔离 / quarantine）
 
-- 不批量删除 `r20_*`；`r20_backend.app` 仍挂载 legacy dashboard（docstring 弃用横幅）
+- 不批量删除 `r20_*`；U2 已卸载并删除 Jinja `dashboard/`；`r20_backend.app` 为 admin remnant（docstring 弃用横幅 + soft-block）
 - `keel.legacy.warn_legacy`：无 `KEEL_USE_LEGACY=1` 时对主要 legacy 包/脚本发出弃用警告
 - `r20_backend.scheduler` 仍硬退出；`r20_gateway.worker` 默认无 trader job tick（验证保留）
 - `deploy/r20-*.service`：仅 `keel-api` + `keel-worker` 为推荐启用示例；r20 units 默认 `ConditionPathExists` 关闭
 - 清单见根目录 [`LEGACY.md`](LEGACY.md)
+
+## Phase U2（drop Jinja dashboard）
+
+- 删除 `dashboard/` 包；`r20_backend.app` 不再 mount / 启动 dashboard worker
+- Vue 移除 `/legacy` 与 R20 `/api/all` shell；保留 `/` + `/monitor` Keel monitor
+- `r20_backend` 保留为 admin-only remnant（软拦截仍在）
 
 ## 入口点（Stage 3 唯一推荐）
 
@@ -289,7 +295,7 @@ python -m keel.worker --once
 make test
 ```
 
-`r20_backend.app` / dashboard 仅为 **legacy 只读 UI**，勿作为新部署默认 API。
+`r20_backend.app` 为 **legacy admin remnant**（无 dashboard）；勿作为新部署默认 API。监控 UI 走 `keel.api` + `frontend/`。
 `r20_backend.scheduler` 与 `r20-scheduler.service` 已禁用。
 
 ## 免责声明

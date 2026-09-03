@@ -1,12 +1,12 @@
 """Legacy quarantine helpers (Stage 7+).
 
 ``r20_*`` packages and historical scripts remain in-tree for rollback and the
-legacy admin/dashboard mount, but accidental use should be loud unless the
-operator explicitly opts in.
+legacy admin control plane, but accidental use should be loud unless the
+operator explicitly opts in. Jinja ``dashboard/`` was removed in Phase U2.
 
 - ``KEEL_USE_LEGACY=1`` — acknowledge legacy scripts / silence import warnings
 - ``KEEL_ALLOW_LEGACY_BACKEND=1`` — permit running ``uvicorn r20_backend.app:app``
-  (still needed for ``/legacy`` until Phase U2). Prefer ``uvicorn keel.api.app:app``.
+  (admin remnant only). Prefer ``uvicorn keel.api.app:app``.
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def require_legacy_backend(*, component: str = "r20_backend.app") -> None:
         "  python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080\n"
         "  # or: systemctl enable --now keel-api\n"
         "\n"
-        "For the transitional /legacy dashboard mount only, set:\n"
+        "For rare admin-only remnant use only, set:\n"
         f"  {_ALLOW_BACKEND_ENV}=1\n"
         "See LEGACY.md and SPEC.md §11.\n",
         file=sys.stderr,

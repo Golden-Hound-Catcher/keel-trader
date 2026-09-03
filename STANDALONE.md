@@ -9,7 +9,7 @@
 
 **Supported UI (U1):** `frontend/` monitor bound to Keel `/health` + `/api/v1/*` (see `frontend/README.md`).
 
-Everything under `r20_*` and Jinja `dashboard/` is **legacy / deprecated**. Inventory: [`LEGACY.md`](LEGACY.md).
+Everything under `r20_*` is **legacy / deprecated**. Jinja `dashboard/` was **removed in Phase U2**. Inventory: [`LEGACY.md`](LEGACY.md).
 New installs enable **only** `keel-api` + `keel-worker`. `r20-*` units require opt-in marker files under `data/` and are **not** install examples.
 
 ## Components
@@ -18,7 +18,7 @@ New installs enable **only** `keel-api` + `keel-worker`. `r20-*` units require o
 - `keel.worker`: **sole** scheduler (15-minute trader paper/demo cycle, factor refresh, news, daily briefing, nightly backup).
 - `keel.worker.cycle`: paper/demo vertical path — factors → decision → risk → execution → SQLite ledger (no shell OKX CLI).
 - `frontend/`: Phase U1 monitor UI (client of Keel API only).
-- `r20_backend.app`: **LEGACY** — not a supported deployment entrypoint. Soft-blocked unless `KEEL_ALLOW_LEGACY_BACKEND=1`. Remains only for transitional `/legacy` dashboard mount until U2. Prefer `keel.api.app`.
+- `r20_backend.app`: **LEGACY admin remnant** — not a supported deployment entrypoint. Soft-blocked unless `KEEL_ALLOW_LEGACY_BACKEND=1`. Dashboard mount removed in U2; keep only for rare `/admin/*` control-plane use. Prefer `keel.api.app`.
 - `r20_gateway.worker`: **LEGACY** optional notification delivery only (job ticks disabled by default).
 - `scripts/ai_factor_trader.py`: thin shim → `keel.worker.cycle` unless `KEEL_USE_LEGACY=1`.
 

@@ -2,12 +2,9 @@
 
 **Supported API:** ``uvicorn keel.api.app:app`` / ``deploy/keel-api.service``.
 
-This module remains temporarily for:
-  - admin / control-plane routes still used by the transitional UI
-  - mounting the legacy read-only ``dashboard/`` (``/legacy`` until Phase U2)
-
-It does **NOT** spawn a second scheduler. Do not delete this file until the
-dashboard mount is fully retired.
+Phase U2 removed the Jinja ``dashboard/`` mount. This module remains as an
+**admin-only remnant** (prompt/LLM/backup/gateway admin routes still used by
+the transitional ``/admin/*`` UI). It does **NOT** spawn a second scheduler.
 
 Running ``uvicorn r20_backend.app:app`` requires ``KEEL_ALLOW_LEGACY_BACKEND=1``
 (soft-block). Accidental imports also warn unless ``KEEL_USE_LEGACY=1``.
@@ -107,17 +104,8 @@ async def lifespan(_: FastAPI):
     refresh_settings()
     admin_auth.initialize_from_legacy(settings.admin_token or settings.setup_token)
     # DISABLED Stage 2: start_gateway_supervisor()  # would start GatewayScheduler jobs
-    try:
-        from dashboard.app import start_dashboard_background_worker
-        start_dashboard_background_worker()
-    except Exception:
-        pass
+    # Phase U2: Jinja dashboard/ + background worker removed.
     yield
-    try:
-        from dashboard.app import stop_dashboard_background_worker
-        stop_dashboard_background_worker()
-    except Exception:
-        pass
     # DISABLED Stage 2: stop_gateway_supervisor()
 
 
@@ -1917,11 +1905,8 @@ def positions(x_r20_admin_token: str | None = Header(default=None)) -> dict[str,
         raise HTTPException(status_code=502, detail=f"OKX account request failed: {exc}") from exc
 
 
-# LEGACY read-only UI only (Stage 3): public dashboard + relative-path API at /.
-# Prefer keel.api.app for new deployments. Do not treat this mount as the primary API.
-# Admin and /api/v1 routes above are evaluated before this catch-all mount.
-from dashboard.app import app as dashboard_app
-app.mount("/", dashboard_app)
+# Phase U2: Jinja dashboard/ unmounted. Prefer keel.api.app (+ frontend/dist SPA).
+# This ASGI app is admin/control-plane only under KEEL_ALLOW_LEGACY_BACKEND=1.
 
 
 if __name__ == "__main__":

@@ -104,13 +104,6 @@ const factorRows = computed(() =>
             <RefreshCw class="w-3.5 h-3.5" :class="store.isRefreshing ? 'animate-spin' : ''" />
             Refresh
           </button>
-          <a
-            href="/legacy"
-            class="hidden md:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 text-[10px] font-mono text-amber-400/90 hover:text-amber-300 transition"
-            title="Legacy R20 dashboard (needs r20_backend)"
-          >
-            Legacy UI
-          </a>
         </div>
       </div>
 
@@ -415,10 +408,8 @@ const factorRows = computed(() =>
     </main>
 
     <footer class="border-t border-[#1A2232] bg-[#0A0D14] py-3 text-center text-[10px] font-mono text-[#707E94]">
-      Keel Trader · Phase U1 monitor · binds to /health + /api/v1/* only ·
+      Keel Trader · Phase U2 monitor · binds to /health + /api/v1/* only ·
       <a href="/docs" class="text-cyan-500/80 hover:text-cyan-400">API docs</a>
-      ·
-      <a href="/legacy" class="text-amber-500/70 hover:text-amber-400">legacy R20 shell</a>
     </footer>
   </div>
 </template>
