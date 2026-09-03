@@ -1,0 +1,5 @@
+【决策上下文】
+时区：Asia/Shanghai
+策略版本：{{strategy_version}}
+标的池：{{active_instruments}}
+时间戳：{{timestamp}}

@@ -12,6 +12,8 @@ Stage 4: persists factor_snapshots + coherent Decision↔risk↔ledger events so
 keel.api can read the latest cycle from SQLite without hitting live OKX.
 
 Stage 5: optional OkxRestAdapter via keel.exchange.factory.build_exchange.
+
+Stage 6: DecisionPolicy port (Stub/Rule/LLM) + modular prompts; default Rule for offline.
 """
 from __future__ import annotations
 
@@ -42,6 +44,13 @@ from keel.factors.technical import (
 )
 from keel.ledger import DecisionRecord, FactorSnapshot, KeelLedger
 from keel.llm.client import Decision, validate_decision
+from keel.policy import (
+    DecisionPolicy,
+    PolicyContext,
+    build_decision_policy,
+    describe_policy,
+    rule_based_decision,
+)
 
 
 DEFAULT_SEED_PRICES: dict[str, float] = {
@@ -143,64 +152,8 @@ def enrich_snapshot(snapshot: MarketSnapshot) -> MarketSnapshot:
     return snapshot
 
 
-def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
-    """
-    Deterministic paper decision (no LLM).
-
-    Produces valid RR >= 2 geometry when a signal fires so the risk/execution
-    path is exercised end-to-end.
-    """
-    if not snapshot.data_valid or snapshot.price <= 0 or snapshot.atr_14 <= 0:
-        return Decision(inst_id=snapshot.inst_id, action="WAIT", reason="invalid market data")
-
-    price = snapshot.price
-    atr = snapshot.atr_14
-    margin = 50.0
-
-    # Mild oversold + bullish structure → long
-    if snapshot.rsi_14 <= 42 and snapshot.trend_15m == "bullish" and snapshot.macd_histogram >= 0:
-        entry = price
-        sl = entry - 1.0 * atr
-        tp = entry + 2.2 * atr
-        return Decision(
-            inst_id=snapshot.inst_id,
-            action="BUY_LONG",
-            confidence=70.0,
-            entry_price=entry,
-            take_profit=tp,
-            stop_loss=sl,
-            leverage=3,
-            margin_usdt=margin,
-            reason=f"paper long rsi={snapshot.rsi_14:.1f} trend={snapshot.trend_15m}",
-        )
-
-    # Mild overbought + bearish structure → short
-    if snapshot.rsi_14 >= 58 and snapshot.trend_15m == "bearish" and snapshot.macd_histogram <= 0:
-        entry = price
-        sl = entry + 1.0 * atr
-        tp = entry - 2.2 * atr
-        return Decision(
-            inst_id=snapshot.inst_id,
-            action="SELL_SHORT",
-            confidence=70.0,
-            entry_price=entry,
-            take_profit=tp,
-            stop_loss=sl,
-            leverage=3,
-            margin_usdt=margin,
-            reason=f"paper short rsi={snapshot.rsi_14:.1f} trend={snapshot.trend_15m}",
-        )
-
-    return Decision(
-        inst_id=snapshot.inst_id,
-        action="WAIT",
-        confidence=40.0,
-        reason=f"no paper signal rsi={snapshot.rsi_14:.1f}",
-    )
-
-
 def decision_from_snapshot(snapshot: MarketSnapshot) -> Decision:
-    """Rule-based decision with shared schema / RR validation."""
+    """Rule-based decision with shared schema / RR validation (compat helper)."""
     return validate_decision(rule_based_decision(snapshot))
 
 
@@ -234,6 +187,7 @@ def run_paper_cycle(
     seed_prices: dict[str, float] | None = None,
     force_action: str | None = None,
     force_paper: bool = False,
+    policy: DecisionPolicy | None = None,
 ) -> dict[str, Any]:
     """
     Run one vertical trader cycle through Keel.
@@ -241,6 +195,9 @@ def run_paper_cycle(
     Exchange selection (when ``exchange`` is not injected):
     - OkxRestAdapter if OKX keys are configured (unless force_paper)
     - PaperExchange otherwise
+
+    Decision policy (when ``policy`` is not injected):
+    - ``build_decision_policy()`` → Rule by default; LLM when configured + env
 
     Returns a JSON-serializable summary for tests and CLI.
     """
@@ -253,6 +210,9 @@ def run_paper_cycle(
     adapter_label = describe_exchange(exchange)
     if ledger is None:
         ledger = KeelLedger(settings.ledger_path)
+
+    policy = policy or build_decision_policy(settings)
+    policy_label = describe_policy(policy)
 
     now = time.time()
     snapshots: dict[str, MarketSnapshot] = {}
@@ -281,7 +241,15 @@ def run_paper_cycle(
     daily_pnl = ledger.get_daily_pnl()
 
     results: list[dict[str, Any]] = []
-    decisions: dict[str, Decision] = {}
+
+    policy_result = policy.decide(
+        PolicyContext(
+            snapshots=snapshots,
+            instrument_ids=ids,
+            timestamp=now,
+        )
+    )
+    decisions: dict[str, Decision] = dict(policy_result.decisions)
 
     for inst_id, snap in snapshots.items():
         ledger.record_factor_snapshot(
@@ -309,7 +277,9 @@ def run_paper_cycle(
             )
         )
 
-        decision = decision_from_snapshot(snap)
+        decision = decisions.get(inst_id) or Decision(
+            inst_id=inst_id, action="WAIT", reason="policy omitted"
+        )
         if force_action and inst_id == ids[0]:
             # Test hook: force a fillable action on first instrument.
             price = snap.price
@@ -400,6 +370,8 @@ def run_paper_cycle(
             "results": len(results),
             "adapter": adapter_label,
             "mode": mode,
+            "policy": policy_label,
+            "policy_success": policy_result.success,
         },
     )
     # Keep legacy event name for older API consumers / tests.
@@ -413,6 +385,8 @@ def run_paper_cycle(
         "ok": True,
         "mode": mode,
         "adapter": adapter_label,
+        "policy": policy_label,
+        "policy_success": policy_result.success,
         "branding": "Keel Trader",
         "instruments": len(ids),
         "daily_pnl": daily_pnl,

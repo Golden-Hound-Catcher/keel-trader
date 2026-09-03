@@ -58,7 +58,7 @@ LLM_MODEL=gpt-4o
 ```
 
 无 OKX 密钥时 worker 使用 `PaperExchange`；配置 `KEEL_OKX_*` 后改用 `OkxRestAdapter`（demo 默认）。
-Paper / 规则决策循环（`python -m keel.worker --once`）不强制需要 LLM 或交易所凭证。
+Paper / 规则决策循环（`python -m keel.worker --once`）不强制需要 LLM 或交易所凭证。 决策经 `keel.policy.DecisionPolicy`（默认 `rule`；`KEEL_DECISION_POLICY=llm` 启用模块化提示词 + LLM）。
 
 ### 3. 启动（推荐）
 
@@ -161,6 +161,7 @@ keel-trader/
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 架构与迁移阶段
 - [STANDALONE.md](STANDALONE.md) — 独立部署拓扑（Stage 3）
+- [ARCHITECTURE.md](ARCHITECTURE.md) — Stage 6：`DecisionPolicy` + 模块化提示词
 
 ---
 
