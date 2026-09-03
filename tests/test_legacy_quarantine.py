@@ -85,5 +85,80 @@ class TestLegacyWarnHelper(unittest.TestCase):
             self.assertIn("unit-test-component", str(caught[0].message))
 
 
+
+class TestLegacyBackendSoftBlock(unittest.TestCase):
+    def test_require_legacy_backend_exits_without_flag(self):
+        from keel.legacy import require_legacy_backend
+
+        with patch.dict(os.environ, {"KEEL_ALLOW_LEGACY_BACKEND": ""}, clear=False):
+            os.environ.pop("KEEL_ALLOW_LEGACY_BACKEND", None)
+            # Simulate non-pytest import path for the guard itself.
+            with patch("keel.legacy.legacy_backend_allowed", return_value=False):
+                with self.assertRaises(SystemExit) as ctx:
+                    require_legacy_backend(component="r20_backend.app")
+                self.assertEqual(ctx.exception.code, 2)
+
+    def test_require_legacy_backend_allows_with_flag(self):
+        from keel.legacy import require_legacy_backend
+
+        with patch.dict(os.environ, {"KEEL_ALLOW_LEGACY_BACKEND": "1"}):
+            require_legacy_backend(component="r20_backend.app")  # no raise
+
+    def test_uvicorn_style_import_exits_without_allow(self):
+        """Accidental ``python -c 'import r20_backend.app'`` without flag fails."""
+        env = {**os.environ, "PYTHONWARNINGS": "ignore"}
+        env.pop("KEEL_ALLOW_LEGACY_BACKEND", None)
+        env.pop("PYTEST_CURRENT_TEST", None)
+        # Ensure subprocess does not inherit a pytest module via sitecustomize; fresh interp.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import importlib; importlib.import_module('r20_backend.app')",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("DISABLED", result.stderr)
+        self.assertIn("keel.api.app", result.stderr)
+
+    def test_uvicorn_style_import_ok_with_allow(self):
+        """With opt-in, soft-block must not fire (full app import may need extra deps)."""
+        env = {
+            **os.environ,
+            "PYTHONWARNINGS": "ignore",
+            "KEEL_ALLOW_LEGACY_BACKEND": "1",
+        }
+        code = (
+            "import importlib\n"
+            "try:\n"
+            "    importlib.import_module('r20_backend.app')\n"
+            "    print('imported')\n"
+            "except SystemExit as e:\n"
+            "    print('sysexit', e.code)\n"
+            "    raise\n"
+            "except Exception as e:\n"
+            "    print('past-guard', type(e).__name__)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        self.assertNotEqual(result.returncode, 2, msg=result.stderr + result.stdout)
+        self.assertNotIn("DISABLED", result.stderr)
+        self.assertTrue(
+            "imported" in result.stdout or "past-guard" in result.stdout,
+            msg=result.stderr + result.stdout,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

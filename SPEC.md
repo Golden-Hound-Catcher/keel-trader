@@ -61,7 +61,9 @@ Optional one-shot:
 python -m keel.worker --once
 ```
 
-Legacy `r20_backend` / `r20_gateway` / `dashboard` / `frontend` are **not** supported entrypoints for new deployments (see `LEGACY.md`).
+Legacy `r20_backend` / `r20_gateway` / `dashboard` are **not** supported entrypoints for new deployments (see `LEGACY.md`).
+`frontend/` U1 monitor **is** supported as a read-only client of `keel.api`.
+`uvicorn r20_backend.app:app` requires `KEEL_ALLOW_LEGACY_BACKEND=1` or exits pointing at `keel.api`.
 
 ---
 
@@ -201,10 +203,13 @@ UI is a **client of the SPEC API**, not a second source of truth.
 | Stage | Action |
 |-------|--------|
 | Done | Shim traders → Keel cycle; kill dual schedulers; quarantine warnings; `LEGACY.md` |
-| Next | UI rebind (U1); stop documenting `r20_backend.app` as runnable |
-| Later | Delete `dashboard/`, unused scripts, `r20_gateway` job scheduler code |
+| Done | Phase U1 monitor rebind to Keel `/api/v1` + `/health` |
+| Done | Stop documenting `r20_backend.app` as runnable; soft-block via `KEEL_ALLOW_LEGACY_BACKEND=1` |
+| Next | Phase U2 — drop Jinja `dashboard/` once monitor parity is enough |
+| Later | Delete unused scripts, `r20_gateway` job scheduler code |
 | Last | Remove `r20_backend` once no mounts remain |
 
+Supported deployments: **keel-api** + **keel-worker** + optional **frontend** U1 monitor only.
 No mass-delete without inventory check against `LEGACY.md`.
 
 ---
@@ -234,16 +239,17 @@ No mass-delete without inventory check against `LEGACY.md`.
 |----|----------|------------------------|
 | O1 | Vue reuse depth (full admin vs monitor-only) | Monitor-only U1 first |
 | O2 | API auth for non-local binds | None in v1 local/demo |
-| O3 | When to hard-delete `r20_*` packages | After U1 green |
+| O3 | When to hard-delete `r20_*` packages | After U2 (dashboard unmount) |
 
 ---
 
 ## 15. Implementation order (post-spec)
 
-1. Freeze this SPEC on `main`  
+1. Freeze this SPEC on `main` — **done**  
 2. Demo trial (keys in local `.env`, not chat)  
-3. Phase U1 UI rebind to Keel API  
-4. Continue legacy deletion behind inventory  
+3. Phase U1 UI rebind to Keel API — **done**  
+4. Retire `r20_backend.app` as a documented/runnable entry (soft-block) — **done**  
+5. Phase U2 / continue legacy deletion behind inventory  
 
 ---
 
@@ -252,6 +258,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | Date | Note |
 |------|------|
 | 2026-09-03 | Initial SPEC v1 drafted after stages 2–7 refactor |
+| 2026-09-03 | §11: U1 done; soft-block `r20_backend.app`; supported = keel-api + keel-worker + U1 UI |
 
 ---
 

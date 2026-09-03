@@ -1,21 +1,24 @@
-# Keel Trader Standalone Deployment (Stage 3 topology / Stage 7 quarantine)
+# Keel Trader Standalone Deployment
 
-**Run only two processes in normal operation:**
+**Supported long-running processes (only):**
 
 | Process | Module / unit | Role |
 |---------|---------------|------|
 | **keel-api** | `uvicorn keel.api.app:app` / `deploy/keel-api.service` | Primary read-only API control plane |
 | **keel-worker** | `python -m keel.worker` / `deploy/keel-worker.service` | **Sole** job scheduler + paper/demo cycle |
 
-Everything under `r20_*` is **legacy / deprecated**. Inventory: [`LEGACY.md`](LEGACY.md).
-New installs enable **only** `keel-api` + `keel-worker`. `r20-quantum` / `r20-gateway` units require opt-in marker files under `data/`.
+**Supported UI (U1):** `frontend/` monitor bound to Keel `/health` + `/api/v1/*` (see `frontend/README.md`).
+
+Everything under `r20_*` and Jinja `dashboard/` is **legacy / deprecated**. Inventory: [`LEGACY.md`](LEGACY.md).
+New installs enable **only** `keel-api` + `keel-worker`. `r20-*` units require opt-in marker files under `data/` and are **not** install examples.
 
 ## Components
 
 - `keel.api.app`: **primary** FastAPI entry (health + `/api/v1/*` read-only).
 - `keel.worker`: **sole** scheduler (15-minute trader paper/demo cycle, factor refresh, news, daily briefing, nightly backup).
 - `keel.worker.cycle`: paper/demo vertical path — factors → decision → risk → execution → SQLite ledger (no shell OKX CLI).
-- `r20_backend.app`: **LEGACY** admin/control plane. Mounts `dashboard` as a **legacy read-only UI** at `/`. Does **not** auto-spawn a second scheduler. Prefer `keel.api.app` for new deployments.
+- `frontend/`: Phase U1 monitor UI (client of Keel API only).
+- `r20_backend.app`: **LEGACY** — not a supported deployment entrypoint. Soft-blocked unless `KEEL_ALLOW_LEGACY_BACKEND=1`. Remains only for transitional `/legacy` dashboard mount until U2. Prefer `keel.api.app`.
 - `r20_gateway.worker`: **LEGACY** optional notification delivery only (job ticks disabled by default).
 - `scripts/ai_factor_trader.py`: thin shim → `keel.worker.cycle` unless `KEEL_USE_LEGACY=1`.
 
@@ -32,7 +35,7 @@ chmod 600 .env
 
 Set `LLM_*` and `OKX_*` credentials in `.env` if you later enable live/demo exchange adapters. Paper cycle needs no exchange credentials.
 
-## Run Locally (Stage 3 topology)
+## Run Locally
 
 Terminal 1 — **sole scheduler**:
 
@@ -49,30 +52,39 @@ Terminal 2 — **primary API**:
 python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080
 ```
 
-### Legacy (optional, same port conflict — do not dual-bind)
+Terminal 3 (optional) — **U1 monitor**:
 
 ```sh
-# LEGACY control plane + read-only dashboard UI only
-python -m uvicorn r20_backend.app:app --host 0.0.0.0 --port 8080
+cd frontend && npm ci && npm run dev
+```
+
+### Legacy (blocked by default — do not use for new deploys)
+
+```sh
+# Requires KEEL_ALLOW_LEGACY_BACKEND=1; conflicts with keel-api on the same port
+KEEL_ALLOW_LEGACY_BACKEND=1 python -m uvicorn r20_backend.app:app --host 0.0.0.0 --port 8080
 
 # LEGACY notification delivery only
 python -m r20_gateway.worker
 ```
 
+Without `KEEL_ALLOW_LEGACY_BACKEND=1`, importing/serving `r20_backend.app` exits with code `2` and points at `keel.api`.
+
 ## Do NOT run two schedulers
 
 | Unit / module | Status |
 |---------------|--------|
-| `python -m keel.worker` / `deploy/keel-worker.service` | use this |
-| `uvicorn keel.api.app:app` / `deploy/keel-api.service` | use this |
-| `r20_backend.app` / `deploy/r20-quantum.service` | legacy UI/admin only |
+| `python -m keel.worker` / `deploy/keel-worker.service` | **supported** |
+| `uvicorn keel.api.app:app` / `deploy/keel-api.service` | **supported** |
+| `frontend/` U1 monitor | **supported** (read-only client) |
+| `r20_backend.app` / `deploy/r20-quantum.service` | legacy; gated + soft-blocked |
 | `r20_backend.scheduler` / `deploy/r20-scheduler.service` | disabled (exits / cannot start) |
 | Backend lifespan gateway auto-spawn | removed |
 | Gateway `GatewayScheduler.tick` | off unless `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` |
 
 ## systemd
 
-Prefer Keel units only:
+Install **only** Keel units:
 
 ```sh
 sudo cp deploy/keel-worker.service deploy/keel-api.service /etc/systemd/system/
@@ -83,4 +95,4 @@ sudo systemctl enable --now keel-worker keel-api
 ```
 
 Never enable `r20-scheduler.service` alongside `keel-worker`.
-`r20-quantum.service` and `r20-gateway.service` remain available only for legacy admin UI / notifications.
+`r20-quantum.service` / `r20-gateway.service` are gated leftovers, not install examples.

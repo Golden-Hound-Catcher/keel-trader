@@ -28,15 +28,17 @@ chmod +x "$ROOT/scripts/r20_okx_setup.py"
 
 cat <<EOF
 
-R20 dependencies installed.
-Next:
-  1. Edit $ROOT/.env and keep R20_OKX_ENV=demo initially.
-  2. Configure OKX using ONE method:
-     - Recommended standalone path: enter a DEMO API Key in /admin.
-     - CLI OAuth path: run OAuth login as the SAME Linux user that runs both services.
-  3. Verify without placing an order:
-     $VENV_DIR/bin/python $ROOT/scripts/r20_okx_setup.py
+Keel Trader dependencies installed.
+Supported runtime:
+  - keel-api:    uvicorn keel.api.app:app   (deploy/keel-api.service)
+  - keel-worker: python -m keel.worker      (deploy/keel-worker.service)
+  - frontend/:   optional U1 monitor (see frontend/README.md)
 
-OAuth site must be explicitly selected: global / eea / us / tr.
-Do not copy another user's ~/.okx directory or commit credentials.
+Next:
+  1. Edit $ROOT/.env (prefer KEEL_OKX_* ; keep KEEL_OKX_ENV=demo initially).
+  2. Start only Keel units / processes — do not enable r20-*.service.
+  3. Verify: python -m keel.worker --once && curl -s localhost:8080/health
+
+Legacy r20_backend.app is soft-blocked unless KEEL_ALLOW_LEGACY_BACKEND=1.
+See LEGACY.md / STANDALONE.md / deploy/README.md.
 EOF
