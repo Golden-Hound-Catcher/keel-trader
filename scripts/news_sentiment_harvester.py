@@ -57,11 +57,6 @@ def trigger_circuit_breaker(headline: str, keyword: str):
     with open(CIRCUIT_BREAKER_FILE, "w", encoding="utf-8") as f:
         json.dump(cb_data, f, ensure_ascii=False, indent=2)
         
-    try:
-        from qq_notifier import notify_circuit_breaker
-        notify_circuit_breaker(headline, f"命中突发高危词汇【{keyword}】")
-    except Exception:
-        pass
     print(f"🚨 黑天鹅熔断已激活: {headline}")
 
 def is_circuit_breaker_active():

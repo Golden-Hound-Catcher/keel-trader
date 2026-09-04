@@ -209,6 +209,7 @@ class TestDeletedLegacyScripts(unittest.TestCase):
             "cleanup_disk.py",
             "calculus_replay.py",
             "calculus_engine.py",
+            "qq_notifier.py",
         ]
         for name in gone:
             self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)

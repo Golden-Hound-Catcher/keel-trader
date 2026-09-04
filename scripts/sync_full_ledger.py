@@ -38,15 +38,6 @@ def build_lifecycle_ledger():
         except Exception:
             pass
 
-    existing_closed_ids = set()
-    if os.path.exists(LEDGER_JSON_FILE):
-        try:
-            with open(LEDGER_JSON_FILE, "r", encoding="utf-8") as f:
-                old_trades = json.load(f)
-                existing_closed_ids = {t["id"] for t in old_trades if t.get("status") == "closed"}
-        except Exception:
-            pass
-
     trackers = {}
     if os.path.exists(POSITION_TRACKER_FILE):
         try:
@@ -252,20 +243,6 @@ def build_lifecycle_ledger():
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
-
-    # Notify newly closed trades via QQ
-    try:
-        from qq_notifier import notify_trade_close
-        for t in trades_lifecycle:
-            if t["id"] not in existing_closed_ids and t.get("status") == "closed":
-                notify_trade_close(
-                    inst=t.get("inst", "CRYPTO"),
-                    pnl=float(t.get("pnl", 0.0) or 0.0),
-                    stage=t.get("exit_reason", "平仓结清"),
-                    exit_px=float(t.get("close_px", 0.0) or 0.0)
-                )
-    except Exception as e:
-        print(f"[Ledger Sync Notify Warning] {e}")
 
     print(f"✅ Authentic OKX Positions-History Ledger Generated: {len(trades_lifecycle)} total trades.")
     return trades_lifecycle

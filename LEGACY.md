@@ -70,7 +70,7 @@ Gateway job ticks remain separately gated (notify-only by default). Prefer Keel 
 | `r20_backend/audit.py` | **Deleted** (only imported by `qq_gateway_daemon`) |
 
 Keel code does **not** import these helpers; they remain for `r20_gateway` and remaining historical `scripts/` only.
-Keel notify uses `keel.notify` (Null/Webhook) instead of the removed QQ bind/daemon stack.
+Keel notify uses `keel.notify` (Null/Webhook) instead of the removed QQ bind/daemon stack and deleted `scripts/qq_notifier.py` bridge.
 
 ### Removed from `r20_gateway`
 
@@ -102,7 +102,6 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/self_improvement_engine.py` | Historical evolution job (tests + optional gateway JOBS) |
 | `scripts/nightly_backup_and_clean.py` | Historical nightly job (still launched by `keel.worker`) |
 | `scripts/factor_library.py` / `news_sentiment_harvester.py` | Still launched by `keel.worker` |
-| `scripts/qq_notifier.py` | Bridge into gateway publisher/events (does **not** import deleted QQ bind/daemon) |
 | `scripts/sync_full_ledger.py` / `backup_runtime.py` / `okx_runtime.py` / … | Helpers still used by remaining scripts/tests |
 
 ### Deleted scripts / gateway helpers (inventory)
@@ -118,6 +117,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/cleanup_disk.py` | Orphan disk cleanup CLI; unused by nightly/Keel |
 | `scripts/calculus_replay.py` | Orphan offline replay CLI |
 | `scripts/calculus_engine.py` | Deprecated shim; importers migrated to `keel.factors.kinematics` |
+| `scripts/qq_notifier.py` | QQ product non-goal; call sites removed; Keel uses `keel.notify` |
 | `r20_gateway/agents.py` | 0 external refs (admin-era agent registry) |
 | `r20_gateway/supervisor.py` | 0 external refs (unused supervisor wrapper) |
 | `r20_backend/qq_bind.py` | QQ product non-goal; 0 Keel/scripts importers |

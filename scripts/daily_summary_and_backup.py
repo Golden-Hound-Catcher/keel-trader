@@ -19,10 +19,6 @@ LEDGER_JSON_FILE = os.path.join(DATA_DIR, "trading_ledger.json")
 
 os.makedirs(BACKUPS_DIR, exist_ok=True)
 sys.path.append(os.path.join(WORKSPACE_DIR, "scripts"))
-try:
-    from qq_notifier import notify_daily_summary
-except Exception:
-    notify_daily_summary = None
 
 def generate_daily_briefing_and_backup():
     tz_bj = datetime.timezone(datetime.timedelta(hours=8))
@@ -94,10 +90,7 @@ def generate_daily_briefing_and_backup():
         f"• 策略状态：多周期趋势共振滤网已激活，黑天鹅熔断哨兵全天候巡检中。"
     )
 
-    if notify_daily_summary:
-        notify_daily_summary(briefing_text)
-
-    print("✅ 每日量化研报已成功生成并推送。")
+    print("✅ 每日量化研报已成功生成。")
     return briefing_text
 
 if __name__ == "__main__":

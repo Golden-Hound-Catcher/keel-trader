@@ -191,8 +191,9 @@ def _seed_paper_tickers(
 
 
 
-# Cap risk-deny reason list on cycle summaries (monitor / status payloads).
+# Cap detail lists on cycle summaries (monitor / status payloads).
 RISK_DENY_REASONS_CAP = 20
+CYCLE_ERRORS_CAP = 20
 
 
 def build_cycle_summary(
@@ -210,11 +211,13 @@ def build_cycle_summary(
     Structured last-cycle payload for ledger + GET /api/v1/status.
 
     Aggregates decision counts by action, risk denies (count + capped reasons),
-    and non-risk errors. Includes wall-clock ``duration_ms`` for the cycle run.
+    and non-risk errors (full ``error_count`` + capped ``errors`` detail list).
+    Includes wall-clock ``duration_ms`` for the cycle run.
     """
     decision_counts: dict[str, int] = {}
     risk_denies = 0
     risk_deny_reasons: list[dict[str, str]] = []
+    error_count = 0
     errors: list[dict[str, Any]] = []
     for row in results:
         action = str(row.get("action") or "UNKNOWN")
@@ -226,12 +229,14 @@ def build_cycle_summary(
                 reason = str(row.get("error") or "")
                 risk_deny_reasons.append({"gate": gate, "reason": reason})
         elif row.get("error") and not row.get("success"):
-            errors.append(
-                {
-                    "inst_id": row.get("inst_id"),
-                    "error": str(row["error"]),
-                }
-            )
+            error_count += 1
+            if len(errors) < CYCLE_ERRORS_CAP:
+                errors.append(
+                    {
+                        "inst_id": row.get("inst_id"),
+                        "error": str(row["error"]),
+                    }
+                )
     payload: dict[str, Any] = {
         "timestamp": timestamp,
         "mode": mode,
@@ -241,6 +246,7 @@ def build_cycle_summary(
         "decision_counts": decision_counts,
         "risk_denies": risk_denies,
         "risk_deny_reasons": risk_deny_reasons,
+        "error_count": error_count,
         "errors": errors,
         "duration_ms": int(duration_ms),
     }
@@ -466,6 +472,7 @@ def run_paper_cycle(
             "decision_counts": cycle_summary["decision_counts"],
             "risk_denies": cycle_summary["risk_denies"],
             "risk_deny_reasons": cycle_summary["risk_deny_reasons"],
+            "error_count": cycle_summary["error_count"],
             "errors": cycle_summary["errors"],
         },
         timestamp=now,

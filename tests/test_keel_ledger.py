@@ -158,6 +158,7 @@ class TestKeelLedger(unittest.TestCase):
             "decision_counts": {"WAIT": 1, "BUY_LONG": 1},
             "risk_denies": 1,
             "risk_deny_reasons": [{"gate": "daily_loss", "reason": "Limit exceeded"}],
+            "error_count": 0,
             "errors": [],
             "policy_success": True,
             "duration_ms": 17,
@@ -172,6 +173,7 @@ class TestKeelLedger(unittest.TestCase):
         self.assertEqual(got["duration_ms"], 17)
         self.assertEqual(got["risk_denies"], 1)
         self.assertEqual(got["risk_deny_reasons"][0]["gate"], "daily_loss")
+        self.assertEqual(got["error_count"], 0)
 
     def test_trade_time_str(self):
         trade = TradeRecord(
