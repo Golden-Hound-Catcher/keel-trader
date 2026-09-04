@@ -11,6 +11,7 @@ import {
   LineChart,
   RefreshCw,
   Shield,
+  Ban,
 } from 'lucide-vue-next'
 
 const store = useMonitorStore()
@@ -67,6 +68,9 @@ const lastCycleActions = computed(() => {
     .map(([k, v]) => `${k}:${v}`)
     .join(' · ')
 })
+
+/** Read-only: armed via KEEL_KILL_SWITCH (status API); no admin toggle. */
+const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
 </script>
 
 <template>
@@ -86,6 +90,14 @@ const lastCycleActions = computed(() => {
               </span>
               <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-500/10 text-zinc-400 border border-zinc-500/20 uppercase">
                 {{ envLabel }}
+              </span>
+              <span
+                v-if="killSwitchOn"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-extrabold bg-rose-500/15 text-rose-400 border border-rose-500/40 tracking-wide"
+                title="KEEL_KILL_SWITCH armed — trading frozen (env-only)"
+              >
+                <Ban class="w-3 h-3" />
+                KILL SWITCH ON
               </span>
             </div>
             <p class="text-[10px] text-[#707E94] font-mono flex items-center gap-1.5">
@@ -151,6 +163,23 @@ const lastCycleActions = computed(() => {
       <template v-else>
         <!-- OVERVIEW -->
         <div v-show="store.activeTab === 'overview'" class="space-y-4">
+          <div
+            v-if="killSwitchOn"
+            class="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 flex items-start gap-3"
+            role="status"
+            aria-live="polite"
+          >
+            <Ban class="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div class="min-w-0">
+              <div class="text-sm font-mono font-extrabold text-rose-300 tracking-wide">
+                KILL SWITCH ON
+              </div>
+              <div class="text-xs font-mono text-rose-200/80 mt-0.5">
+                交易已冻结 · risk gates deny all trading · env-only (KEEL_KILL_SWITCH) · no admin toggle
+              </div>
+            </div>
+          </div>
+
           <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
               <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">

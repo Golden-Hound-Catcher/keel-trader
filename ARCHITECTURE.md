@@ -358,3 +358,4 @@ MIT
 - **Config**: `KEEL_KILL_SWITCH` → `settings.kill_switch` (default off; `_env_bool`).
 - **Risk**: `KillSwitchGate` reads settings (and/or `GateContext.kill_switch_active`); worker cycle passes the flag into `ExecutionOrchestrator`.
 - **API**: non-secret `kill_switch` on `StatusResponse` / `ConfigResponse` (`GET /api/v1/status`, `/api/v1/config`).
+- **Monitor**: Overview reads `status.kill_switch` and shows a clear badge/banner when armed; no admin toggle.
