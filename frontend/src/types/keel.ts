@@ -15,6 +15,7 @@ export interface KeelLastCycle {
   policy?: string
   instruments?: number
   decision_counts?: Record<string, number>
+  /** Count of instruments denied by risk gates this cycle (not a reason list). */
   risk_denies?: number
   errors?: Array<Record<string, unknown>>
   policy_success?: boolean | null
