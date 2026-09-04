@@ -157,7 +157,7 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_LLM_MODEL` | — | |
 | `KEEL_LEDGER_DB` | local path | SQLite file |
 | `KEEL_KILL_SWITCH` | `0` | `0` \| `1` / true\|false — deny all trading when on |
-| `KEEL_USE_LEGACY` | unset | Opt into legacy R20 scripts |
+| `KEEL_USE_LEGACY` | unset | Silence legacy import quarantine warnings |
 
 Secrets live in `.env` (`chmod 600`) or process env only. **Do not** add parallel encrypted secret stores in v1.
 
@@ -296,7 +296,8 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | `last_cycle.error_count` full count + capped `errors` list (CYCLE_ERRORS_CAP=20); delete `scripts/qq_notifier.py` |
 | 2026-09-04 | Inventory-gated delete: `r20_backend/council_manager.py` (+ `tests/test_council_manager.py`); strip council from `ai_brain_trader` (SPEC non-goal) |
 | 2026-09-04 | Inventory-gated delete: `r20_backend/okx_setup.py` + `scripts/r20_okx_setup.py` (+ test); install.sh → `KEEL_OKX_*` / keel.exchange |
-| 2026-09-04 | Inventory-gated delete: `scripts/ai_brain_trader.py` (council already gone; product path `python -m keel.worker`); keep `ai_factor_trader` for later cut |
+| 2026-09-04 | Inventory-gated delete: `scripts/ai_brain_trader.py` (council already gone; product path `python -m keel.worker`) |
+| 2026-09-04 | Inventory-gated delete: `scripts/ai_factor_trader.py` (~90k OKX-CLI/shim); product path `python -m keel.worker` / `keel.worker.cycle` only |
 
 ---
 
@@ -352,8 +353,8 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Deleted orphan dashboard/admin-era scripts: `sync_web_data`, `daemon_web_sync`,
   `generate_snapshots`, `debug_aggregate_orders`, `debug_audit_bills`,
   `remove_retired_personal_wechat`, `cleanup_disk`, `calculus_replay`.
-- Kept `ai_factor_trader` shim and scripts still
-  launched by `keel.worker` (factor/news/briefing/backup/self-improvement helpers); `ai_brain_trader` deleted (see addendum).
+- Deleted `ai_factor_trader` / `ai_brain_trader` shims; trader path is `python -m keel.worker` only.
+  Scripts still launched by `keel.worker`: factor/news/briefing/backup/self-improvement helpers.
 - `r20_gateway.worker` remains notify-only by default; `GatewayScheduler.tick()` /
   `_execute` are no-ops unless `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1`.
 - Remaining `r20_backend` helpers stay until gateway/scripts no longer need them.
@@ -379,8 +380,8 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Deleted `scripts/calculus_engine.py` after migrating remaining importers
   (`factor_library`, trader shims, calculus tests) to `keel.factors.kinematics`.
 - Deleted `r20_gateway/agents.py` and `r20_gateway/supervisor.py` (zero importers).
-- **Kept** `ai_factor_trader` shim and scripts still
-  launched by `keel.worker` / gateway JOBS; `ai_brain_trader` deleted later (see addendum).
+- Trader shims later deleted (`ai_factor_trader` / `ai_brain_trader`); gateway JOBS no longer
+  reference the factor-trader script. Remaining helper scripts still launched by `keel.worker`.
 
 ## Addendum: Optional notify port (stub interface)
 
@@ -422,6 +423,16 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 
 - Deleted `scripts/ai_brain_trader.py` after council path was already stripped; product
   decision path is `python -m keel.worker` / DecisionPolicy (not the legacy LLM brain).
-- Dropped brain import from `ai_factor_trader` (legacy OKX-CLI loop kept behind
-  `KEEL_USE_LEGACY=1` for a later cut — still large/complex). Quarantine asserts brain gone.
-- `llm_manager` / `telemetry` retain non-test refs via `self_improvement_engine` (+ telemetry tests) — not cascade-deleted.
+- Quarantine asserts brain gone. `llm_manager` / `telemetry` retain non-test refs via
+  `self_improvement_engine` (+ telemetry tests) — not cascade-deleted.
+
+## Addendum: AI factor trader removed (inventory)
+
+- Deleted `scripts/ai_factor_trader.py` (~90k). Default was already a shim into
+  `keel.worker.cycle`; `KEEL_USE_LEGACY=1` historical OKX-CLI loop retired with the file.
+- Product entry: `python -m keel.worker` / `python -m keel.worker.cycle` only.
+- Stripped `ai_factor_trader`-dependent cases from `tests/test_quant_system_calculus.py`
+  (kept pure kinematics + `factor_library` integration). Quarantine asserts script gone.
+- Removed gateway `JOBS` trader JobSpec referencing the deleted script.
+- **Not** cascade-deleted: `instrument_pool`, `okx_runtime`, `factor_library` (still used);
+  `db_manager` newly zero-ref outside itself — left in-tree for a later cut.

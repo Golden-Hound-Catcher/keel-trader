@@ -6,7 +6,7 @@ Pipeline: factors → decision → risk → execution → ledger.
 Default path uses PaperExchange when OKX keys are absent (no shell CLI).
 When KEEL_OKX_* (or OKX_* aliases) are set, uses OkxRestAdapter (signed V5).
 
-Legacy scripts/ai_factor_trader.py shims into this module when KEEL_USE_LEGACY is unset.
+Product entry: ``python -m keel.worker`` / ``python -m keel.worker.cycle``.
 
 Stage 4: persists factor_snapshots + coherent Decision↔risk↔ledger events so
 keel.api can read the latest cycle from SQLite without hitting live OKX.

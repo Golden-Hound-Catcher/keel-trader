@@ -8,7 +8,7 @@
 
 ## 1. 灾备架构概览
 
-- **交易核心**：`python -m keel.worker`（factors → DecisionPolicy → risk → execution → ledger）；legacy `scripts/ai_factor_trader.py` 仅 `KEEL_USE_LEGACY=1`（`ai_brain_trader` 已删除）
+- **交易核心**：`python -m keel.worker`（factors → DecisionPolicy → risk → execution → ledger）；`ai_factor_trader` / `ai_brain_trader` 已删除
 - **因子 / 调度**：由 `python -m keel.worker` 统一调度（`factor_library` / news / briefing / backup）；旧 `daemon_web_sync` 已删除
 - **自进化心法引擎**：`scripts/self_improvement_engine.py`（每日 20:00 深度复盘真实流水，提炼 3 大启发式心法沉淀至 `data/AI_TRADING_MEMORY.md`）
 - **全网快讯情报流**：`scripts/news_sentiment_harvester.py`（OKX 最新与重大快讯双路聚合）

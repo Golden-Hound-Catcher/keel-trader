@@ -231,8 +231,8 @@ class TestDeletedLegacyScripts(unittest.TestCase):
     def test_okx_setup_test_removed(self):
         self.assertFalse((ROOT / "tests" / "test_okx_setup.py").exists())
 
-    def test_trader_shims_remain(self):
-        self.assertTrue((ROOT / "scripts" / "ai_factor_trader.py").exists())
+    def test_retired_trader_scripts_gone(self):
+        self.assertFalse((ROOT / "scripts" / "ai_factor_trader.py").exists())
         self.assertFalse((ROOT / "scripts" / "ai_brain_trader.py").exists())
 
     def test_gateway_scheduler_tick_gated(self):

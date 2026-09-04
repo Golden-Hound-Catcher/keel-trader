@@ -30,12 +30,15 @@ class GatewaySchedulerTests(unittest.TestCase):
             with patch("r20_gateway.scheduler.load_schedule", return_value={}):
                 self.assertEqual(self.scheduler.tick(self.now), [])
 
-    def test_interval_job_becomes_due_on_aligned_trader_boundary(self):
-        trader = next(spec for spec in JOBS if spec.name == "trader")
-        boundary = self.now.replace(minute=15, second=0)
-        self.store.set_state("job.last.trader", boundary.replace(minute=0).isoformat())
-        self.assertTrue(self.scheduler.due(trader, boundary, {}))
-        self.assertFalse(self.scheduler.due(trader, boundary.replace(second=11), {}))
+    def test_interval_job_becomes_due_after_interval(self):
+        fl = next(spec for spec in JOBS if spec.name == "factor_library")
+        self.store.set_state(
+            "job.last.factor_library",
+            (self.now - timedelta(seconds=61)).isoformat(),
+        )
+        self.assertTrue(self.scheduler.due(fl, self.now, {}))
+        self.store.set_state("job.last.factor_library", self.now.isoformat())
+        self.assertFalse(self.scheduler.due(fl, self.now, {}))
 
     def test_daily_job_runs_once_per_time_slot(self):
         briefing = next(spec for spec in JOBS if spec.name == "daily_briefing")
@@ -53,28 +56,32 @@ class GatewaySchedulerTests(unittest.TestCase):
 
     def test_tick_is_noop_without_legacy_flag(self):
         """Defense-in-depth: due jobs must not launch when flag unset."""
-        trader = next(spec for spec in JOBS if spec.name == "trader")
-        boundary = self.now.replace(minute=15, second=0)
-        self.store.set_state("job.last.trader", boundary.replace(minute=0).isoformat())
-        self.assertTrue(self.scheduler.due(trader, boundary, {}))
+        fl = next(spec for spec in JOBS if spec.name == "factor_library")
+        self.store.set_state(
+            "job.last.factor_library",
+            (self.now - timedelta(seconds=61)).isoformat(),
+        )
+        self.assertTrue(self.scheduler.due(fl, self.now, {}))
         with patch.dict(os.environ, {"KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER": ""}, clear=False):
             os.environ.pop("KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER", None)
             self.assertFalse(legacy_gateway_jobs_enabled())
             with patch("r20_gateway.scheduler.load_schedule", return_value={}):
                 with patch.object(self.scheduler.executor, "submit") as submit:
-                    self.assertEqual(self.scheduler.tick(boundary), [])
+                    self.assertEqual(self.scheduler.tick(self.now), [])
                     submit.assert_not_called()
 
     def test_tick_may_launch_when_legacy_flag_set(self):
-        trader = next(spec for spec in JOBS if spec.name == "trader")
-        boundary = self.now.replace(minute=15, second=0)
-        self.store.set_state("job.last.trader", boundary.replace(minute=0).isoformat())
+        fl = next(spec for spec in JOBS if spec.name == "factor_library")
+        self.store.set_state(
+            "job.last.factor_library",
+            (self.now - timedelta(seconds=61)).isoformat(),
+        )
         with patch.dict(os.environ, {"KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER": "1"}):
             with patch("r20_gateway.scheduler.load_schedule", return_value={}):
                 with patch.object(self.scheduler.executor, "submit") as submit:
                     submit.return_value = type("F", (), {"done": lambda self: True})()
-                    launched = self.scheduler.tick(boundary)
-                    self.assertIn("trader", launched)
+                    launched = self.scheduler.tick(self.now)
+                    self.assertIn("factor_library", launched)
                     submit.assert_called()
 
 

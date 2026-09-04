@@ -20,7 +20,6 @@ New installs enable **only** `keel-api` + `keel-worker`. `r20-*` units require o
 - `frontend/`: Phase U1 monitor UI (client of Keel API only).
 - `r20_backend.app`: **LEGACY 410 stub** — not a supported deployment entrypoint. Soft-blocked unless `KEEL_ALLOW_LEGACY_BACKEND=1`. Admin HTTP API removed; any path returns 410. Prefer `keel.api.app`.
 - `r20_gateway.worker`: **LEGACY** optional notification delivery only (job ticks disabled by default).
-- `scripts/ai_factor_trader.py`: thin shim → `keel.worker.cycle` unless `KEEL_USE_LEGACY=1`.
 
 ## Install
 

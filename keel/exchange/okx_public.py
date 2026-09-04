@@ -2,7 +2,7 @@
 Public OKX market-data helpers (no API keys).
 
 Stage 4: keep candle/ticker fetches in keel.exchange instead of shell CLI or
-ad-hoc urllib copies inside scripts/ai_factor_trader.py / API routers.
+ad-hoc urllib copies in legacy scripts / API routers.
 """
 from __future__ import annotations
 

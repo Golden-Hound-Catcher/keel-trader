@@ -98,7 +98,6 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 
 | Path | Status |
 |------|--------|
-| `scripts/ai_factor_trader.py` | Defaults to `keel.worker.cycle`; legacy OKX-CLI loop only if `KEEL_USE_LEGACY=1` |
 | `scripts/daily_summary_and_backup.py` | Historical briefing job (still launched by `keel.worker`) |
 | `scripts/self_improvement_engine.py` | Historical evolution job (tests + optional gateway JOBS) |
 | `scripts/nightly_backup_and_clean.py` | Historical nightly job (still launched by `keel.worker`) |
@@ -117,6 +116,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/remove_retired_personal_wechat.py` | Spent one-shot WeChat credential migration |
 | `scripts/cleanup_disk.py` | Orphan disk cleanup CLI; unused by nightly/Keel |
 | `scripts/calculus_replay.py` | Orphan offline replay CLI |
+| `scripts/ai_factor_trader.py` | Retired OKX-CLI / shim; product path is `python -m keel.worker` / `keel.worker.cycle` |
 | `scripts/calculus_engine.py` | Deprecated shim; importers migrated to `keel.factors.kinematics` |
 | `scripts/qq_notifier.py` | QQ product non-goal; call sites removed; Keel uses `keel.notify` |
 | `scripts/ai_brain_trader.py` | Retired LLM brain loop (council already gone); product path is `python -m keel.worker` |
@@ -160,6 +160,7 @@ test ! -f r20_backend/okx_trade_service.py
 test ! -f r20_backend/okx_setup.py
 test ! -f scripts/r20_okx_setup.py
 test ! -f scripts/ai_brain_trader.py
+test ! -f scripts/ai_factor_trader.py
 test ! -f tests/test_okx_setup.py
 test ! -f r20_backend/qq_bind.py
 test ! -f r20_backend/qq_gateway_daemon.py

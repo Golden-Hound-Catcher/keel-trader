@@ -286,22 +286,19 @@ class TestLegacySchedulerDisabled(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("DISABLED", result.stderr)
 
-    def test_factor_trader_shim_defaults_to_keel(self):
+    def test_keel_worker_cycle_entrypoint(self):
         import subprocess, sys
         env = os.environ.copy()
-        env.pop("KEEL_USE_LEGACY", None)
         with tempfile.TemporaryDirectory() as tmp:
-            db = Path(tmp) / "shim.db"
+            db = Path(tmp) / "cycle.db"
             result = subprocess.run(
-                [sys.executable, "scripts/ai_factor_trader.py", "--db", str(db)],
+                [sys.executable, "-m", "keel.worker.cycle", "--db", str(db)],
                 cwd=Path(__file__).resolve().parents[1],
                 capture_output=True,
                 text=True,
                 timeout=30,
                 env=env,
             )
-            # cycle main accepts --db; shim passes argv through when using cycle.main()
-            # Our shim calls cycle.main() with no argv — still should succeed.
             self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
             self.assertIn("Keel Trader", result.stdout)
 
