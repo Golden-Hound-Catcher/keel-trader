@@ -213,6 +213,7 @@ class TestDeletedLegacyScripts(unittest.TestCase):
             "calculus_engine.py",
             "qq_notifier.py",
             "r20_okx_setup.py",
+            "ai_brain_trader.py",
         ]
         for name in gone:
             self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)
@@ -232,7 +233,7 @@ class TestDeletedLegacyScripts(unittest.TestCase):
 
     def test_trader_shims_remain(self):
         self.assertTrue((ROOT / "scripts" / "ai_factor_trader.py").exists())
-        self.assertTrue((ROOT / "scripts" / "ai_brain_trader.py").exists())
+        self.assertFalse((ROOT / "scripts" / "ai_brain_trader.py").exists())
 
     def test_gateway_scheduler_tick_gated(self):
         from r20_gateway.scheduler import legacy_gateway_jobs_enabled

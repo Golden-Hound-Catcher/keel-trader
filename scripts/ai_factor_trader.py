@@ -27,6 +27,11 @@ from typing import Tuple, Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 WORKSPACE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Ensure repo root is importable when launched as scripts/ai_factor_trader.py
+# (previously provided as a side effect of importing ai_brain_trader).
+import sys as _sys_path_bootstrap
+if WORKSPACE_DIR not in _sys_path_bootstrap.path:
+    _sys_path_bootstrap.path.insert(0, WORKSPACE_DIR)
 DATA_DIR = os.path.join(WORKSPACE_DIR, "data")
 LOGS_DIR = os.path.join(WORKSPACE_DIR, "logs")
 
@@ -44,11 +49,12 @@ try:
     import sys
     sys.path.append(os.path.join(WORKSPACE_DIR, "scripts"))
     from db_manager import record_trade_sqlite
-    from ai_brain_trader import execute_batch_ai_brain_cycle, get_latest_ai_decision
 except Exception:
     record_trade_sqlite = None
-    execute_batch_ai_brain_cycle = None
-    get_latest_ai_decision = None
+
+# ai_brain_trader retired; product path is python -m keel.worker.
+execute_batch_ai_brain_cycle = None
+get_latest_ai_decision = None
 
 from instrument_pool import load_instruments
 

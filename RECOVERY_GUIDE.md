@@ -8,7 +8,7 @@
 
 ## 1. 灾备架构概览
 
-- **交易核心**：`scripts/ai_brain_trader.py` + `scripts/ai_factor_trader.py`（聚焦 BTC/ETH/SOL/DOGE/SUI/LINK 6 标的，LLM 全权决策，Maker 限价挂单，OKX 云端 OCO 止盈止损 100% 保护）
+- **交易核心**：`python -m keel.worker`（factors → DecisionPolicy → risk → execution → ledger）；legacy `scripts/ai_factor_trader.py` 仅 `KEEL_USE_LEGACY=1`（`ai_brain_trader` 已删除）
 - **因子 / 调度**：由 `python -m keel.worker` 统一调度（`factor_library` / news / briefing / backup）；旧 `daemon_web_sync` 已删除
 - **自进化心法引擎**：`scripts/self_improvement_engine.py`（每日 20:00 深度复盘真实流水，提炼 3 大启发式心法沉淀至 `data/AI_TRADING_MEMORY.md`）
 - **全网快讯情报流**：`scripts/news_sentiment_harvester.py`（OKX 最新与重大快讯双路聚合）
@@ -17,8 +17,8 @@
 - **核心数据资产清单**：
   - `data/trading_ledger.json` & `trading_ledger.xlsx`（全量交易流水账本与资金费记录）
   - `data/AI_TRADING_MEMORY.md`（QwenPaw 原生带时间戳启发式实战心法长期记忆）
-  - `data/ai_brain_history.json`（AI 大脑每 15 分钟全市场宏观推演与在途持仓审计日志）
-  - `data/ai_brain_last_prompt.txt`（15,500+ 字符真实 System + User Prompt 快照）
+  - `data/ai_brain_history.json`（历史 AI 大脑推演日志；`ai_brain_trader` 已删除，不再写入）
+  - `data/ai_brain_last_prompt.txt`（历史 brain prompt 快照；脚本已删除）
   - `data/factor_library_snapshot.json`（五大核心量化因子库快照）
   - `data/snapshots.json`（历史权益与回撤走势快照）
   - `data/news_sentiment.json`（全网实时快讯舆情库）
@@ -66,7 +66,7 @@ nohup python3 -m keel.worker > /tmp/keel-worker.log 2>&1 &
 
 - **查看 Keel 健康 / 监控 API**：`curl -s http://127.0.0.1:8080/health` ；`curl -s http://127.0.0.1:8080/api/v1/overview | head -c 200`
 - **手工执行一次全系统云端备份**：`python3 scripts/nightly_backup_and_clean.py`
-- **手工触发一次 AI 交易大脑推演**：`python3 scripts/ai_brain_trader.py`
+- **手工触发一次 Keel 交易周期**：`python3 -m keel.worker --once`
 - **强制触发每日 AI 策略自进化复盘**：`python3 scripts/self_improvement_engine.py`
 - **手工全量对账同步 OKX 账本**：`python3 scripts/sync_full_ledger.py`
 

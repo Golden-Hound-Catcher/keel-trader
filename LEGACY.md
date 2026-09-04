@@ -99,7 +99,6 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | Path | Status |
 |------|--------|
 | `scripts/ai_factor_trader.py` | Defaults to `keel.worker.cycle`; legacy OKX-CLI loop only if `KEEL_USE_LEGACY=1` |
-| `scripts/ai_brain_trader.py` | Legacy brain loop (council path removed); warns unless `KEEL_USE_LEGACY=1` (optional `KEEL_BRAIN_SHIM=1` -> cycle) |
 | `scripts/daily_summary_and_backup.py` | Historical briefing job (still launched by `keel.worker`) |
 | `scripts/self_improvement_engine.py` | Historical evolution job (tests + optional gateway JOBS) |
 | `scripts/nightly_backup_and_clean.py` | Historical nightly job (still launched by `keel.worker`) |
@@ -120,6 +119,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/calculus_replay.py` | Orphan offline replay CLI |
 | `scripts/calculus_engine.py` | Deprecated shim; importers migrated to `keel.factors.kinematics` |
 | `scripts/qq_notifier.py` | QQ product non-goal; call sites removed; Keel uses `keel.notify` |
+| `scripts/ai_brain_trader.py` | Retired LLM brain loop (council already gone); product path is `python -m keel.worker` |
 | `r20_gateway/agents.py` | 0 external refs (admin-era agent registry) |
 | `r20_gateway/supervisor.py` | 0 external refs (unused supervisor wrapper) |
 | `r20_backend/qq_bind.py` | QQ product non-goal; 0 Keel/scripts importers |
@@ -159,6 +159,7 @@ test ! -f r20_backend/account_baseline.py
 test ! -f r20_backend/okx_trade_service.py
 test ! -f r20_backend/okx_setup.py
 test ! -f scripts/r20_okx_setup.py
+test ! -f scripts/ai_brain_trader.py
 test ! -f tests/test_okx_setup.py
 test ! -f r20_backend/qq_bind.py
 test ! -f r20_backend/qq_gateway_daemon.py
