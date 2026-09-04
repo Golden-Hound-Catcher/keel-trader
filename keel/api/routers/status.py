@@ -59,6 +59,8 @@ def config() -> ConfigResponse:
         max_positions=settings.max_concurrent_positions,
         max_daily_loss=settings.max_daily_loss_usdt,
         max_asset_margin=settings.max_single_asset_margin,
+        max_notional_per_instrument=settings.max_notional_per_instrument,
+        max_contracts_per_instrument=settings.max_contracts_per_instrument,
         llm_model=settings.llm_model,
         kill_switch=settings.kill_switch,
         decision_policy=_active_decision_policy_name(settings),

@@ -13,6 +13,7 @@ from keel.risk.gates import (
     MaxMarginGate,
     CooldownGate,
     KillSwitchGate,
+    MaxNotionalGate,
     check_all_gates,
     get_default_gates,
 )
@@ -274,6 +275,105 @@ class TestKillSwitchGate(unittest.TestCase):
         result = gate.check(ctx)
         self.assertFalse(result.passed)
         self.assertIn("熔断", result.reason)
+
+
+class TestMaxNotionalGate(unittest.TestCase):
+    """Tests for max notional / contracts per instrument gate."""
+
+    def test_allows_within_notional(self):
+        gate = MaxNotionalGate(max_notional=2000, max_contracts=50)
+        ctx = GateContext(
+            inst_id="BTC-USDT-SWAP",
+            action="open_long",
+            size=0.1,
+            margin_required=100,
+            current_positions=0,
+            long_positions=0,
+            short_positions=0,
+            daily_pnl=0,
+            notional=300,
+            existing_notional_for_asset=0,
+        )
+        result = gate.check(ctx)
+        self.assertTrue(result.passed)
+
+    def test_blocks_over_notional(self):
+        gate = MaxNotionalGate(max_notional=2000, max_contracts=50)
+        ctx = GateContext(
+            inst_id="BTC-USDT-SWAP",
+            action="open_long",
+            size=1,
+            margin_required=500,
+            current_positions=0,
+            long_positions=0,
+            short_positions=0,
+            daily_pnl=0,
+            notional=1500,
+            existing_notional_for_asset=600,
+        )
+        result = gate.check(ctx)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.gate_name, "max_notional")
+        self.assertIn("名义价值", result.reason)
+        self.assertEqual(result.details.get("limit"), "notional")
+
+    def test_allows_close_over_notional(self):
+        gate = MaxNotionalGate(max_notional=2000, max_contracts=50)
+        ctx = GateContext(
+            inst_id="BTC-USDT-SWAP",
+            action="close",
+            size=10,
+            margin_required=0,
+            current_positions=1,
+            long_positions=1,
+            short_positions=0,
+            daily_pnl=0,
+            notional=5000,
+            existing_notional_for_asset=5000,
+            existing_size_for_asset=100,
+        )
+        self.assertTrue(gate.check(ctx).passed)
+
+    def test_blocks_over_contracts_when_size_known(self):
+        gate = MaxNotionalGate(max_notional=20000, max_contracts=50)
+        ctx = GateContext(
+            inst_id="DOGE-USDT-SWAP",
+            action="scale_in",
+            size=20,
+            margin_required=50,
+            current_positions=1,
+            long_positions=1,
+            short_positions=0,
+            daily_pnl=0,
+            notional=100,
+            existing_notional_for_asset=100,
+            existing_size_for_asset=40,
+        )
+        result = gate.check(ctx)
+        self.assertFalse(result.passed)
+        self.assertIn("合约数", result.reason)
+        self.assertEqual(result.details.get("limit"), "contracts")
+
+    def test_skips_contracts_when_size_zero(self):
+        gate = MaxNotionalGate(max_notional=20000, max_contracts=1)
+        ctx = GateContext(
+            inst_id="BTC-USDT-SWAP",
+            action="open_long",
+            size=0,
+            margin_required=50,
+            current_positions=0,
+            long_positions=0,
+            short_positions=0,
+            daily_pnl=0,
+            notional=150,
+            existing_size_for_asset=100,
+        )
+        self.assertTrue(gate.check(ctx).passed)
+
+    def test_default_gates_include_max_notional_after_daily_loss(self):
+        names = [g.name for g in get_default_gates()]
+        self.assertIn("max_notional", names)
+        self.assertEqual(names.index("daily_loss") + 1, names.index("max_notional"))
 
 
 class TestCheckAllGates(unittest.TestCase):

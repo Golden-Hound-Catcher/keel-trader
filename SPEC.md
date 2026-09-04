@@ -158,6 +158,8 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_LLM_MODEL` | — | |
 | `KEEL_LEDGER_DB` | local path | SQLite file |
 | `KEEL_KILL_SWITCH` | `0` | `0` \| `1` / true\|false — deny all trading when on |
+| `KEEL_MAX_NOTIONAL_PER_INSTRUMENT` | `2000` | USDT; existing + requested notional (margin×leverage); on `/config` |
+| `KEEL_MAX_CONTRACTS_PER_INSTRUMENT` | `50` | Contract/size units per instrument when size known; on `/config` |
 | `KEEL_INSTRUMENTS` | empty → defaults | Comma-separated OKX swap ids; empty → `DEFAULT_CRYPTO_INSTRUMENTS`; worker + `/config` instruments |
 | `KEEL_DECISION_POLICY` | `rule` | `rule` \| `stub` \| `llm` — exposed as `decision_policy` on `/status` + `/config` |
 | `KEEL_CYCLE_INTERVAL_SECONDS` | `900` | Trader cycle interval; clamped `[60, 86400]` |
@@ -178,11 +180,11 @@ Must validate against schema (action, instrument, size/notion, optional TP/SL in
 ### Risk gates (examples; configurable)
 
 - Kill switch (`KEEL_KILL_SWITCH`) — when armed, gates deny all trading actions; `WAIT` still ok  
-- Max notional / contracts per instrument  
+- Max notional / contracts per instrument (`KEEL_MAX_NOTIONAL_PER_INSTRUMENT` default 2000 USDT ≈ margin 600×~3.3 lev; `KEEL_MAX_CONTRACTS_PER_INSTRUMENT` default 50) — `MaxNotionalGate` after DailyLoss; closes still ok  
 - Cooldown after stop / deny  
 - Daily loss circuit breaker  
 
-LLM cannot bypass gates. Exposed as non-secret `kill_switch` on `GET /api/v1/status` and `GET /api/v1/config`.
+LLM cannot bypass gates. Exposed as non-secret `kill_switch`, `max_notional_per_instrument`, and `max_contracts_per_instrument` on `GET /api/v1/config` (`kill_switch` also on status).
 
 Active decision policy name (`build_decision_policy` → `describe_policy`, no cycle run) is exposed as `decision_policy` on the same endpoints (and on the monitor Config strip).
 
@@ -286,6 +288,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-04 | Max notional/contracts gate (`KEEL_MAX_NOTIONAL_PER_INSTRUMENT` / `KEEL_MAX_CONTRACTS_PER_INSTRUMENT`); expose on `/config` |
 | 2026-09-04 | Optional `KEEL_API_TOKEN` bearer/X-API-Key on `/api/v1/*`; monitor risk budget + positions UPL |
 | 2026-09-04 | Monitor: Factors live-candles toggle (`?live=1` + source badge); Decisions `inst_id` filter |
 | 2026-09-04 | Monitor Trades `inst_id` filter (mirror Decisions); `/ready` adds worker lag / `worker_stale` |
@@ -328,6 +331,11 @@ After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` 
 ## Addendum: kill switch (hard gate)
 
 `KEEL_KILL_SWITCH` (default off) loads into `settings.kill_switch`. `KillSwitchGate` and the execution orchestrator honor it: when on, all trading gate actions are denied (fail-closed); policy `WAIT` never reaches gates. Non-secret flag is echoed on `GET /api/v1/status` and `GET /api/v1/config`. No HTTP trade triggers and no admin UI toggle in v1 — env / process restart to arm. Monitor Overview shows a read-only badge/banner when `kill_switch` is true (hidden when false).
+
+## Addendum: max notional / contracts per instrument
+
+`KEEL_MAX_NOTIONAL_PER_INSTRUMENT` (default **2000** USDT; aligned above `KEEL_MAX_ASSET_MARGIN` 600 × typical ~3× leverage) and optional `KEEL_MAX_CONTRACTS_PER_INSTRUMENT` (default **50**) feed `MaxNotionalGate` in the default gate chain (after KillSwitch + DailyLoss). Gate uses `GateContext.notional` (orchestrator: `margin_usdt * leverage`) plus existing position notional; contracts checked when `size` is known. `close` still passes. Limits echoed as non-secret fields on `GET /api/v1/config`.
+
 
 ---
 

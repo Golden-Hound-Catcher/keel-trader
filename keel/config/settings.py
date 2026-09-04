@@ -57,6 +57,10 @@ class Settings:
     max_same_direction_positions: int = 6
     max_daily_loss_usdt: float = 150.0
     max_single_asset_margin: float = 600.0
+    # Max order+position notional per instrument (USDT). Default 2000 ≈ margin 600 × ~3.3 lev.
+    max_notional_per_instrument: float = 2000.0
+    # Max contracts (size units) per instrument; used when GateContext.size > 0.
+    max_contracts_per_instrument: int = 50
     # Emergency kill switch (KEEL_KILL_SWITCH=0|1 / true|false); default off
     kill_switch: bool = False
 
@@ -234,6 +238,8 @@ def get_settings() -> Settings:
         max_concurrent_positions=_env_int("KEEL_MAX_POSITIONS", 6),
         max_daily_loss_usdt=_env_float("KEEL_MAX_DAILY_LOSS", 150.0),
         max_single_asset_margin=_env_float("KEEL_MAX_ASSET_MARGIN", 600.0),
+        max_notional_per_instrument=_env_float("KEEL_MAX_NOTIONAL_PER_INSTRUMENT", 2000.0),
+        max_contracts_per_instrument=_env_int("KEEL_MAX_CONTRACTS_PER_INSTRUMENT", 50),
         kill_switch=_env_bool("KEEL_KILL_SWITCH", False),
         cycle_interval_seconds=_env_cycle_interval_seconds(),
         enable_legacy_scheduler_jobs=_env_bool("KEEL_ENABLE_LEGACY_SCHEDULER_JOBS", False),

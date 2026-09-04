@@ -133,10 +133,19 @@ class ExecutionOrchestrator:
         )
         action_type = gate_action_for_decision(decision, same_side_position=same_side)
 
+        # Notional = margin * leverage (same formula as _calculate_size).
+        requested_notional = max(0.0, float(decision.margin_usdt) * max(int(decision.leverage), 1))
+        existing_notional = current_position.notional if current_position else 0.0
+        existing_size = current_position.size if current_position else 0.0
+        # Estimate contracts when entry is known so max_contracts can apply pre-ticker.
+        estimated_size = 0.0
+        if decision.entry_price and decision.entry_price > 0 and requested_notional > 0:
+            estimated_size = requested_notional / float(decision.entry_price)
+
         ctx = GateContext(
             inst_id=decision.inst_id,
             action=action_type,
-            size=0,
+            size=estimated_size,
             margin_required=decision.margin_usdt,
             current_positions=position_count,
             long_positions=long_count,
@@ -145,6 +154,9 @@ class ExecutionOrchestrator:
             existing_margin_for_asset=existing_margin,
             cooldown_until=cooldown_until,
             kill_switch_active=kill_switch,
+            notional=requested_notional,
+            existing_notional_for_asset=existing_notional,
+            existing_size_for_asset=existing_size,
         )
 
         passed, results = check_all_gates(ctx, self._risk_gates)

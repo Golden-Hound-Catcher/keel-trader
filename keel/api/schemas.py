@@ -81,6 +81,8 @@ class ConfigResponse(BaseModel):
     max_positions: int
     max_daily_loss: float
     max_asset_margin: float
+    max_notional_per_instrument: float = 2000.0
+    max_contracts_per_instrument: int = 50
     llm_model: str
     kill_switch: bool = False
     decision_policy: str = "rule"
