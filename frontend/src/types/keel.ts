@@ -30,6 +30,7 @@ export interface KeelStatus {
     llm: boolean
   }
   ledger_db: string
+  kill_switch: boolean
   last_cycle?: KeelLastCycle | null
 }
 
@@ -39,6 +40,7 @@ export interface KeelConfig {
   max_daily_loss: number
   max_asset_margin: number
   llm_model: string
+  kill_switch: boolean
 }
 
 export interface KeelPosition {

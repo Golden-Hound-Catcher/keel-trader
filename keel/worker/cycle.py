@@ -408,6 +408,7 @@ def run_paper_cycle(
         exec_result: ExecutionResult = orchestrator.execute_decision(
             decision,
             daily_pnl=daily_pnl,
+            kill_switch=settings.kill_switch,
         )
         results.append(
             {

@@ -238,6 +238,7 @@ LLM_MODEL=gpt-4o
 KEEL_MAX_POSITIONS=6
 KEEL_MAX_DAILY_LOSS=150
 KEEL_MAX_ASSET_MARGIN=600
+KEEL_KILL_SWITCH=0          # 1/true → risk gates deny all trading; WAIT ok
 ```
 
 ## 迁移路径
@@ -351,3 +352,9 @@ MIT
 - **Ledger**: `KeelLedger.record_cycle_summary` / `get_last_cycle_summary` persist and read event type `worker_cycle_summary`.
 - **Worker**: `run_paper_cycle` builds a structured summary (decision counts, risk denies, errors) and records it when the cycle finishes.
 - **API**: `GET /api/v1/status` adds optional `last_cycle` (`LastCycleSummary` in `keel.api.schemas`) for the monitor without a new endpoint.
+
+## Elegance pass: kill switch
+
+- **Config**: `KEEL_KILL_SWITCH` → `settings.kill_switch` (default off; `_env_bool`).
+- **Risk**: `KillSwitchGate` reads settings (and/or `GateContext.kill_switch_active`); worker cycle passes the flag into `ExecutionOrchestrator`.
+- **API**: non-secret `kill_switch` on `StatusResponse` / `ConfigResponse` (`GET /api/v1/status`, `/api/v1/config`).

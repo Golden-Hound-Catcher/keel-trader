@@ -107,6 +107,34 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIn("errors", lc)
         self.assertIsInstance(lc["errors"], list)
 
+    def test_status_and_config_expose_kill_switch(self):
+        r = self.client.get("/api/v1/status")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("kill_switch", r.json())
+        self.assertIsInstance(r.json()["kill_switch"], bool)
+        self.assertFalse(r.json()["kill_switch"])
+
+        r = self.client.get("/api/v1/config")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("kill_switch", r.json())
+        self.assertFalse(r.json()["kill_switch"])
+
+    def test_status_kill_switch_on_when_armed(self):
+        os.environ["KEEL_KILL_SWITCH"] = "1"
+        try:
+            refresh_settings()
+            app = create_app()
+            client = TestClient(app)
+            r = client.get("/api/v1/status")
+            self.assertEqual(r.status_code, 200)
+            self.assertTrue(r.json()["kill_switch"])
+            r = client.get("/api/v1/config")
+            self.assertEqual(r.status_code, 200)
+            self.assertTrue(r.json()["kill_switch"])
+        finally:
+            os.environ.pop("KEEL_KILL_SWITCH", None)
+            refresh_settings()
+
 
 if __name__ == "__main__":
     unittest.main()

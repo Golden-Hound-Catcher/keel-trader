@@ -50,6 +50,7 @@ class StatusResponse(BaseModel):
     environment: str
     credentials: CredentialsStatus
     ledger_db: str
+    kill_switch: bool = False
     last_cycle: LastCycleSummary | None = None
 
 
@@ -59,6 +60,7 @@ class ConfigResponse(BaseModel):
     max_daily_loss: float
     max_asset_margin: float
     llm_model: str
+    kill_switch: bool = False
 
 
 class PositionItem(BaseModel):

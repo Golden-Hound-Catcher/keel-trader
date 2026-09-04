@@ -156,6 +156,7 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_LLM_API_KEY` | — | |
 | `KEEL_LLM_MODEL` | — | |
 | `KEEL_LEDGER_DB` | local path | SQLite file |
+| `KEEL_KILL_SWITCH` | `0` | `0` \| `1` / true\|false — deny all trading when on |
 | `KEEL_USE_LEGACY` | unset | Opt into legacy R20 scripts |
 
 Secrets live in `.env` (`chmod 600`) or process env only. **Do not** add parallel encrypted secret stores in v1.
@@ -170,12 +171,12 @@ Must validate against schema (action, instrument, size/notion, optional TP/SL in
 
 ### Risk gates (examples; configurable)
 
-- Kill switch  
+- Kill switch (`KEEL_KILL_SWITCH`) — when armed, gates deny all trading actions; `WAIT` still ok  
 - Max notional / contracts per instrument  
 - Cooldown after stop / deny  
 - Daily loss circuit breaker  
 
-LLM cannot bypass gates.
+LLM cannot bypass gates. Exposed as non-secret `kill_switch` on `GET /api/v1/status` and `GET /api/v1/config`.
 
 ---
 
@@ -283,12 +284,17 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Inventory-gated delete: `scripts/calculus_engine.py` (migrated to kinematics), `r20_gateway/agents.py`, `supervisor.py` (0 refs); trader shims kept |
 | 2026-09-04 | Optional `keel.notify` stub port (Null/Webhook); wire into worker cycle via `KEEL_NOTIFY_WEBHOOK_URL` |
 | 2026-09-04 | `GET /api/v1/status` exposes optional `last_cycle` from ledger `worker_cycle_summary` |
+| 2026-09-04 | Wire real kill switch: `KEEL_KILL_SWITCH` → settings → risk gates; expose on status/config |
 
 ---
 
 ## Addendum: last_cycle on status
 
 After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` event (via `KeelLedger.record_cycle_summary`). `GET /api/v1/status` includes optional `last_cycle` with timestamp, mode/adapter, policy, instruments, `decision_counts`, `risk_denies`, and `errors`. Monitor UI shows it when present.
+
+## Addendum: kill switch (hard gate)
+
+`KEEL_KILL_SWITCH` (default off) loads into `settings.kill_switch`. `KillSwitchGate` and the execution orchestrator honor it: when on, all trading gate actions are denied (fail-closed); policy `WAIT` never reaches gates. Non-secret flag is echoed on `GET /api/v1/status` and `GET /api/v1/config`. No HTTP trade triggers and no admin UI toggle in v1 — env / process restart to arm.
 
 ---
 
