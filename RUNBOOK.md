@@ -1,7 +1,9 @@
 # Keel Trader 运维手册 / Operator Runbook
 
-> P0 产品运维：paper 干跑无需 OKX key；demo 验收仅在本机 `.env` 配置密钥。  
+> P0/P1 产品运维：paper 干跑无需 OKX key；demo 验收仅在本机 `.env` 配置密钥。  
 > **切勿把 API Key / Secret / Passphrase 粘贴到聊天、Issue、PR 或截图中。密钥只留在本机 `.env`。**
+>
+> **推荐安装路径**：`./deploy/install.sh` → 编辑 `.env` → `INSTALL_SYSTEMD=1 ./deploy/install.sh` （或按脚本打印的 sudo 命令）→ `sudo systemctl enable --now keel-api keel-worker` → `./scripts/run_acceptance.sh`（可选 `./scripts/ops_smoke.sh`）。
 
 ---
 
@@ -16,7 +18,7 @@
 
 推荐工作目录为仓库根；激活 venv 后设置 `PYTHONPATH=.`（或用已安装的包）。
 
-systemd 示例：`deploy/keel-api.service`、`deploy/keel-worker.service`（`EnvironmentFile=.../.env`）。
+systemd：`./deploy/install.sh` 生成改写过路径的 `deploy/*.service.local`；`INSTALL_SYSTEMD=1` 安装到 `/etc/systemd/system`（非 root 时打印 sudo 命令）。详见 `deploy/README.md`。
 
 ---
 
@@ -109,6 +111,17 @@ Paper 门禁脚本 **不能**替代 demo（demo 需要操作员本机 key）。C
 配置摘要见 `GET /api/v1/config`。
 
 ---
+
+
+## 4b. 周期通知 webhooks / Cycle notify
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `KEEL_NOTIFY_WEBHOOK_URL` | 空 | 空 → NullNotifier（**无网络**）；非空 → 每轮 POST |
+| `KEEL_NOTIFY_ALERTS_ONLY` | `0` | `1` 时仅当 `alert=true`（`ok` 假 / `risk_denies>0` / `error_count>0`）才发送 |
+| `KEEL_NOTIFY_FORMAT` | `keel` | `keel` → `{"event","payload"}`；`discord` → `{"content": text}`（≤1900 字符，无需桥接） |
+
+Payload 含 `risk_denies` / `risk_deny_reasons`（capped）、`error_count` / `errors`（capped）、`duration_ms`、`alert`、`severity`（`ok`\|`warn`\|`error`）、人类可读 `text`。非密钥字段亦在 `GET /api/v1/config`（`notify_configured` / `notify_alerts_only` / `notify_format`）。
 
 ## 5. 紧急停止 / Emergency stop
 

@@ -62,15 +62,20 @@ export interface KeelConfig {
   max_positions: number
   max_daily_loss: number
   max_asset_margin: number
+  max_notional_per_instrument?: number
+  max_contracts_per_instrument?: number
   llm_model: string
   kill_switch: boolean
   /** Active decision policy name (same as status.decision_policy). */
   decision_policy: string
   instruments: string[]
   notify_configured: boolean
+  notify_alerts_only?: boolean
+  notify_format?: string
   exchange_mode: string
   /** Trader cycle interval in seconds (KEEL_CYCLE_INTERVAL_SECONDS). */
   cycle_interval_seconds: number
+  scheduler_jobs?: string[]
 }
 
 export interface KeelDailyPnl {

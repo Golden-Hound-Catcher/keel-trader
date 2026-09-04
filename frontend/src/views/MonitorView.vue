@@ -287,6 +287,17 @@ const riskBudgetCritical = computed(
   () => riskBudgetUsage.value != null && riskBudgetUsage.value >= 1,
 )
 
+/** Remaining daily loss budget (USDT) when max_daily_loss applies. */
+const dailyLossRemaining = computed(() => {
+  if (maxDailyLoss.value == null || realizedPnl.value == null) return null
+  if (realizedPnl.value >= 0) return maxDailyLoss.value
+  return Math.max(0, maxDailyLoss.value + realizedPnl.value)
+})
+const dailyLossRemainingLabel = computed(() => {
+  if (dailyLossRemaining.value == null) return ''
+  return `距日损上限还剩 $${fmt(dailyLossRemaining.value)}`
+})
+
 /** Sum of positions[].upl (null/NaN → 0). */
 const positionsFloatPnl = computed(() => {
   let sum = 0
@@ -355,8 +366,20 @@ const configStrip = computed(() => {
   const c = store.config
   const env = c?.environment || store.status?.environment || store.health?.environment || '—'
   const mode = c?.exchange_mode || '—'
-  const instCount = Array.isArray(c?.instruments) ? c!.instruments.length : store.watchlist.length
+  const instruments = Array.isArray(c?.instruments) && c!.instruments.length
+    ? c!.instruments
+    : store.watchlist
+  const instCount = instruments.length
+  const instListFull = instruments.join(', ') || '—'
+  const instListShort = (() => {
+    if (!instruments.length) return '—'
+    const joined = instruments.join(', ')
+    return joined.length > 42 ? `${joined.slice(0, 39)}…` : joined
+  })()
   const maxPos = c?.max_positions ?? '—'
+  const maxDaily = c?.max_daily_loss
+  const maxNotional = c?.max_notional_per_instrument
+  const maxContracts = c?.max_contracts_per_instrument
   const kill = c?.kill_switch ?? store.status?.kill_switch ?? false
   const notify = c?.notify_configured
   const policy = c?.decision_policy || store.status?.decision_policy || '—'
@@ -365,7 +388,12 @@ const configStrip = computed(() => {
     env,
     mode,
     instCount,
+    instListShort,
+    instListFull,
     maxPos,
+    maxDaily: maxDaily == null ? '—' : fmt(maxDaily),
+    maxNotional: maxNotional == null ? '—' : fmt(maxNotional, 0),
+    maxContracts: maxContracts == null ? '—' : String(maxContracts),
     kill: kill ? 'ON' : 'off',
     notify: notify == null ? '—' : notify ? 'yes' : 'no',
     policy,
@@ -538,8 +566,13 @@ const configStrip = computed(() => {
               >
                 ${{ realizedPnlLabel }}
               </div>
-              <div class="text-[11px] font-mono text-[#707E94] mt-1">
-                {{ store.dailyPnl?.date || '—' }} · {{ store.dailyPnl?.source || 'ledger' }}
+              <div class="text-[11px] font-mono mt-1 space-y-0.5">
+                <div v-if="dailyLossRemainingLabel" class="text-amber-200/90">
+                  {{ dailyLossRemainingLabel }}
+                </div>
+                <div class="text-[#707E94]">
+                  {{ store.dailyPnl?.date || '—' }} · {{ store.dailyPnl?.source || 'ledger' }}
+                </div>
               </div>
             </div>
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
@@ -634,7 +667,8 @@ const configStrip = computed(() => {
             </div>
           </div>
 
-          <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] font-mono">
+          <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl px-4 py-3 flex flex-col gap-2 text-[11px] font-mono">
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
             <div class="flex items-center gap-1.5 text-[#707E94]">
               <Settings2 class="w-3.5 h-3.5 text-cyan-400" />
               <span class="text-white font-bold">Config</span>
@@ -642,8 +676,16 @@ const configStrip = computed(() => {
             <span class="text-[#A8B3C7]">env <span class="text-white">{{ configStrip.env }}</span></span>
             <span class="text-[#A8B3C7]">mode <span class="text-white">{{ configStrip.mode }}</span></span>
             <span class="text-[#A8B3C7]">policy <span class="text-white">{{ configStrip.policy }}</span></span>
-            <span class="text-[#A8B3C7]">instruments <span class="text-white">{{ configStrip.instCount }}</span></span>
+            <span
+              class="text-[#A8B3C7] max-w-[18rem] truncate"
+              :title="configStrip.instListFull"
+            >instruments <span class="text-white">{{ configStrip.instListShort }}</span>
+              <span class="text-[#707E94]">({{ configStrip.instCount }})</span>
+            </span>
             <span class="text-[#A8B3C7]">max_pos <span class="text-white">{{ configStrip.maxPos }}</span></span>
+            <span class="text-[#A8B3C7]">max_daily_loss <span class="text-white">${{ configStrip.maxDaily }}</span></span>
+            <span class="text-[#A8B3C7]">max_notional <span class="text-white">${{ configStrip.maxNotional }}</span></span>
+            <span class="text-[#A8B3C7]">max_contracts <span class="text-white">{{ configStrip.maxContracts }}</span></span>
             <span class="text-[#A8B3C7]">kill <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
             <span class="text-[#A8B3C7]">notify <span class="text-white">{{ configStrip.notify }}</span></span>
             <span class="text-[#A8B3C7]" :title="configStrip.cycleTitle">周期 <span class="text-white">{{ configStrip.cycle }}</span></span>
@@ -663,6 +705,7 @@ const configStrip = computed(() => {
               <template v-else-if="workerLagStale">Worker 可能停滞 · {{ workerLagLabel }}</template>
               <template v-else>{{ workerLagLabel }}</template>
             </span>
+            </div>
           </div>
 
           <div

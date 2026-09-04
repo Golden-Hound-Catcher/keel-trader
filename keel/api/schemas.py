@@ -88,6 +88,8 @@ class ConfigResponse(BaseModel):
     decision_policy: str = "rule"
     instruments: list[str] = Field(default_factory=list)
     notify_configured: bool = False
+    notify_alerts_only: bool = False
+    notify_format: str = "keel"
     exchange_mode: str = "paper"
     cycle_interval_seconds: int = 900
     scheduler_jobs: list[str] = Field(default_factory=lambda: ["trader"])

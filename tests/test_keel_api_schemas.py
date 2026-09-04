@@ -184,6 +184,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("max_contracts_per_instrument", config_props)
         self.assertIn("instruments", config_props)
         self.assertIn("notify_configured", config_props)
+        self.assertIn("notify_alerts_only", config_props)
+        self.assertIn("notify_format", config_props)
         self.assertIn("exchange_mode", config_props)
         self.assertIn("cycle_interval_seconds", config_props)
         self.assertIn("scheduler_jobs", config_props)
@@ -225,6 +227,8 @@ class TestApiSchemas(unittest.TestCase):
             decision_policy="stub",
             instruments=["BTC-USDT-SWAP"],
             notify_configured=True,
+            notify_alerts_only=False,
+            notify_format="keel",
             exchange_mode="paper",
             cycle_interval_seconds=900,
             scheduler_jobs=["trader"],

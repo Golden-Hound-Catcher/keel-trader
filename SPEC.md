@@ -119,7 +119,7 @@ Base: `keel.api.app`
 | GET | `/health` | Liveness |
 | GET | `/ready` | Readiness: ledger open + `seconds_since_last_cycle` / `worker_stale` (stale when lag > max(2×cycle_interval, cycle_interval+300); null lag = cold-start OK) |
 | GET | `/api/v1/status` | Worker/exchange/policy summary; `decision_policy`; optional `last_cycle`; `seconds_since_last_cycle`; `worker_stale` (same threshold as `/ready`) |
-| GET | `/api/v1/config` | Non-secret config echo (incl. instruments from `KEEL_INSTRUMENTS`, `decision_policy`, exchange_mode, notify_configured, `cycle_interval_seconds`, `scheduler_jobs`) |
+| GET | `/api/v1/config` | Non-secret config echo (incl. instruments from `KEEL_INSTRUMENTS`, `decision_policy`, exchange_mode, notify_configured / alerts_only / format, `cycle_interval_seconds`, `scheduler_jobs`) |
 | GET | `/api/v1/pnl/daily` | Realized daily PnL from ledger (Beijing date; optional `?date=YYYY-MM-DD`) |
 | GET | `/api/v1/positions` | Open positions |
 | GET | `/api/v1/balance` | Account balance snapshot |
@@ -164,6 +164,9 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_DECISION_POLICY` | `rule` | `rule` \| `stub` \| `llm` — exposed as `decision_policy` on `/status` + `/config` |
 | `KEEL_CYCLE_INTERVAL_SECONDS` | `900` | Trader cycle interval; clamped `[60, 86400]` |
 | `KEEL_API_TOKEN` | empty | Optional bearer for `/api/v1/*`; empty → no auth |
+| `KEEL_NOTIFY_WEBHOOK_URL` | empty | Empty → NullNotifier (no network); else POST cycle summary |
+| `KEEL_NOTIFY_ALERTS_ONLY` | `0` | When true, skip notify unless payload `alert` |
+| `KEEL_NOTIFY_FORMAT` | `keel` | `keel` `{"event","payload"}` \| `discord` `{"content": text}` ≤1900 |
 
 Secrets live in `.env` (`chmod 600`) or process env only. **Do not** add parallel encrypted secret stores in v1.
 
@@ -289,6 +292,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-04 | **P1 ops desk**: actionable notify (alert/severity/text, alerts-only, discord JSON shape); monitor duty narrative (日损剩余 + config limits/instruments); deploy one-path `install.sh` + `ops_smoke.sh`. P1 ops items **done**; demo keys still pending |
 | 2026-09-04 | P0 ops: RUNBOOK.md + `scripts/run_acceptance.sh` + paper pytest; SPEC §12/§13/§15 paper gate done / demo pending keys |
 | 2026-09-04 | Max notional/contracts gate (`KEEL_MAX_NOTIONAL_PER_INSTRUMENT` / `KEEL_MAX_CONTRACTS_PER_INSTRUMENT`); expose on `/config` |
 | 2026-09-04 | Optional `KEEL_API_TOKEN` bearer/X-API-Key on `/api/v1/*`; monitor risk budget + positions UPL |
@@ -427,7 +431,9 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 
 - Added `keel.notify`: `Notifier` Protocol, `NullNotifier`, `WebhookNotifier` (POST JSON; injectable transport for tests).
 - Config: `KEEL_NOTIFY_WEBHOOK_URL` via `keel.config.settings` (empty → Null).
-- Worker cycle optionally notifies a compact summary after each tick; notify soft-fails and never blocks trading.
+- P1: `cycle_notify_payload` adds `risk_denies` / capped reasons, `error_count` / capped `errors`, `duration_ms`, `alert`, `severity`, human `text`.
+- P1: `KEEL_NOTIFY_ALERTS_ONLY` skips non-alert cycles; `KEEL_NOTIFY_FORMAT=keel|discord` (discord → `{"content": text}` ≤1900; not a Discord product bot).
+- Worker cycle optionally notifies a compact summary after each tick; notify soft-fails and never blocks trading. Null default = no network.
 - **Non-goal preserved**: no QQ / WeCom / Telegram product expansion; `r20_gateway` removed.
 
 ## Addendum: QQ stack + gateway plugins removed (inventory)
