@@ -91,6 +91,22 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(Path(r.json()["ledger_db"]).resolve(), self.db.resolve())
 
+    def test_status_includes_last_cycle(self):
+        r = self.client.get("/api/v1/status")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        lc = body.get("last_cycle")
+        self.assertIsInstance(lc, dict)
+        self.assertIn("timestamp", lc)
+        self.assertEqual(lc["mode"], "paper")
+        self.assertGreaterEqual(lc["instruments"], 2)
+        self.assertIn("decision_counts", lc)
+        self.assertIsInstance(lc["decision_counts"], dict)
+        self.assertIn("BUY_LONG", lc["decision_counts"])
+        self.assertIn("risk_denies", lc)
+        self.assertIn("errors", lc)
+        self.assertIsInstance(lc["errors"], list)
+
 
 if __name__ == "__main__":
     unittest.main()

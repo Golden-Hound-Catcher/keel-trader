@@ -147,6 +147,27 @@ class TestKeelLedger(unittest.TestCase):
         )
         self.assertGreater(event_id, 0)
 
+    def test_cycle_summary_roundtrip(self):
+        self.assertIsNone(self.ledger.get_last_cycle_summary())
+        payload = {
+            "timestamp": 1_700_000_000.0,
+            "mode": "paper",
+            "adapter": "paper",
+            "policy": "rule",
+            "instruments": 2,
+            "decision_counts": {"WAIT": 1, "BUY_LONG": 1},
+            "risk_denies": 0,
+            "errors": [],
+            "policy_success": True,
+        }
+        eid = self.ledger.record_cycle_summary(payload)
+        self.assertGreater(eid, 0)
+        got = self.ledger.get_last_cycle_summary()
+        self.assertIsNotNone(got)
+        self.assertEqual(got["mode"], "paper")
+        self.assertEqual(got["decision_counts"]["BUY_LONG"], 1)
+        self.assertEqual(got["timestamp"], 1_700_000_000.0)
+
     def test_trade_time_str(self):
         trade = TradeRecord(
             timestamp=1704067200.0,

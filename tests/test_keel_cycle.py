@@ -116,6 +116,28 @@ class TestPaperCycle(unittest.TestCase):
         snaps = self.ledger.get_factor_snapshots(limit=10)
         self.assertGreaterEqual(len(snaps), 2)
 
+    def test_cycle_writes_structured_summary(self):
+        summary = run_paper_cycle(
+            exchange=self.exchange,
+            ledger=self.ledger,
+            instrument_ids=["BTC-USDT-SWAP", "ETH-USDT-SWAP"],
+            force_action="WAIT",
+        )
+        self.assertIn("cycle_summary", summary)
+        cs = summary["cycle_summary"]
+        self.assertEqual(cs["mode"], "paper")
+        self.assertEqual(cs["instruments"], 2)
+        self.assertEqual(cs["decision_counts"].get("WAIT"), 2)
+        self.assertEqual(cs["risk_denies"], 0)
+        self.assertEqual(cs["errors"], [])
+
+        stored = self.ledger.get_last_cycle_summary()
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["instruments"], 2)
+        self.assertEqual(stored["decision_counts"].get("WAIT"), 2)
+        events = self.ledger.get_events(event_type="worker_cycle_summary", limit=5)
+        self.assertGreaterEqual(len(events), 1)
+
 
 class TestKeelSchedulerTraderJob(unittest.TestCase):
     def test_trader_job_invokes_keel_cycle_module(self):

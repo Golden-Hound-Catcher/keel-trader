@@ -37,6 +37,8 @@ class KeelLedger:
     Thread-safe via connection-per-thread pattern.
     """
 
+    CYCLE_SUMMARY_EVENT = "worker_cycle_summary"
+
     def __init__(self, db_path: Path | str | None = None):
         if db_path is None:
             from keel.config import get_settings
@@ -196,14 +198,52 @@ class KeelLedger:
             )
             return cursor.lastrowid or 0
 
-    def record_event(self, event_type: str, inst_id: str | None = None, data: dict[str, Any] | None = None) -> int:
+    def record_event(
+        self,
+        event_type: str,
+        inst_id: str | None = None,
+        data: dict[str, Any] | None = None,
+        *,
+        timestamp: float | None = None,
+    ) -> int:
         """Append a generic event. Returns the new ID."""
         with self._transaction() as conn:
             cursor = conn.execute(
                 "INSERT INTO events (timestamp, event_type, inst_id, data) VALUES (?, ?, ?, ?)",
-                (time.time(), event_type, inst_id, json.dumps(data) if data else None),
+                (
+                    time.time() if timestamp is None else float(timestamp),
+                    event_type,
+                    inst_id,
+                    json.dumps(data) if data else None,
+                ),
             )
             return cursor.lastrowid or 0
+
+    def record_cycle_summary(self, summary: dict[str, Any]) -> int:
+        """
+        Persist a structured worker cycle summary for the monitor/status API.
+
+        Event type: ``worker_cycle_summary``. Expected keys include timestamp,
+        mode, adapter, policy, instruments, decision_counts, risk_denies, errors.
+        """
+        payload = dict(summary)
+        ts = float(payload.get("timestamp") or time.time())
+        payload["timestamp"] = ts
+        return self.record_event(
+            self.CYCLE_SUMMARY_EVENT,
+            data=payload,
+            timestamp=ts,
+        )
+
+    def get_last_cycle_summary(self) -> dict[str, Any] | None:
+        """Return the most recent worker_cycle_summary payload, or None."""
+        events = self.get_events(event_type=self.CYCLE_SUMMARY_EVENT, limit=1)
+        if not events:
+            return None
+        ev = events[0]
+        data = dict(ev.data or {})
+        data.setdefault("timestamp", ev.timestamp)
+        return data
 
     def get_trades(
         self,

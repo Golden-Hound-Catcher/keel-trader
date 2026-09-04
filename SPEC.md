@@ -118,7 +118,7 @@ Base: `keel.api.app`
 |--------|------|---------|
 | GET | `/health` | Liveness |
 | GET | `/ready` | Readiness (DB open, etc.) |
-| GET | `/api/v1/status` | Worker/exchange/policy summary |
+| GET | `/api/v1/status` | Worker/exchange/policy summary; optional `last_cycle` |
 | GET | `/api/v1/config` | Non-secret config echo |
 | GET | `/api/v1/positions` | Open positions |
 | GET | `/api/v1/balance` | Account balance snapshot |
@@ -282,6 +282,13 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Inventory-gated delete: `r20_backend/okx_client.py`, `prompt_views.py` (0 refs); kept `qq_gateway_daemon`/`audit` (qq_bind) |
 | 2026-09-04 | Inventory-gated delete: `scripts/calculus_engine.py` (migrated to kinematics), `r20_gateway/agents.py`, `supervisor.py` (0 refs); trader shims kept |
 | 2026-09-04 | Optional `keel.notify` stub port (Null/Webhook); wire into worker cycle via `KEEL_NOTIFY_WEBHOOK_URL` |
+| 2026-09-04 | `GET /api/v1/status` exposes optional `last_cycle` from ledger `worker_cycle_summary` |
+
+---
+
+## Addendum: last_cycle on status
+
+After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` event (via `KeelLedger.record_cycle_summary`). `GET /api/v1/status` includes optional `last_cycle` with timestamp, mode/adapter, policy, instruments, `decision_counts`, `risk_denies`, and `errors`. Monitor UI shows it when present.
 
 ---
 

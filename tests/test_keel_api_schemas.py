@@ -15,6 +15,7 @@ from keel.api.schemas import (
     HealthResponse,
     MacdBlock,
     PositionsResponse,
+    LastCycleSummary,
     StatusResponse,
     TradesResponse,
 )
@@ -22,6 +23,29 @@ from keel.domain import Decision, DecisionRecord, FactorSnapshot, LedgerEvent, T
 
 
 class TestApiSchemas(unittest.TestCase):
+    def test_last_cycle_summary_model(self):
+        m = LastCycleSummary(
+            timestamp=1.0,
+            mode="paper",
+            adapter="paper",
+            policy="rule",
+            instruments=1,
+            decision_counts={"WAIT": 1},
+            risk_denies=0,
+            errors=[],
+        )
+        self.assertEqual(m.mode, "paper")
+        status = StatusResponse(
+            version="0.1.0",
+            mode="read_only_control_plane",
+            uptime_seconds=1,
+            environment="demo",
+            credentials={"okx": False, "llm": False},
+            ledger_db="/tmp/x.db",
+            last_cycle=m,
+        )
+        self.assertEqual(status.last_cycle.instruments, 1)
+
     def test_health_response_model(self):
         m = HealthResponse(
             status="ok",
@@ -93,8 +117,11 @@ class TestApiSchemas(unittest.TestCase):
         comps = schema.get("components", {}).get("schemas", {})
         self.assertIn("HealthResponse", comps)
         self.assertIn("StatusResponse", comps)
+        self.assertIn("LastCycleSummary", comps)
         self.assertIn("DecisionsResponse", comps)
         self.assertIn("FactorsResponse", comps)
+        status_props = comps["StatusResponse"]["properties"]
+        self.assertIn("last_cycle", status_props)
 
 
 class TestDomainRecordsExports(unittest.TestCase):

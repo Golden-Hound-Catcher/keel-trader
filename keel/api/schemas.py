@@ -29,6 +29,20 @@ class CredentialsStatus(BaseModel):
     llm: bool
 
 
+class LastCycleSummary(BaseModel):
+    """Structured summary of the most recent keel.worker.cycle run."""
+
+    timestamp: float
+    mode: str
+    adapter: str = ""
+    policy: str = ""
+    instruments: int = 0
+    decision_counts: dict[str, int] = Field(default_factory=dict)
+    risk_denies: int = 0
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+    policy_success: bool | None = None
+
+
 class StatusResponse(BaseModel):
     version: str
     mode: str
@@ -36,6 +50,7 @@ class StatusResponse(BaseModel):
     environment: str
     credentials: CredentialsStatus
     ledger_db: str
+    last_cycle: LastCycleSummary | None = None
 
 
 class ConfigResponse(BaseModel):
