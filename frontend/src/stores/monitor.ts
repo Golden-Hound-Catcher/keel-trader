@@ -33,6 +33,14 @@ export const useMonitorStore = defineStore('monitor', () => {
   const trades = ref<KeelTrade[]>([])
   const events = ref<Array<Record<string, unknown>>>([])
   const factors = ref<Record<string, KeelFactors>>({})
+  /** When true, factors fetch uses ?live=1 (OKX public candles); else ledger snapshots. */
+  const factorsLive = ref(false)
+  /** Per-instrument factor fetch in-flight (does not block global poll). */
+  const factorLoading = ref<Record<string, boolean>>({})
+  /** Per-instrument factor fetch error message (stale data kept on failure). */
+  const factorErrors = ref<Record<string, string>>({})
+  /** Decisions tab filter; empty = All. Passed as GET /decisions?inst_id= when set. */
+  const decisionInstFilter = ref('')
   const watchlist = ref<string[]>([...KEEL_DEFAULT_INSTRUMENTS])
 
   const loading = ref(false)
@@ -66,7 +74,11 @@ export const useMonitorStore = defineStore('monitor', () => {
         keelFetch<KeelDailyPnl>('/api/v1/pnl/daily'),
         keelFetch<KeelBalance>('/api/v1/balance'),
         keelFetch<{ count: number; positions: KeelPosition[]; source: string }>('/api/v1/positions'),
-        keelFetch<{ count: number; decisions: KeelDecision[] }>('/api/v1/decisions?limit=50'),
+        keelFetch<{ count: number; decisions: KeelDecision[] }>(
+          decisionInstFilter.value
+            ? `/api/v1/decisions?limit=50&inst_id=${encodeURIComponent(decisionInstFilter.value)}`
+            : '/api/v1/decisions?limit=50',
+        ),
         keelFetch<{ count: number; trades: KeelTrade[] }>('/api/v1/trades?limit=50'),
         keelFetch<{ count: number; events: Array<Record<string, unknown>> }>('/api/v1/events?limit=50'),
       ])
@@ -110,22 +122,8 @@ export const useMonitorStore = defineStore('monitor', () => {
       if (ev.status === 'fulfilled') events.value = ev.value.events || []
       else errors.push(`events: ${ev.reason?.message || ev.reason}`)
 
-      // Factors per instrument (best-effort; ledger may be empty)
-      const factorEntries = await Promise.allSettled(
-        watchlist.value.map((instId) =>
-          keelFetch<KeelFactors>(`/api/v1/factors/${encodeURIComponent(instId)}`).then(
-            (f) => [instId, f] as const,
-          ),
-        ),
-      )
-      const nextFactors: Record<string, KeelFactors> = { ...factors.value }
-      for (const r of factorEntries) {
-        if (r.status === 'fulfilled') {
-          const [id, f] = r.value
-          nextFactors[id] = f
-        }
-      }
-      factors.value = nextFactors
+      // Factors per instrument (best-effort; per-inst loading/error; do not block poll)
+      await fetchFactors()
 
       // Connected if core health+status work
       isConnected.value = h.status === 'fulfilled' && st.status === 'fulfilled'
@@ -143,6 +141,66 @@ export const useMonitorStore = defineStore('monitor', () => {
         }, 400)
       }
     }
+  }
+
+  async function fetchFactors() {
+    const ids = watchlist.value
+    const liveQ = factorsLive.value ? '?live=1' : ''
+    const loadingNext: Record<string, boolean> = { ...factorLoading.value }
+    for (const id of ids) loadingNext[id] = true
+    factorLoading.value = loadingNext
+
+    const factorEntries = await Promise.allSettled(
+      ids.map((instId) =>
+        keelFetch<KeelFactors>(
+          `/api/v1/factors/${encodeURIComponent(instId)}${liveQ}`,
+        ).then((f) => [instId, f] as const),
+      ),
+    )
+
+    const nextFactors: Record<string, KeelFactors> = { ...factors.value }
+    const nextErrors: Record<string, string> = { ...factorErrors.value }
+    const nextLoading: Record<string, boolean> = { ...factorLoading.value }
+    for (let i = 0; i < factorEntries.length; i++) {
+      const instId = ids[i]
+      const r = factorEntries[i]
+      nextLoading[instId] = false
+      if (r.status === 'fulfilled') {
+        const [id, f] = r.value
+        nextFactors[id] = f
+        delete nextErrors[id]
+      } else {
+        const msg = (r.reason as { message?: string })?.message || String(r.reason)
+        nextErrors[instId] = msg
+        // keep stale factor row on failure
+      }
+    }
+    factors.value = nextFactors
+    factorErrors.value = nextErrors
+    factorLoading.value = nextLoading
+  }
+
+  async function fetchDecisionsOnly() {
+    const url = decisionInstFilter.value
+      ? `/api/v1/decisions?limit=50&inst_id=${encodeURIComponent(decisionInstFilter.value)}`
+      : '/api/v1/decisions?limit=50'
+    const dec = await keelFetch<{ count: number; decisions: KeelDecision[] }>(url)
+    decisions.value = dec.decisions || []
+  }
+
+  function setFactorsLive(live: boolean) {
+    if (factorsLive.value === live) return
+    factorsLive.value = live
+    void fetchFactors()
+  }
+
+  function setDecisionInstFilter(instId: string) {
+    if (decisionInstFilter.value === instId) return
+    decisionInstFilter.value = instId
+    void fetchDecisionsOnly().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      error.value = `decisions: ${msg}`
+    })
   }
 
   function startPolling(intervalMs = 5000) {
@@ -170,6 +228,10 @@ export const useMonitorStore = defineStore('monitor', () => {
     trades,
     events,
     factors,
+    factorsLive,
+    factorLoading,
+    factorErrors,
+    decisionInstFilter,
     watchlist,
     loading,
     isRefreshing,
@@ -180,6 +242,9 @@ export const useMonitorStore = defineStore('monitor', () => {
     positionCount,
     uptimeLabel,
     fetchAll,
+    fetchFactors,
+    setFactorsLive,
+    setDecisionInstFilter,
     startPolling,
     stopPolling,
   }
