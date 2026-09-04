@@ -215,6 +215,16 @@ class TestDeletedLegacyScripts(unittest.TestCase):
             "r20_okx_setup.py",
             "ai_brain_trader.py",
             "db_manager.py",
+            "factor_library.py",
+            "news_sentiment_harvester.py",
+            "daily_summary_and_backup.py",
+            "nightly_backup_and_clean.py",
+            "backup_runtime.py",
+            "sync_full_ledger.py",
+            "self_improvement_engine.py",
+            "instrument_pool.py",
+            "okx_runtime.py",
+            "prompt_library.py",
         ]
         for name in gone:
             self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)
@@ -231,6 +241,15 @@ class TestDeletedLegacyScripts(unittest.TestCase):
 
     def test_okx_setup_test_removed(self):
         self.assertFalse((ROOT / "tests" / "test_okx_setup.py").exists())
+
+    def test_scheduler_script_test_modules_removed(self):
+        for name in (
+            "test_prompt_library.py",
+            "test_backup_methods.py",
+            "test_prompt_math_foundations.py",
+            "test_custom_systems.py",
+        ):
+            self.assertFalse((ROOT / "tests" / name).exists(), msg=name)
 
     def test_retired_trader_scripts_gone(self):
         self.assertFalse((ROOT / "scripts" / "ai_factor_trader.py").exists())

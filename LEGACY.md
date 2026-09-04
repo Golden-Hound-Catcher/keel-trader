@@ -1,7 +1,7 @@
 # Legacy inventory (quarantine after unused-script / gateway trim)
 
-Keel Trader keeps historical R20 helper modules in-tree so gateway/scripts and
-rollback paths still work. **The Vue `/admin/*` UI, Jinja `dashboard/`, Vue
+Keel Trader keeps historical R20 helper modules in-tree for soft-blocked
+gateway/backend rollback. **The Vue `/admin/*` UI, Jinja `dashboard/`, Vue
 `/legacy`, `admin_auth`, and `/api/v1/admin/*` HTTP routes are gone.**
 Unused dashboard/admin-era scripts (`sync_web_data`, `daemon_web_sync`, debug
 one-shots, etc.) are **deleted**.
@@ -23,10 +23,9 @@ Opt-in flags:
 | `KEEL_USE_LEGACY=1` | Acknowledge legacy scripts; silence import quarantine warnings |
 | `KEEL_ALLOW_LEGACY_BACKEND=1` | **Required** to import/serve `r20_backend.app` (410 stub only) |
 | `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` | Emergency: re-enable gateway job ticks (worker + `GatewayScheduler.tick`) |
-| `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` | Opt-in: KeelScheduler also runs factor/news/briefing/backup script jobs (default is trader-only) |
 
 Gateway job ticks remain separately gated (notify-only by default). Prefer Keel units only.
-Default Keel scheduler is **trader-only**; legacy script JobSpecs need the flag above.
+Keel scheduler is **trader-only** (`python -m keel.worker`); legacy script JobSpecs are deleted.
 
 ---
 
@@ -100,11 +99,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 
 | Path | Status |
 |------|--------|
-| `scripts/daily_summary_and_backup.py` | Historical briefing job; KeelScheduler only if `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` |
-| `scripts/self_improvement_engine.py` | Historical evolution job (tests + optional gateway JOBS) |
-| `scripts/nightly_backup_and_clean.py` | Historical nightly job; KeelScheduler only if `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` |
-| `scripts/factor_library.py` / `news_sentiment_harvester.py` | KeelScheduler only if `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` |
-| `scripts/sync_full_ledger.py` / `backup_runtime.py` / `okx_runtime.py` / … | Helpers still used by remaining scripts/tests |
+| *(none remaining under `scripts/` besides `run_keel_tests.sh`)* | Product path is `python -m keel.worker` only |
 
 ### Deleted scripts / gateway helpers (inventory)
 
@@ -123,6 +118,20 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/qq_notifier.py` | QQ product non-goal; call sites removed; Keel uses `keel.notify` |
 | `scripts/ai_brain_trader.py` | Retired LLM brain loop (council already gone); product path is `python -m keel.worker` |
 | `scripts/db_manager.py` | Orphan SQLite helper; zero refs after `ai_factor_trader` drop |
+| `scripts/factor_library.py` | Legacy KeelScheduler/gateway job; product path `python -m keel.worker` |
+| `scripts/news_sentiment_harvester.py` | Legacy news job removed with scheduler script map |
+| `scripts/daily_summary_and_backup.py` | Legacy briefing job removed |
+| `scripts/nightly_backup_and_clean.py` | Legacy nightly backup job removed |
+| `scripts/backup_runtime.py` | Only used by deleted nightly/briefing backup scripts |
+| `scripts/sync_full_ledger.py` | Only used by deleted briefing/backup scripts |
+| `scripts/self_improvement_engine.py` | Legacy evolution job + tests removed |
+| `scripts/instrument_pool.py` | Only used by deleted legacy scripts |
+| `scripts/okx_runtime.py` | Legacy CLI/env helper; `r20_backend.config` inlined selection |
+| `scripts/prompt_library.py` | Replaced by `keel.llm.prompts`; comment updated in compose.py |
+| `tests/test_prompt_library.py` | Covered deleted `prompt_library` |
+| `tests/test_backup_methods.py` | Covered deleted `backup_runtime` |
+| `tests/test_prompt_math_foundations.py` | Covered deleted `self_improvement_engine` |
+| `tests/test_custom_systems.py` | Covered deleted prompt/backup script stack |
 | `r20_gateway/agents.py` | 0 external refs (admin-era agent registry) |
 | `r20_gateway/supervisor.py` | 0 external refs (unused supervisor wrapper) |
 | `r20_backend/qq_bind.py` | QQ product non-goal; 0 Keel/scripts importers |
@@ -165,6 +174,20 @@ test ! -f scripts/r20_okx_setup.py
 test ! -f scripts/ai_brain_trader.py
 test ! -f scripts/ai_factor_trader.py
 test ! -f scripts/db_manager.py
+test ! -f scripts/factor_library.py
+test ! -f scripts/news_sentiment_harvester.py
+test ! -f scripts/daily_summary_and_backup.py
+test ! -f scripts/nightly_backup_and_clean.py
+test ! -f scripts/backup_runtime.py
+test ! -f scripts/sync_full_ledger.py
+test ! -f scripts/self_improvement_engine.py
+test ! -f scripts/instrument_pool.py
+test ! -f scripts/okx_runtime.py
+test ! -f scripts/prompt_library.py
+test ! -f tests/test_prompt_library.py
+test ! -f tests/test_backup_methods.py
+test ! -f tests/test_prompt_math_foundations.py
+test ! -f tests/test_custom_systems.py
 test ! -f tests/test_okx_setup.py
 test ! -f r20_backend/qq_bind.py
 test ! -f r20_backend/qq_gateway_daemon.py

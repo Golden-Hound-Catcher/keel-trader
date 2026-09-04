@@ -18,7 +18,6 @@ import sys
 from typing import Any
 
 from r20_backend.schedule_store import load_schedule
-from r20_backend.backup_store import list_jobs as list_backup_jobs
 from r20_gateway.store import GatewayStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,23 +40,14 @@ class JobSpec:
     default_times: tuple[str, ...] = ()
 
 
-JOBS = (
-    # trader job retired with scripts/ai_factor_trader.py — product path is keel.worker
-    JobSpec("factor_library", "factor_library.py", 60, 55),
-    JobSpec("news", "news_sentiment_harvester.py", 10 * 60, 300),
-    JobSpec("daily_briefing", "daily_summary_and_backup.py", None, 600, "briefing_times", ("08:00", "20:00")),
-    JobSpec("self_improvement", "self_improvement_engine.py", None, 1200, "self_improvement_time", ("20:00",)),
-)
+# Legacy script jobs retired (factor_library / news / briefing / self_improvement /
+# nightly_backup). Product scheduling is python -m keel.worker only.
+JOBS: tuple[JobSpec, ...] = ()
 
 
 def backup_job_specs() -> tuple[JobSpec, ...]:
-    specs: list[JobSpec] = []
-    for index, job in enumerate(list_backup_jobs()):
-        if not job.get("enabled"):
-            continue
-        name = "nightly_backup" if index == 0 or job.get("id") == "nightly-default" else f"backup:{job['id']}"
-        specs.append(JobSpec(name, "nightly_backup_and_clean.py", None, 1800, f"backup_job:{job['id']}", tuple(job.get("schedule_times", ["02:00"]))))
-    return tuple(specs)
+    """Backup script jobs removed with scripts/nightly_backup_and_clean.py."""
+    return ()
 
 
 def current_jobs() -> tuple[JobSpec, ...]:
