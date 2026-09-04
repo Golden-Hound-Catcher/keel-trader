@@ -2,7 +2,7 @@
  * Keel read-only API client (Phase U1).
  *
  * Uses Keel `/api/v1/*` and `/health` only.
- * Does NOT send X-R20-Session — v1 local/demo has no auth (SPEC O2).
+ * Optional Bearer via VITE_KEEL_API_TOKEN when backend KEEL_API_TOKEN is set.
  * Forbidden: data/*.json, legacy r20_backend private/admin routes.
  */
 import { ref } from 'vue'
@@ -22,6 +22,11 @@ export function useKeelApi() {
       // Explicitly omit Content-Type on GET; never attach X-R20-Session
       if (options.method && options.method !== 'GET' && options.body) {
         headers['Content-Type'] = headers['Content-Type'] || 'application/json'
+      }
+
+      const apiToken = (import.meta.env.VITE_KEEL_API_TOKEN as string | undefined)?.trim()
+      if (apiToken) {
+        headers['Authorization'] = `Bearer ${apiToken}`
       }
 
       const resp = await fetch(path, {

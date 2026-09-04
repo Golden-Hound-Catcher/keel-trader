@@ -15,6 +15,8 @@ import {
   TrendingUp,
   Clock,
   Settings2,
+  Gauge,
+  Waves,
 } from 'lucide-vue-next'
 
 const store = useMonitorStore()
@@ -162,6 +164,39 @@ const realizedPnlLabel = computed(() =>
   realizedPnl.value == null ? '—' : fmt(realizedPnl.value),
 )
 
+/** Loss budget usage vs config.max_daily_loss (0 when profit / unused). */
+const maxDailyLoss = computed(() => {
+  const n = Number(store.config?.max_daily_loss ?? NaN)
+  return Number.isFinite(n) && n > 0 ? n : null
+})
+const riskBudgetUsage = computed(() => {
+  if (realizedPnl.value == null || maxDailyLoss.value == null) return null
+  if (realizedPnl.value >= 0) return 0
+  return Math.min(1, Math.max(0, -realizedPnl.value / maxDailyLoss.value))
+})
+const riskBudgetPctLabel = computed(() => {
+  if (riskBudgetUsage.value == null) return '—'
+  if (riskBudgetUsage.value <= 0) return '未动用'
+  return `${Math.round(riskBudgetUsage.value * 100)}%`
+})
+const riskBudgetWarn = computed(
+  () => riskBudgetUsage.value != null && riskBudgetUsage.value >= 0.8,
+)
+const riskBudgetCritical = computed(
+  () => riskBudgetUsage.value != null && riskBudgetUsage.value >= 1,
+)
+
+/** Sum of positions[].upl (null/NaN → 0). */
+const positionsFloatPnl = computed(() => {
+  let sum = 0
+  for (const pos of store.positions) {
+    const n = Number(pos?.upl)
+    if (Number.isFinite(n)) sum += n
+  }
+  return sum
+})
+const positionsFloatPnlLabel = computed(() => fmt(positionsFloatPnl.value))
+
 /** Worker lag from status.seconds_since_last_cycle. */
 const workerLagSeconds = computed(() => {
   const raw = store.status?.seconds_since_last_cycle
@@ -303,7 +338,7 @@ const configStrip = computed(() => {
             </div>
           </div>
 
-          <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+          <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
               <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
                 <Wallet class="w-4 h-4 text-cyan-400" />
@@ -354,6 +389,73 @@ const configStrip = computed(() => {
               <div class="text-2xl font-black font-mono text-white">{{ store.positionCount }}</div>
               <div class="text-[11px] font-mono text-[#707E94] mt-1">
                 {{ store.positionsSource || '—' }}
+              </div>
+            </div>
+            <div
+              class="bg-[#0D121B] border rounded-xl p-4"
+              :class="riskBudgetCritical
+                ? 'border-rose-500/50'
+                : riskBudgetWarn
+                  ? 'border-amber-500/40'
+                  : 'border-[#1A2232]'"
+            >
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+                <Gauge
+                  class="w-4 h-4"
+                  :class="riskBudgetCritical
+                    ? 'text-rose-400'
+                    : riskBudgetWarn
+                      ? 'text-amber-400'
+                      : 'text-violet-400'"
+                />
+                风控额度
+              </div>
+              <div
+                class="text-2xl font-black font-mono"
+                :class="riskBudgetCritical
+                  ? 'text-rose-400'
+                  : riskBudgetWarn
+                    ? 'text-amber-400'
+                    : 'text-white'"
+              >
+                {{ riskBudgetPctLabel }}
+              </div>
+              <div class="mt-2 h-1.5 rounded-full bg-[#1A2232] overflow-hidden">
+                <div
+                  class="h-full rounded-full transition-all"
+                  :class="riskBudgetCritical
+                    ? 'bg-rose-500'
+                    : riskBudgetWarn
+                      ? 'bg-amber-400'
+                      : 'bg-violet-500'"
+                  :style="{ width: `${Math.round((riskBudgetUsage ?? 0) * 100)}%` }"
+                />
+              </div>
+              <div class="text-[11px] font-mono text-[#707E94] mt-1">
+                <template v-if="realizedPnl == null || maxDailyLoss == null">
+                  已实现 vs max_daily_loss —
+                </template>
+                <template v-else-if="(riskBudgetUsage ?? 0) <= 0">
+                  盈利/未亏 · budget ${{ fmt(maxDailyLoss) }}
+                </template>
+                <template v-else>
+                  loss ${{ fmt(Math.abs(realizedPnl)) }} / ${{ fmt(maxDailyLoss) }}
+                </template>
+              </div>
+            </div>
+            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+                <Waves class="w-4 h-4 text-sky-400" />
+                持仓浮动盈亏
+              </div>
+              <div
+                class="text-2xl font-black font-mono"
+                :class="positionsFloatPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'"
+              >
+                ${{ positionsFloatPnlLabel }}
+              </div>
+              <div class="text-[11px] font-mono text-[#707E94] mt-1">
+                Σ positions.upl · {{ store.positionCount }} pos
               </div>
             </div>
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">

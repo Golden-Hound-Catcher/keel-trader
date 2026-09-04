@@ -77,7 +77,7 @@ export interface KeelPosition {
   size: number
   avg_price: number
   mark_price: number
-  upl: number
+  upl: number | null
   upl_ratio: number
   leverage: number
   margin: number

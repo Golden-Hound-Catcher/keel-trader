@@ -137,7 +137,7 @@ Base: `keel.api.app`
 
 **Auth (v1)**
 
-- Default: bind to trusted network / localhost; optional shared bearer later (`KEEL_API_TOKEN`) — not required for first demo.
+- Default: bind to trusted network / localhost; optional shared bearer (`KEEL_API_TOKEN`) for non-local binds — empty token keeps v1 local/demo open.
 
 ---
 
@@ -158,6 +158,7 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_LLM_MODEL` | — | |
 | `KEEL_LEDGER_DB` | local path | SQLite file |
 | `KEEL_KILL_SWITCH` | `0` | `0` \| `1` / true\|false — deny all trading when on |
+| `KEEL_API_TOKEN` | empty | Optional bearer for `/api/v1/*`; empty → no auth |
 | `KEEL_USE_LEGACY` | unset | Silence legacy import quarantine warnings |
 
 Secrets live in `.env` (`chmod 600`) or process env only. **Do not** add parallel encrypted secret stores in v1.
@@ -253,7 +254,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | ID | Question | Default until decided |
 |----|----------|------------------------|
 | O1 | Vue reuse depth (full admin vs monitor-only) | **Monitor-only** (R20 `/admin` removed; Keel admin = future addendum) |
-| O2 | API auth for non-local binds | None in v1 local/demo |
+| O2 | API auth for non-local binds | Optional `KEEL_API_TOKEN` (Bearer / X-API-Key on `/api/v1/*`) |
 | O3 | When to hard-delete `r20_*` packages | After gateway/scripts stop needing helpers (admin API already gone) |
 
 ---
@@ -275,6 +276,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-04 | Optional `KEEL_API_TOKEN` bearer/X-API-Key on `/api/v1/*`; monitor risk budget + positions UPL |
 | 2026-09-03 | Initial SPEC v1 drafted after stages 2–7 refactor |
 | 2026-09-03 | §11: U1 done; soft-block `r20_backend.app`; supported = keel-api + keel-worker + U1 UI |
 | 2026-09-03 | §10/§11: U2 done — Jinja `dashboard/` removed; `/legacy` gone; `r20_backend` admin-only remnant |
