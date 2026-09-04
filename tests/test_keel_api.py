@@ -122,11 +122,14 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIn("kill_switch", r.json())
         self.assertIsInstance(r.json()["kill_switch"], bool)
         self.assertFalse(r.json()["kill_switch"])
+        self.assertIn("decision_policy", r.json())
+        self.assertIsInstance(r.json()["decision_policy"], str)
 
         r = self.client.get("/api/v1/config")
         self.assertEqual(r.status_code, 200)
         self.assertIn("kill_switch", r.json())
         self.assertFalse(r.json()["kill_switch"])
+        self.assertEqual(r.json()["decision_policy"], self.client.get("/api/v1/status").json()["decision_policy"])
 
     def test_status_kill_switch_on_when_armed(self):
         os.environ["KEEL_KILL_SWITCH"] = "1"
@@ -180,6 +183,9 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertTrue(body["exchange_mode"])
         self.assertIn("cycle_interval_seconds", body)
         self.assertEqual(body["cycle_interval_seconds"], 900)
+        self.assertIn("decision_policy", body)
+        self.assertIsInstance(body["decision_policy"], str)
+        self.assertTrue(body["decision_policy"])
 
     def test_daily_pnl_endpoint(self):
         import time

@@ -70,6 +70,7 @@ class StatusResponse(BaseModel):
     credentials: CredentialsStatus
     ledger_db: str
     kill_switch: bool = False
+    decision_policy: str = "rule"
     last_cycle: LastCycleSummary | None = None
     seconds_since_last_cycle: int | None = None
     worker_stale: bool = False
@@ -82,6 +83,7 @@ class ConfigResponse(BaseModel):
     max_asset_margin: float
     llm_model: str
     kill_switch: bool = False
+    decision_policy: str = "rule"
     instruments: list[str] = Field(default_factory=list)
     notify_configured: bool = False
     exchange_mode: str = "paper"

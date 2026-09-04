@@ -184,6 +184,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("notify_configured", config_props)
         self.assertIn("exchange_mode", config_props)
         self.assertIn("cycle_interval_seconds", config_props)
+        self.assertIn("decision_policy", config_props)
+        self.assertIn("decision_policy", status_props)
         self.assertIn("DailyPnlResponse", comps)
         self.assertIn("/api/v1/pnl/daily", paths)
         self.assertIn("/ready", paths)
@@ -201,9 +203,11 @@ class TestApiSchemas(unittest.TestCase):
             credentials={"okx": False, "llm": False},
             ledger_db="/tmp/x.db",
             kill_switch=True,
+            decision_policy="rule",
             seconds_since_last_cycle=12,
         )
         self.assertTrue(status.kill_switch)
+        self.assertEqual(status.decision_policy, "rule")
         self.assertEqual(status.seconds_since_last_cycle, 12)
         cfg = ConfigResponse(
             environment="demo",
@@ -212,12 +216,14 @@ class TestApiSchemas(unittest.TestCase):
             max_asset_margin=600.0,
             llm_model="gpt-4o",
             kill_switch=False,
+            decision_policy="stub",
             instruments=["BTC-USDT-SWAP"],
             notify_configured=True,
             exchange_mode="paper",
             cycle_interval_seconds=900,
         )
         self.assertFalse(cfg.kill_switch)
+        self.assertEqual(cfg.decision_policy, "stub")
         self.assertEqual(cfg.instruments, ["BTC-USDT-SWAP"])
         self.assertTrue(cfg.notify_configured)
         self.assertEqual(cfg.exchange_mode, "paper")

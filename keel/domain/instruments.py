@@ -90,6 +90,32 @@ class InstrumentPool:
     def __init__(self, instruments: list[Instrument] | None = None):
         self._instruments = {i.inst_id: i for i in (instruments or DEFAULT_CRYPTO_INSTRUMENTS)}
 
+    @classmethod
+    def from_ids(cls, ids: list[str]) -> "InstrumentPool":
+        """
+        Build a pool from OKX swap ids.
+
+        Known DEFAULT_CRYPTO_INSTRUMENTS are reused (contract specs preserved).
+        Unknown ids become ``Instrument.from_okx_swap(symbol)``.
+        Empty / all-blank ids → default crypto pool.
+        """
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in ids or []:
+            inst_id = str(raw).strip()
+            if not inst_id or inst_id in seen:
+                continue
+            seen.add(inst_id)
+            cleaned.append(inst_id)
+        if not cleaned:
+            return cls()
+        known = {i.inst_id: i for i in DEFAULT_CRYPTO_INSTRUMENTS}
+        instruments = [
+            known[inst_id] if inst_id in known else Instrument.from_okx_swap(inst_id)
+            for inst_id in cleaned
+        ]
+        return cls(instruments)
+
     def get(self, inst_id: str) -> Instrument | None:
         """Get instrument by ID."""
         return self._instruments.get(inst_id)

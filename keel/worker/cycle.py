@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from keel.config import get_settings
-from keel.domain.instruments import DEFAULT_CRYPTO_INSTRUMENTS, InstrumentPool
+from keel.domain.instruments import InstrumentPool
 from keel.exchange.factory import build_exchange, describe_exchange
 from keel.exchange.paper import PaperAdapter, PaperExchange
 from keel.exchange.protocol import ExchangeProtocol, Ticker
@@ -283,7 +283,7 @@ def run_paper_cycle(
     """
     cycle_t0 = time.perf_counter()
     settings = get_settings()
-    pool = InstrumentPool()
+    pool = InstrumentPool.from_ids(list(settings.instruments))
     ids = instrument_ids or [i.inst_id for i in pool.all()]
     prices = {**DEFAULT_SEED_PRICES, **(seed_prices or {})}
 
