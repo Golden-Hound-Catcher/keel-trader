@@ -117,9 +117,9 @@ Base: `keel.api.app`
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/health` | Liveness |
-| GET | `/ready` | Readiness: ledger open + `seconds_since_last_cycle` / `worker_stale` (>900s → ready=false; null lag = cold-start OK) |
-| GET | `/api/v1/status` | Worker/exchange/policy summary; optional `last_cycle`; `seconds_since_last_cycle` |
-| GET | `/api/v1/config` | Non-secret config echo (incl. instruments, exchange_mode, notify_configured) |
+| GET | `/ready` | Readiness: ledger open + `seconds_since_last_cycle` / `worker_stale` (stale when lag > max(2×cycle_interval, cycle_interval+300); null lag = cold-start OK) |
+| GET | `/api/v1/status` | Worker/exchange/policy summary; optional `last_cycle`; `seconds_since_last_cycle`; `worker_stale` (same threshold as `/ready`) |
+| GET | `/api/v1/config` | Non-secret config echo (incl. instruments, exchange_mode, notify_configured, `cycle_interval_seconds`) |
 | GET | `/api/v1/pnl/daily` | Realized daily PnL from ledger (Beijing date; optional `?date=YYYY-MM-DD`) |
 | GET | `/api/v1/positions` | Open positions |
 | GET | `/api/v1/balance` | Account balance snapshot |
@@ -280,6 +280,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Monitor: Factors live-candles toggle (`?live=1` + source badge); Decisions `inst_id` filter |
 | 2026-09-04 | Monitor Trades `inst_id` filter (mirror Decisions); `/ready` adds worker lag / `worker_stale` |
 | 2026-09-04 | Monitor Events `inst_id` + `event_type` filters (mirror Decisions/Trades) |
+| 2026-09-04 | Configurable trader cycle interval (`KEEL_CYCLE_INTERVAL_SECONDS`, default 900); `/ready`+status stale = max(2×interval, interval+300); monitor shows 周期 |
 | 2026-09-03 | Initial SPEC v1 drafted after stages 2–7 refactor |
 | 2026-09-03 | §11: U1 done; soft-block `r20_backend.app`; supported = keel-api + keel-worker + U1 UI |
 | 2026-09-03 | §10/§11: U2 done — Jinja `dashboard/` removed; `/legacy` gone; `r20_backend` admin-only remnant |

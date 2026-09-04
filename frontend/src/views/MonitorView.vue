@@ -294,13 +294,41 @@ const workerLagSeconds = computed(() => {
   const n = typeof raw === 'number' ? raw : Number(raw)
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null
 })
-const workerLagStale = computed(
-  () => workerLagSeconds.value != null && workerLagSeconds.value > 900,
+
+/** Same formula as keel.api.cycle_time.worker_stale_threshold_seconds. */
+function workerStaleThresholdSeconds(intervalSeconds: number): number {
+  const interval = Math.max(1, Math.floor(intervalSeconds))
+  return Math.max(interval * 2, interval + 300)
+}
+
+const cycleIntervalSeconds = computed(() => {
+  const raw = store.config?.cycle_interval_seconds
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 900
+})
+
+const workerStaleThreshold = computed(() =>
+  workerStaleThresholdSeconds(cycleIntervalSeconds.value),
 )
+
+const workerLagStale = computed(() => {
+  if (store.status?.worker_stale === true) return true
+  if (store.status?.worker_stale === false) return false
+  return (
+    workerLagSeconds.value != null
+    && workerLagSeconds.value > workerStaleThreshold.value
+  )
+})
 const workerLagLabel = computed(() => {
   if (workerLagSeconds.value == null) return '尚无周期'
   return `${workerLagSeconds.value}秒前`
 })
+
+function formatCycleIntervalLabel(seconds: number): string {
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`
+  if (seconds % 60 === 0) return `${seconds / 60}m`
+  return `${seconds}s`
+}
 
 const configStrip = computed(() => {
   const c = store.config
@@ -310,6 +338,7 @@ const configStrip = computed(() => {
   const maxPos = c?.max_positions ?? '—'
   const kill = c?.kill_switch ?? store.status?.kill_switch ?? false
   const notify = c?.notify_configured
+  const intervalSec = cycleIntervalSeconds.value
   return {
     env,
     mode,
@@ -317,6 +346,8 @@ const configStrip = computed(() => {
     maxPos,
     kill: kill ? 'ON' : 'off',
     notify: notify == null ? '—' : notify ? 'yes' : 'no',
+    cycle: formatCycleIntervalLabel(intervalSec),
+    cycleTitle: `Trader cycle interval ${intervalSec}s; stale threshold uses max(2×interval, interval+300) = ${workerStaleThreshold.value}s`,
   }
 })
 </script>
@@ -574,6 +605,7 @@ const configStrip = computed(() => {
             <span class="text-[#A8B3C7]">max_pos <span class="text-white">{{ configStrip.maxPos }}</span></span>
             <span class="text-[#A8B3C7]">kill <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
             <span class="text-[#A8B3C7]">notify <span class="text-white">{{ configStrip.notify }}</span></span>
+            <span class="text-[#A8B3C7]" :title="configStrip.cycleTitle">周期 <span class="text-white">{{ configStrip.cycle }}</span></span>
             <span
               class="inline-flex items-center gap-1 ml-auto px-1.5 py-0.5 rounded text-[10px] font-bold border"
               :class="workerLagSeconds == null
@@ -581,7 +613,9 @@ const configStrip = computed(() => {
                 : workerLagStale
                   ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
                   : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'"
-              :title="workerLagStale ? 'Worker 可能停滞（>15m since last cycle）' : 'Seconds since last worker cycle'"
+              :title="workerLagStale
+                ? `Worker 可能停滞（>${workerStaleThreshold}s / ~2× cycle interval）`
+                : 'Seconds since last worker cycle'"
             >
               <Clock class="w-3 h-3" />
               <template v-if="workerLagSeconds == null">尚无周期</template>

@@ -5,8 +5,20 @@ import time
 from datetime import datetime
 from typing import Any
 
-# Worker considered stale when last cycle is older than this (seconds).
-WORKER_STALE_SECONDS = 900
+# Default stale threshold when interval is the classic 15min (900s):
+# max(2 * 900, 900 + 300) = 1800. Prefer worker_stale_threshold_seconds().
+WORKER_STALE_SECONDS = 1800
+
+
+def worker_stale_threshold_seconds(cycle_interval_seconds: int) -> int:
+    """Seconds after which last_cycle is considered stale for /ready (and status).
+
+    Formula: ``max(interval * 2, interval + 300)`` so short intervals still get
+    headroom (at least +5min) and longer intervals allow roughly one missed
+    cycle before ready flips false.
+    """
+    interval = max(1, int(cycle_interval_seconds))
+    return max(interval * 2, interval + 300)
 
 
 def parse_cycle_timestamp(value: Any) -> float | None:
@@ -44,3 +56,13 @@ def seconds_since_last_cycle(last_raw: dict[str, Any] | None) -> int | None:
     if ts is None:
         return None
     return max(0, int(time.time() - ts))
+
+
+def is_worker_stale(
+    seconds: int | None,
+    cycle_interval_seconds: int,
+) -> bool:
+    """True when lag is known and exceeds the interval-based stale threshold."""
+    if seconds is None:
+        return False
+    return seconds > worker_stale_threshold_seconds(cycle_interval_seconds)

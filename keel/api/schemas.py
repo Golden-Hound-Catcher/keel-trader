@@ -72,6 +72,7 @@ class StatusResponse(BaseModel):
     kill_switch: bool = False
     last_cycle: LastCycleSummary | None = None
     seconds_since_last_cycle: int | None = None
+    worker_stale: bool = False
 
 
 class ConfigResponse(BaseModel):
@@ -84,6 +85,7 @@ class ConfigResponse(BaseModel):
     instruments: list[str] = Field(default_factory=list)
     notify_configured: bool = False
     exchange_mode: str = "paper"
+    cycle_interval_seconds: int = 900
 
 
 class DailyPnlResponse(BaseModel):

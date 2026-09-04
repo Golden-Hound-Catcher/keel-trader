@@ -178,6 +178,8 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIn("exchange_mode", body)
         self.assertIsInstance(body["exchange_mode"], str)
         self.assertTrue(body["exchange_mode"])
+        self.assertIn("cycle_interval_seconds", body)
+        self.assertEqual(body["cycle_interval_seconds"], 900)
 
     def test_daily_pnl_endpoint(self):
         import time
@@ -272,15 +274,17 @@ class TestApiReadyWorkerLag(unittest.TestCase):
         self.ledger.close()
         set_ledger_path_override(None)
         os.environ.pop("KEEL_LEDGER_DB", None)
+        os.environ.pop("KEEL_CYCLE_INTERVAL_SECONDS", None)
         refresh_settings()
         self.temp.cleanup()
 
-    def test_ready_worker_stale_when_cycle_older_than_900s(self):
+    def test_ready_worker_stale_when_cycle_older_than_threshold(self):
+        """Default interval 900 → threshold max(1800, 1200) = 1800."""
         import time
 
         self.ledger.record_cycle_summary(
             {
-                "timestamp": time.time() - 950,
+                "timestamp": time.time() - 1850,
                 "mode": "paper",
                 "adapter": "paper",
                 "policy": "rule",
@@ -300,9 +304,70 @@ class TestApiReadyWorkerLag(unittest.TestCase):
         self.assertTrue(body["worker_stale"])
         lag = body["seconds_since_last_cycle"]
         self.assertIsInstance(lag, int)
-        self.assertGreater(lag, 900)
+        self.assertGreater(lag, 1800)
         self.assertIn("okx_configured", body)
         self.assertIn("llm_configured", body)
+
+        status = self.client.get("/api/v1/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertTrue(status.json()["worker_stale"])
+
+    def test_ready_worker_stale_respects_custom_cycle_interval(self):
+        """Custom interval 60 → threshold max(120, 360) = 360."""
+        import time
+
+        os.environ["KEEL_CYCLE_INTERVAL_SECONDS"] = "60"
+        refresh_settings()
+        try:
+            self.ledger.record_cycle_summary(
+                {
+                    "timestamp": time.time() - 400,
+                    "mode": "paper",
+                    "adapter": "paper",
+                    "policy": "rule",
+                    "instruments": 1,
+                    "decision_counts": {"WAIT": 1},
+                    "risk_denies": 0,
+                    "risk_deny_reasons": [],
+                    "error_count": 0,
+                    "errors": [],
+                    "duration_ms": 1,
+                }
+            )
+            app = create_app()
+            client = TestClient(app)
+            r = client.get("/ready")
+            self.assertEqual(r.status_code, 200)
+            body = r.json()
+            self.assertFalse(body["ready"])
+            self.assertTrue(body["worker_stale"])
+            self.assertGreater(body["seconds_since_last_cycle"], 360)
+
+            # Below threshold with same custom interval → not stale
+            self.ledger.record_cycle_summary(
+                {
+                    "timestamp": time.time() - 200,
+                    "mode": "paper",
+                    "adapter": "paper",
+                    "policy": "rule",
+                    "instruments": 1,
+                    "decision_counts": {"WAIT": 1},
+                    "risk_denies": 0,
+                    "risk_deny_reasons": [],
+                    "error_count": 0,
+                    "errors": [],
+                    "duration_ms": 1,
+                }
+            )
+            r2 = client.get("/ready")
+            self.assertTrue(r2.json()["ready"])
+            self.assertFalse(r2.json()["worker_stale"])
+
+            cfg = client.get("/api/v1/config")
+            self.assertEqual(cfg.json()["cycle_interval_seconds"], 60)
+        finally:
+            os.environ.pop("KEEL_CYCLE_INTERVAL_SECONDS", None)
+            refresh_settings()
 
     def test_ready_false_when_ledger_unreadable(self):
         # Point ledger at a directory path so sqlite cannot open it as a DB file.
