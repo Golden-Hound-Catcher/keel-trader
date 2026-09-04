@@ -244,7 +244,8 @@ No mass-delete without inventory check against `LEGACY.md`.
 - `pytest tests/test_keel_*.py` (+ quarantine tests) must stay green before merge.  
 - Domain/factors/risk/policy unit-tested offline.  
 - OKX adapter tests use injectable/mock HTTP (no live network required in CI).  
-- Manual demo trial: `.env` with demo keys → `python -m keel.worker --once` → verify ledger + `/api/v1/*`.
+- **Paper acceptance (no keys):** `./scripts/run_acceptance.sh` and `tests/test_acceptance_paper.py` — temp ledger, empty OKX keys → PaperExchange, assert decisions / cycle summary.  
+- Manual demo trial: `.env` with demo keys → `python -m keel.worker --once` → verify ledger + `/api/v1/*` (operator-local keys only; see RUNBOOK.md).
 
 ---
 
@@ -255,6 +256,8 @@ No mass-delete without inventory check against `LEGACY.md`.
 3. One worker cycle completes without shell CLI  
 4. Ledger contains decisions/events; API returns them  
 5. Default policy may be `stub`/`rule` for connectivity; LLM optional
+
+**Note:** Paper gate is automated (`scripts/run_acceptance.sh` / `tests/test_acceptance_paper.py`). Demo still requires **operator-local** keys in `.env` (never commit; never paste into chat). See [RUNBOOK.md](RUNBOOK.md).
 
 ---
 
@@ -271,7 +274,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 ## 15. Implementation order (post-spec)
 
 1. Freeze this SPEC on `main` — **done**  
-2. Demo trial (keys in local `.env`, not chat)  
+2. Demo trial (keys in local `.env`, not chat) — **paper gate done** (`run_acceptance.sh` + pytest); **demo pending keys**  
 3. Phase U1 UI rebind to Keel API — **done**  
 4. Retire `r20_backend.app` as a documented/runnable entry (soft-block) — **done**  
 5. Phase U2 drop Jinja `dashboard/` — **done**  
@@ -286,6 +289,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-04 | P0 ops: RUNBOOK.md + `scripts/run_acceptance.sh` + paper pytest; SPEC §12/§13/§15 paper gate done / demo pending keys |
 | 2026-09-04 | Max notional/contracts gate (`KEEL_MAX_NOTIONAL_PER_INSTRUMENT` / `KEEL_MAX_CONTRACTS_PER_INSTRUMENT`); expose on `/config` |
 | 2026-09-04 | Optional `KEEL_API_TOKEN` bearer/X-API-Key on `/api/v1/*`; monitor risk budget + positions UPL |
 | 2026-09-04 | Monitor: Factors live-candles toggle (`?live=1` + source badge); Decisions `inst_id` filter |
