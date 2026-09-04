@@ -215,9 +215,8 @@ Worker cycle 在 tick 结束后调用一次；失败软降级，不影响交易�
 | `keel/worker` (`python -m keel.worker`) | ✅ 唯一调度器 | Stage 2  sole owner |
 | `keel/worker/cycle.py` | ✅ paper/demo 垂直链路 | factors→decision→risk→execution→ledger |
 | `r20_gateway/` | ❌ **已删除** | 改用 `keel.notify` |
-| `r20_backend/scheduler.py` | ❌ 硬退出 stub | 调用即失败 |
-| `deploy/r20-scheduler.service` | ❌ 禁用 | 改用 `deploy/keel-worker.service` |
-| `deploy/r20-gateway.service` | ❌ **已删除** | 包已移除 |
+| `r20_backend/` | ❌ **已删除** | 改用 `keel.api` + `keel.worker` |
+| `deploy/r20-*.service` | ❌ **已删除** | 改用 `deploy/keel-*.service` |
 
 ## 配置
 
@@ -250,7 +249,7 @@ KEEL_KILL_SWITCH=0          # 1/true → risk gates deny all trading; WAIT ok
 2. **阶段 2**: 旧脚本通过 shim 调用 Keel 模块
 3. **阶段 3**: 移除旧代码，只保留 Keel
 
-当前状态: **阶段 7** - legacy `r20_*` 隔离（警告 + 默认禁用 unit）；阶段 6 DecisionPolicy 仍为决策默认路径
+当前状态: **阶段 7 / O3** - `r20_*` 包与旧 systemd units 已硬删除；阶段 6 DecisionPolicy 仍为决策默认路径
 
 ## 测试
 
@@ -277,7 +276,7 @@ python -m pytest tests/ -v
 - `keel.exchange.build_exchange()`：密钥齐全 → OKX REST，否则 → `PaperExchange`
 - Worker cycle 记录 `adapter` / `mode`；CI 用 mock HTTP，不依赖外网
 - 配置单一入口：`keel.config.settings`（`KEEL_OKX_*` + `KEEL_LLM_*` / 兼容别名）
-- 仍不扩展 Vue / QQ / council / backup；不批量删除 `r20_*`
+- 仍不扩展 Vue / QQ / council / backup；`r20_*` 已按 O3 硬删除
 
 ## Stage 6（DecisionPolicy + 模块化提示词）
 
@@ -288,20 +287,17 @@ python -m pytest tests/ -v
 - **不做** Vue Prompt Studio UI / QQ / council（R20 Prompt Studio 的有价值部分已收敛为上述端口）
 
 
-## Stage 7（legacy 隔离 / quarantine）
+## Stage 7 / O3（legacy 硬删除）
 
-- U2 已删 Jinja `dashboard/`；Vue /admin 与 `/api/v1/admin/*`/`admin_auth` 已移除；`r20_backend.app` 为 soft-block 410 stub
-- `r20_gateway/` 整包与 gateway/script helpers 已硬删除；仅保留 `r20_backend` stubs
-- `keel.legacy.warn_legacy`：无 `KEEL_USE_LEGACY=1` 时对主要 legacy 包发出弃用警告
-- `r20_backend.scheduler` 仍硬退出；`deploy/r20-gateway.service` 已删
-- `deploy/r20-*.service`：仅 `keel-api` + `keel-worker` 为推荐启用示例；残留 r20 units 默认关闭
+- U2 已删 Jinja `dashboard/`；Vue /admin 与 `/api/v1/admin/*`/`admin_auth` 已移除
+- `r20_gateway/` 与 `r20_backend/`（含原 soft-block stubs）整包硬删除；`keel/legacy` 一并移除
+- `deploy/r20-*.service` 单元文件已删除；仅 `keel-api` + `keel-worker` 为安装示例
 - 清单见根目录 [`LEGACY.md`](LEGACY.md)
 
 ## Phase U2（drop Jinja dashboard）
 
-- 删除 `dashboard/` 包；`r20_backend.app` 不再 mount / 启动 dashboard worker
+- 删除 `dashboard/` 包
 - Vue 移除 `/legacy` 与 R20 `/api/all` shell；保留 `/` + `/monitor` Keel monitor
-- `r20_backend` 仅保留 soft-block stubs（`app` / `scheduler` / `__init__`）
 
 ## 入口点（Stage 3 唯一推荐）
 
@@ -319,8 +315,7 @@ python -m keel.worker --once
 make test
 ```
 
-`r20_backend.app` 为 **legacy 410 stub**（admin HTTP 已移除）；勿作为新部署默认 API。监控 UI 走 `keel.api` + `frontend/`。
-`r20_backend.scheduler` 与 `r20-scheduler.service` 已禁用；`r20_gateway` 已删除。
+`r20_*` 包与旧 `r20-*.service` 已删除。监控 UI 走 `keel.api` + `frontend/`。
 
 ## 免责声明
 

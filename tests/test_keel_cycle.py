@@ -273,19 +273,7 @@ class TestKeelSchedulerTraderJob(unittest.TestCase):
         scheduler._executor.shutdown(wait=False, cancel_futures=True)
 
 
-class TestLegacySchedulerDisabled(unittest.TestCase):
-    def test_backend_scheduler_refuses(self):
-        import subprocess, sys
-        result = subprocess.run(
-            [sys.executable, "-m", "r20_backend.scheduler"],
-            cwd=Path(__file__).resolve().parents[1],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("DISABLED", result.stderr)
-
+class TestKeelWorkerCycleEntrypoint(unittest.TestCase):
     def test_keel_worker_cycle_entrypoint(self):
         import subprocess, sys
         env = os.environ.copy()

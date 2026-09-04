@@ -3,7 +3,7 @@
  *
  * Uses Keel `/api/v1/*` and `/health` only.
  * Optional Bearer via VITE_KEEL_API_TOKEN when backend KEEL_API_TOKEN is set.
- * Forbidden: data/*.json, legacy r20_backend private/admin routes.
+ * Forbidden: data/*.json, removed r20_* routes.
  */
 import { ref } from 'vue'
 

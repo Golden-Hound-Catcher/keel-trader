@@ -61,9 +61,9 @@ Optional one-shot:
 python -m keel.worker --once
 ```
 
-Legacy `r20_backend` stubs / deleted `r20_gateway` / `dashboard` are **not** supported entrypoints for new deployments (see `LEGACY.md`).
+Legacy `r20_*` packages / `dashboard` are **removed** and are **not** supported entrypoints (see `LEGACY.md`).
 `frontend/` U1 monitor **is** supported as a read-only client of `keel.api`.
-`uvicorn r20_backend.app:app` requires `KEEL_ALLOW_LEGACY_BACKEND=1` or exits pointing at `keel.api`; even with opt-in it is a **410 stub** (admin HTTP API removed).
+Supported processes: `uvicorn keel.api.app:app` + `python -m keel.worker` (+ optional Vite).
 
 ---
 
@@ -164,7 +164,6 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_DECISION_POLICY` | `rule` | `rule` \| `stub` \| `llm` — exposed as `decision_policy` on `/status` + `/config` |
 | `KEEL_CYCLE_INTERVAL_SECONDS` | `900` | Trader cycle interval; clamped `[60, 86400]` |
 | `KEEL_API_TOKEN` | empty | Optional bearer for `/api/v1/*`; empty → no auth |
-| `KEEL_USE_LEGACY` | unset | Silence legacy import quarantine warnings |
 
 Secrets live in `.env` (`chmod 600`) or process env only. **Do not** add parallel encrypted secret stores in v1.
 
@@ -230,7 +229,8 @@ UI is a **client of the SPEC API**, not a second source of truth.
 | Done | Remove Vue `/admin/*` product surface; no HTML admin UI |
 | Done | Remove `r20_backend` `/api/v1/admin/*` + `admin_auth` (410 stub) |
 | Done | Delete unused dashboard/admin-era scripts; hard-gate `GatewayScheduler.tick` |
-| Done | Hard-delete `r20_gateway/` + remaining gateway/script helpers; keep soft-block stubs |
+| Done | Hard-delete `r20_gateway/` + remaining gateway/script helpers |
+| Done | O3 hard-delete `r20_backend/` stubs + `r20-*.service` units + `keel/legacy` |
 
 Supported deployments: **keel-api** + **keel-worker** + optional **frontend** U1 monitor only.
 `KeelScheduler` jobs: **trader only** (`python -m keel.worker`). Legacy R20 script
@@ -264,7 +264,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 |----|----------|------------------------|
 | O1 | Vue reuse depth (full admin vs monitor-only) | **Monitor-only** (R20 `/admin` removed; Keel admin = future addendum) |
 | O2 | API auth for non-local binds | Optional `KEEL_API_TOKEN` (Bearer / X-API-Key on `/api/v1/*`) |
-| O3 | When to hard-delete `r20_*` packages | **Done for gateway + helpers**; soft-block stubs (`r20_backend.app` / `scheduler`) kept |
+| O3 | When to hard-delete `r20_*` packages | **Done** — `r20_backend/` + `r20_gateway/` + `r20-*.service` removed |
 
 ---
 
@@ -277,7 +277,8 @@ No mass-delete without inventory check against `LEGACY.md`.
 5. Phase U2 drop Jinja `dashboard/` — **done**  
 6. Remove Vue `/admin` product surface — **done**
 7. Remove `r20_backend` `/api/v1/admin/*` + `admin_auth` — **done**
-8. Hard-delete `r20_gateway/` + remaining helpers (stubs kept) — **done**  
+8. Hard-delete `r20_gateway/` + remaining helpers — **done**  
+9. O3 hard-delete `r20_backend` stubs + old systemd units — **done**  
 
 ---
 
@@ -320,6 +321,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Default Keel scheduler trader-only; legacy script jobs opt-in via `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS`; `/config` exposes `scheduler_jobs` / `legacy_scheduler_jobs` |
 | 2026-09-04 | Drop legacy scheduler scripts + `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS`; jobs=trader only; `/config` keeps `scheduler_jobs` |
 | 2026-09-04 | Hard-delete `r20_gateway/` + helpers (`config`, backup_*, llm_manager, settings_store, notifications, schedule_store, net_security`); keep soft-block stubs; remove `r20-gateway.service` |
+| 2026-09-04 | O3: hard-delete `r20_backend/` stubs + `r20-quantum`/`r20-scheduler` units + `keel/legacy`; supported = keel-api + keel-worker + optional Vite |
 
 ---
 
@@ -483,8 +485,8 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - **Deleted** `r20_backend` helpers: `config.py`, `backup_secrets.py`,
   `backup_store.py`, `llm_manager.py`, `settings_store.py`, `notifications.py`,
   `schedule_store.py`, `net_security.py`.
-- **Kept** soft-block stubs: `r20_backend/app.py`, `r20_backend/scheduler.py`,
-  `r20_backend/__init__.py` (quarantine / 410 / hard-exit story).
+- **Later (O3):** deleted remaining `r20_backend/` stubs + `deploy/r20-quantum.service` /
+  `deploy/r20-scheduler.service` + `keel/legacy/`.
 - Deleted obsolete tests: `test_gateway*`, `test_notifications`,
   `test_llm_multi_provider`, `test_control_plane_v2`, `test_open_source_control`.
 - Supported path remains **keel-api** + **keel-worker** (+ optional frontend).

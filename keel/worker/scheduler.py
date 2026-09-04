@@ -1,8 +1,8 @@
 """
 Single scheduler owner for Keel Trader.
 
-This is THE ONLY scheduler. Legacy ``r20_backend.scheduler`` is a hard-exit
-stub; the ``r20_gateway`` package (including GatewayScheduler) was removed.
+This is THE ONLY scheduler. Legacy ``r20_*`` packages and units were removed
+(see LEGACY.md).
 
 Design principles:
 - One process owns scheduling
@@ -50,9 +50,8 @@ class KeelScheduler:
     """
     Single-owner scheduler for Keel jobs.
     
-    This replaces the former triple-scheduler situation (legacy packages removed
-    or soft-blocked): GatewayScheduler (``r20_gateway``, deleted), standalone
-    ``r20_backend.scheduler`` (hard-exit stub), and this Keel owner.
+    Sole scheduler owner for Keel. Former ``r20_gateway`` / ``r20_backend``
+    schedulers and their systemd units are deleted.
 
     Only ONE scheduler should run. It uses file locks to prevent duplicates.
     """

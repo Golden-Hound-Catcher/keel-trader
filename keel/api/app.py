@@ -3,7 +3,7 @@ Keel API - Primary read-only FastAPI control plane (Stage 3).
 
 Documented entry: ``uvicorn keel.api.app:app``.
 This is a thin wrapper that composes routers.
-Prefer this over legacy ``r20_backend.app`` (retired 410 stub; admin API removed).
+Primary documented API entrypoint (``r20_*`` packages removed).
 
 Phase U1: optionally serves ``frontend/dist`` as a static SPA when present.
 """
