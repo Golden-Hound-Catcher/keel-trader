@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from keel.api.app import create_app
 from keel.api.schemas import (
     BalanceResponse,
+    CycleError,
     DecisionItem,
     DecisionsResponse,
     EventItem,
@@ -35,13 +36,15 @@ class TestApiSchemas(unittest.TestCase):
             decision_counts={"WAIT": 1},
             risk_denies=1,
             risk_deny_reasons=[RiskDenyReason(gate="kill_switch", reason="armed")],
-            errors=[],
+            errors=[CycleError(inst_id="BTC-USDT-SWAP", error="timeout")],
             duration_ms=42,
         )
         self.assertEqual(m.mode, "paper")
         self.assertEqual(m.duration_ms, 42)
         self.assertEqual(m.risk_denies, 1)
         self.assertEqual(m.risk_deny_reasons[0].gate, "kill_switch")
+        self.assertEqual(m.errors[0].inst_id, "BTC-USDT-SWAP")
+        self.assertEqual(m.errors[0].error, "timeout")
         status = StatusResponse(
             version="0.1.0",
             mode="read_only_control_plane",
@@ -52,6 +55,35 @@ class TestApiSchemas(unittest.TestCase):
             last_cycle=m,
         )
         self.assertEqual(status.last_cycle.instruments, 1)
+
+    def test_last_cycle_errors_coerce_from_ledger_json(self):
+        """Status router validates ledger dicts; extra keys ignored."""
+        raw = {
+            "timestamp": 1.0,
+            "mode": "paper",
+            "adapter": "paper",
+            "policy": "rule",
+            "instruments": 1,
+            "decision_counts": {"WAIT": 1},
+            "risk_denies": 0,
+            "risk_deny_reasons": [],
+            "errors": [
+                {"inst_id": "ETH-USDT-SWAP", "error": "boom", "legacy_extra": True},
+                {"error": "no-inst"},
+            ],
+            "duration_ms": 5,
+            "unknown_top_level": "ignored",
+        }
+        m = LastCycleSummary.model_validate(raw)
+        self.assertEqual(len(m.errors), 2)
+        self.assertIsInstance(m.errors[0], CycleError)
+        self.assertEqual(m.errors[0].inst_id, "ETH-USDT-SWAP")
+        self.assertEqual(m.errors[0].error, "boom")
+        self.assertIsNone(m.errors[1].inst_id)
+        self.assertEqual(m.errors[1].error, "no-inst")
+        dumped = m.model_dump()
+        self.assertNotIn("legacy_extra", dumped["errors"][0])
+        self.assertNotIn("unknown_top_level", dumped)
 
     def test_health_response_model(self):
         m = HealthResponse(
@@ -128,7 +160,9 @@ class TestApiSchemas(unittest.TestCase):
         last_cycle_props = comps["LastCycleSummary"]["properties"]
         self.assertIn("duration_ms", last_cycle_props)
         self.assertIn("risk_deny_reasons", last_cycle_props)
+        self.assertIn("errors", last_cycle_props)
         self.assertIn("RiskDenyReason", comps)
+        self.assertIn("CycleError", comps)
         self.assertIn("DecisionsResponse", comps)
         self.assertIn("FactorsResponse", comps)
         status_props = comps["StatusResponse"]["properties"]
