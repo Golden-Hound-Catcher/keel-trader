@@ -287,6 +287,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Wire real kill switch: `KEEL_KILL_SWITCH` → settings → risk gates; expose on status/config |
 | 2026-09-04 | Monitor UI: read-only kill_switch badge/banner on Overview (env-only; no toggle) |
 | 2026-09-04 | `last_cycle.duration_ms` wall-clock cycle duration; delete unused `r20_backend/account_baseline` |
+| 2026-09-04 | Inventory-gated delete: `r20_backend/okx_trade_service.py` (tests-only refs; Keel owns OKX REST) |
 
 ---
 
@@ -363,6 +364,7 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
   and `r20_backend/audit.py` (imported by the daemon).
 - No dedicated unit tests existed solely for the deleted modules.
 - Deleted `r20_backend/account_baseline.py` (+ `tests/test_account_baseline.py`) — 0 importers outside mutual self/test.
+- Deleted `r20_backend/okx_trade_service.py` — 0 Keel/gateway/scripts importers; trimmed OKX V5/fast-close cases from control-plane tests only.
 
 ## Addendum: More dead scripts / gateway helpers (inventory)
 
