@@ -107,6 +107,40 @@ const riskDenyReasonsTitle = computed(() => {
   return lines.join('\n') + extra
 })
 
+/** last_cycle.errors count + compact inst_id: error preview (rose when >0). */
+const cycleErrorsCount = computed(() => {
+  const raw = lastCycle.value?.errors
+  return Array.isArray(raw) ? raw.length : 0
+})
+const cycleErrorsWarn = computed(() => cycleErrorsCount.value > 0)
+
+function formatCycleError(e: { inst_id?: string | null; error?: string } | string): string {
+  if (typeof e === 'string') return e
+  const inst = (e.inst_id ?? '').toString().trim()
+  const err = (e.error || '').trim()
+  if (inst && err) return `${inst}: ${err}`
+  return err || inst || 'error'
+}
+
+const cycleErrorLines = computed(() => {
+  const raw = lastCycle.value?.errors
+  if (!Array.isArray(raw) || !raw.length) return [] as string[]
+  return raw.map((e) => formatCycleError(e as { inst_id?: string | null; error?: string } | string))
+})
+
+const cycleErrorsPreview = computed(() => {
+  const lines = cycleErrorLines.value
+  if (!lines.length) return ''
+  const joined = lines.join(' · ')
+  return joined.length > 96 ? `${joined.slice(0, 93)}…` : joined
+})
+
+const cycleErrorsTitle = computed(() => {
+  const lines = cycleErrorLines.value
+  if (!lines.length) return ''
+  return lines.join('\n')
+})
+
 /** Read-only: armed via KEEL_KILL_SWITCH (status API); no admin toggle. */
 const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
 </script>
@@ -320,10 +354,27 @@ const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
                   </div>
                 </div>
               </div>
-              <div>
+              <div class="md:col-span-2">
                 <div class="text-[#707E94]">Errors</div>
-                <div :class="(lastCycle.errors?.length || 0) ? 'text-rose-400' : 'text-white'">
-                  {{ lastCycle.errors?.length ?? 0 }}
+                <div class="mt-0.5 flex flex-col gap-1 min-w-0">
+                  <span
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border tabular-nums w-fit"
+                    :class="cycleErrorsWarn
+                      ? 'bg-rose-500/15 text-rose-400 border-rose-500/40'
+                      : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'"
+                    :title="cycleErrorsWarn
+                      ? `${cycleErrorsCount} instrument error(s) this cycle`
+                      : 'No instrument errors this cycle'"
+                  >
+                    {{ cycleErrorsCount }}
+                  </span>
+                  <div
+                    v-if="cycleErrorsPreview"
+                    class="text-[10px] font-mono text-rose-400/80 truncate max-w-full"
+                    :title="cycleErrorsTitle"
+                  >
+                    {{ cycleErrorsPreview }}
+                  </div>
                 </div>
               </div>
             </div>
