@@ -280,7 +280,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-03 | Removed Vue `/admin/*` product surface; admin features deferred to future Keel admin API |
 | 2026-09-03 | Removed `r20_backend` `/api/v1/admin/*` + `admin_auth`; stub returns 410 |
 | 2026-09-03 | Elegance: Pydantic API schemas; domain owns Decision/records; kinematics in keel.factors; calculus_engine shim |
-| 2026-09-04 | Inventory-gated delete: `r20_backend/okx_client.py`, `prompt_views.py` (0 refs); kept `qq_gateway_daemon`/`audit` (qq_bind) |
+| 2026-09-04 | Inventory-gated delete: `r20_backend/okx_client.py`, `prompt_views.py` (0 refs); QQ stack later dropped |
 | 2026-09-04 | Inventory-gated delete: `scripts/calculus_engine.py` (migrated to kinematics), `r20_gateway/agents.py`, `supervisor.py` (0 refs); trader shims kept |
 | 2026-09-04 | Optional `keel.notify` stub port (Null/Webhook); wire into worker cycle via `KEEL_NOTIFY_WEBHOOK_URL` |
 | 2026-09-04 | `GET /api/v1/status` exposes optional `last_cycle` from ledger `worker_cycle_summary` |
@@ -290,6 +290,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Inventory-gated delete: `r20_backend/okx_trade_service.py` (tests-only refs; Keel owns OKX REST) |
 | 2026-09-04 | Monitor Last worker cycle: `risk_denies` count badge (amber when >0, muted at 0) |
 | 2026-09-04 | `last_cycle.risk_deny_reasons`: capped `{gate, reason}` list alongside `risk_denies` count |
+| 2026-09-04 | Inventory-gated delete: QQ stack (`qq_bind`, `qq_gateway_daemon`, `audit`) + `r20_gateway/plugins.py`; Keel uses `keel.notify` |
 
 ---
 
@@ -362,8 +363,7 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Deleted `r20_backend/okx_client.py` and `r20_backend/prompt_views.py` after repo-wide
   reference scan showed **zero** external imports/usages (admin UI already gone; Keel
   OKX REST lives under `keel`).
-- **Kept** `r20_backend/qq_gateway_daemon.py` (spawned by `qq_bind.ensure_qq_gateway_daemon_running`)
-  and `r20_backend/audit.py` (imported by the daemon).
+- Later deleted `qq_gateway_daemon` / `audit` / `qq_bind` with the QQ stack drop (see addendum below).
 - No dedicated unit tests existed solely for the deleted modules.
 - Deleted `r20_backend/account_baseline.py` (+ `tests/test_account_baseline.py`) — 0 importers outside mutual self/test.
 - Deleted `r20_backend/okx_trade_service.py` — 0 Keel/gateway/scripts importers; trimmed OKX V5/fast-close cases from control-plane tests only.
@@ -382,3 +382,14 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Config: `KEEL_NOTIFY_WEBHOOK_URL` via `keel.config.settings` (empty → Null).
 - Worker cycle optionally notifies a compact summary after each tick; notify soft-fails and never blocks trading.
 - **Non-goal preserved**: no QQ / WeCom / Telegram product expansion; no dependency on `r20_gateway`.
+
+## Addendum: QQ stack + gateway plugins removed (inventory)
+
+- Deleted `r20_backend/qq_bind.py`, `qq_gateway_daemon.py`, `audit.py`, and `tests/test_qq_bind.py`
+  after repo-wide scan showed **zero** Keel/scripts importers (daemon only spawned by bind;
+  audit only imported by the daemon). Aligns with SPEC non-goal: no QQ product.
+- Deleted `r20_gateway/plugins.py` (fake plugin manifests; only external ref was
+  `tests/test_open_source_control.py`). Keeps `channels.py`, events, store, publisher, worker.
+- **Kept** `r20_backend/settings_store.py` (still used by `llm_manager`) and
+  `scripts/qq_notifier.py` (publisher/events bridge only; no deleted-module imports).
+- Keel notify remains `keel.notify` (Null/Webhook via `KEEL_NOTIFY_WEBHOOK_URL`), not QQ.

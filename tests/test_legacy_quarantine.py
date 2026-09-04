@@ -166,7 +166,15 @@ class TestAdminApiRemoved(unittest.TestCase):
         self.assertFalse((ROOT / "r20_backend" / "admin_auth.py").exists())
 
     def test_dead_helper_modules_gone(self):
-        for name in ("okx_client.py", "prompt_views.py", "account_baseline.py", "okx_trade_service.py"):
+        for name in (
+            "okx_client.py",
+            "prompt_views.py",
+            "account_baseline.py",
+            "okx_trade_service.py",
+            "qq_bind.py",
+            "qq_gateway_daemon.py",
+            "audit.py",
+        ):
             self.assertFalse((ROOT / "r20_backend" / name).exists(), msg=name)
 
     def test_stub_returns_410_for_former_admin_paths(self):
@@ -206,8 +214,11 @@ class TestDeletedLegacyScripts(unittest.TestCase):
             self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)
 
     def test_dead_gateway_helpers_gone(self):
-        for name in ("agents.py", "supervisor.py"):
+        for name in ("agents.py", "supervisor.py", "plugins.py"):
             self.assertFalse((ROOT / "r20_gateway" / name).exists(), msg=name)
+
+    def test_qq_bind_test_removed(self):
+        self.assertFalse((ROOT / "tests" / "test_qq_bind.py").exists())
 
     def test_trader_shims_remain(self):
         self.assertTrue((ROOT / "scripts" / "ai_factor_trader.py").exists())

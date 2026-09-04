@@ -13,7 +13,6 @@ import scripts.prompt_library as prompts
 import scripts.backup_runtime as backup_runtime
 import r20_backend.backup_store as backup_store
 import r20_backend.net_security as net_security
-from r20_gateway.plugins import PLUGINS
 
 
 class OKXEnvironmentTests(unittest.TestCase):
@@ -53,7 +52,6 @@ class NotificationChannelRemovalTests(unittest.TestCase):
         ok, detail=notifications.send_channel(retired_channel, "hello", env)
         self.assertFalse(ok)
         self.assertIn("未知通知通道", detail)
-        self.assertNotIn("r20.channel." + "wechat" + "-ilink", {plugin.plugin_id for plugin in PLUGINS})
 
     def test_dotenv_still_overrides_stale_process_environment(self):
         with tempfile.TemporaryDirectory() as tmp:

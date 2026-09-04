@@ -47,7 +47,7 @@ Gateway job ticks remain separately gated (notify-only by default). Prefer Keel 
 
 | Path | Why it remains | Accidental-use guard |
 |------|----------------|----------------------|
-| `r20_backend/` | Helper modules for optional gateway/scripts (notifications, llm_manager, backup_*, OKX helpers, council, qq_*, etc.) | Import warn; prefer `keel.api` |
+| `r20_backend/` | Helper modules for optional gateway/scripts (notifications, llm_manager, backup_*, settings_store, council, etc.) | Import warn; prefer `keel.api` |
 | `r20_backend/app.py` | Soft-blocked **410 stub** (admin HTTP API removed) | **`KEEL_ALLOW_LEGACY_BACKEND=1` required** to import via uvicorn; else exit `2` |
 | `r20_backend/scheduler.py` | Hard guard against double-firing | Immediate exit code `2` |
 | `r20_gateway/` | Optional notification delivery | Import warn; no job ticks by default |
@@ -65,8 +65,12 @@ Gateway job ticks remain separately gated (notify-only by default). Prefer Keel 
 | `r20_backend/prompt_views.py` | **Deleted** (0 external refs; admin prompt editor gone) |
 | `r20_backend/account_baseline.py` | **Deleted** (0 external refs; mutual self/test only) |
 | `r20_backend/okx_trade_service.py` | **Deleted** (0 Keel/gateway/scripts refs; tests-only) |
+| `r20_backend/qq_bind.py` | **Deleted** (QQ product non-goal; 0 Keel importers) |
+| `r20_backend/qq_gateway_daemon.py` | **Deleted** (only spawned by `qq_bind`) |
+| `r20_backend/audit.py` | **Deleted** (only imported by `qq_gateway_daemon`) |
 
 Keel code does **not** import these helpers; they remain for `r20_gateway` and remaining historical `scripts/` only.
+Keel notify uses `keel.notify` (Null/Webhook) instead of the removed QQ bind/daemon stack.
 
 ### Removed from `r20_gateway`
 
@@ -74,7 +78,7 @@ Keel code does **not** import these helpers; they remain for `r20_gateway` and r
 |------|--------|
 | `r20_gateway/agents.py` | **Deleted** (0 refs; admin-era agent registry) |
 | `r20_gateway/supervisor.py` | **Deleted** (0 refs; unused worker supervisor wrapper) |
-
+| `r20_gateway/plugins.py` | **Deleted** (fake plugin manifests; only referenced by control-plane tests) |
 
 ## Deploy units
 
@@ -98,10 +102,8 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/self_improvement_engine.py` | Historical evolution job (tests + optional gateway JOBS) |
 | `scripts/nightly_backup_and_clean.py` | Historical nightly job (still launched by `keel.worker`) |
 | `scripts/factor_library.py` / `news_sentiment_harvester.py` | Still launched by `keel.worker` |
-| `scripts/qq_notifier.py` | Bridge into gateway events |
+| `scripts/qq_notifier.py` | Bridge into gateway publisher/events (does **not** import deleted QQ bind/daemon) |
 | `scripts/sync_full_ledger.py` / `backup_runtime.py` / `okx_runtime.py` / … | Helpers still used by remaining scripts/tests |
-| `r20_backend/qq_gateway_daemon.py` | Legacy QQ daemon helper (kept: spawned by `qq_bind`) |
-| `r20_backend/audit.py` | Append-only audit helper (kept: used by `qq_gateway_daemon`) |
 
 ### Deleted scripts / gateway helpers (inventory)
 
@@ -118,6 +120,11 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/calculus_engine.py` | Deprecated shim; importers migrated to `keel.factors.kinematics` |
 | `r20_gateway/agents.py` | 0 external refs (admin-era agent registry) |
 | `r20_gateway/supervisor.py` | 0 external refs (unused supervisor wrapper) |
+| `r20_backend/qq_bind.py` | QQ product non-goal; 0 Keel/scripts importers |
+| `r20_backend/qq_gateway_daemon.py` | Only spawned by deleted `qq_bind` |
+| `r20_backend/audit.py` | Only imported by deleted `qq_gateway_daemon` |
+| `r20_gateway/plugins.py` | Plugin marketplace non-goal; tests-only refs |
+| `tests/test_qq_bind.py` | Covered deleted QQ bind module |
 
 ## Removed UI / admin artifacts
 
@@ -145,6 +152,11 @@ test ! -f r20_backend/okx_client.py
 test ! -f r20_backend/prompt_views.py
 test ! -f r20_backend/account_baseline.py
 test ! -f r20_backend/okx_trade_service.py
+test ! -f r20_backend/qq_bind.py
+test ! -f r20_backend/qq_gateway_daemon.py
+test ! -f r20_backend/audit.py
+test ! -f r20_gateway/plugins.py
+test ! -f tests/test_qq_bind.py
 test ! -d dashboard
 test ! -d frontend/src/views/admin
 test ! -f scripts/sync_web_data.py
