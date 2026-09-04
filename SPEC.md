@@ -296,6 +296,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | `last_cycle.error_count` full count + capped `errors` list (CYCLE_ERRORS_CAP=20); delete `scripts/qq_notifier.py` |
 | 2026-09-04 | Inventory-gated delete: `r20_backend/council_manager.py` (+ `tests/test_council_manager.py`); strip council from `ai_brain_trader` (SPEC non-goal) |
 | 2026-09-04 | Inventory-gated delete: `r20_backend/okx_setup.py` + `scripts/r20_okx_setup.py` (+ test); install.sh → `KEEL_OKX_*` / keel.exchange |
+| 2026-09-04 | Inventory-gated delete: `scripts/ai_brain_trader.py` (council already gone; product path `python -m keel.worker`); keep `ai_factor_trader` for later cut |
 
 ---
 
@@ -351,8 +352,8 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Deleted orphan dashboard/admin-era scripts: `sync_web_data`, `daemon_web_sync`,
   `generate_snapshots`, `debug_aggregate_orders`, `debug_audit_bills`,
   `remove_retired_personal_wechat`, `cleanup_disk`, `calculus_replay`.
-- Kept trader shims (`ai_factor_trader`, `ai_brain_trader`) and scripts still
-  launched by `keel.worker` (factor/news/briefing/backup/self-improvement helpers).
+- Kept `ai_factor_trader` shim and scripts still
+  launched by `keel.worker` (factor/news/briefing/backup/self-improvement helpers); `ai_brain_trader` deleted (see addendum).
 - `r20_gateway.worker` remains notify-only by default; `GatewayScheduler.tick()` /
   `_execute` are no-ops unless `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1`.
 - Remaining `r20_backend` helpers stay until gateway/scripts no longer need them.
@@ -378,8 +379,8 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Deleted `scripts/calculus_engine.py` after migrating remaining importers
   (`factor_library`, trader shims, calculus tests) to `keel.factors.kinematics`.
 - Deleted `r20_gateway/agents.py` and `r20_gateway/supervisor.py` (zero importers).
-- **Kept** trader shims (`ai_factor_trader`, `ai_brain_trader`) and scripts still
-  launched by `keel.worker` / gateway JOBS.
+- **Kept** `ai_factor_trader` shim and scripts still
+  launched by `keel.worker` / gateway JOBS; `ai_brain_trader` deleted later (see addendum).
 
 ## Addendum: Optional notify port (stub interface)
 
@@ -405,7 +406,7 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
   repo-wide scan showed external refs only in `scripts/ai_brain_trader.py` + that test
   (no Keel importers). Aligns with SPEC non-goal: no multi-agent “council” platform theater.
 - Stripped council import/debate path and `council_transcript` history field from
-  `ai_brain_trader`; legacy single-model brain remains behind existing shim flags.
+  `ai_brain_trader` (brain script later deleted; see addendum below).
 - Prefer `python -m keel.worker` / DecisionPolicy for decisions — not council.
 
 ## Addendum: Legacy OKX setup helpers removed (inventory)
@@ -416,3 +417,11 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - `deploy/install.sh` no longer installs the shell `okx` CLI or chmods `r20_okx_setup`;
   it prepares the venv + `.env` and points operators at `KEEL_OKX_*` (see `env.example`).
 - **Kept** `scripts/okx_runtime.py` (secrets/runtime env helper still used by remaining scripts).
+
+## Addendum: AI brain trader removed (inventory)
+
+- Deleted `scripts/ai_brain_trader.py` after council path was already stripped; product
+  decision path is `python -m keel.worker` / DecisionPolicy (not the legacy LLM brain).
+- Dropped brain import from `ai_factor_trader` (legacy OKX-CLI loop kept behind
+  `KEEL_USE_LEGACY=1` for a later cut — still large/complex). Quarantine asserts brain gone.
+- `llm_manager` / `telemetry` retain non-test refs via `self_improvement_engine` (+ telemetry tests) — not cascade-deleted.
