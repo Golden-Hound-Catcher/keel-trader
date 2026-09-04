@@ -91,7 +91,6 @@ class ConfigResponse(BaseModel):
     exchange_mode: str = "paper"
     cycle_interval_seconds: int = 900
     scheduler_jobs: list[str] = Field(default_factory=lambda: ["trader"])
-    legacy_scheduler_jobs: bool = False
 
 
 class DailyPnlResponse(BaseModel):

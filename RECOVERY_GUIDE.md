@@ -8,21 +8,13 @@
 
 ## 1. 灾备架构概览
 
-- **交易核心**：`python -m keel.worker`（factors → DecisionPolicy → risk → execution → ledger）；`ai_factor_trader` / `ai_brain_trader` 已删除
-- **因子 / 调度**：由 `python -m keel.worker` 统一调度（`factor_library` / news / briefing / backup）；旧 `daemon_web_sync` 已删除
-- **自进化心法引擎**：`scripts/self_improvement_engine.py`（每日 20:00 深度复盘真实流水，提炼 3 大启发式心法沉淀至 `data/AI_TRADING_MEMORY.md`）
-- **全网快讯情报流**：`scripts/news_sentiment_harvester.py`（OKX 最新与重大快讯双路聚合）
-- **Web 监控大屏**：`dashboard/app.py` + `dashboard/templates/index.html`（Bloomberg/Linear 级 Dark Glassmorphism 极客交易终端，支持全局 Prompt 悬浮透视抽屉）
-- **插件化灾备**：`scripts/backup_runtime.py` + 后台“灾备中心”（按任务配置本地、百度官方 OAuth/ByPy、S3 兼容、阿里云 OSS、WebDAV/OpenList、阿里云盘桥接与实验性夸克桥接；凭证独立加密，任务导出不含密钥）
+- **交易核心**：`python -m keel.worker`（factors → DecisionPolicy → risk → execution → ledger）
+- **调度**：仅 `python -m keel.worker`（trader job → `keel.worker.cycle`）；legacy script jobs 已删除
+- **Web 监控**：Keel monitor UI via `keel.api` + `frontend/`（旧 `dashboard/` 已删除）
 - **核心数据资产清单**：
-  - `data/trading_ledger.json` & `trading_ledger.xlsx`（全量交易流水账本与资金费记录）
-  - `data/AI_TRADING_MEMORY.md`（QwenPaw 原生带时间戳启发式实战心法长期记忆）
-  - `data/ai_brain_history.json`（历史 AI 大脑推演日志；`ai_brain_trader` 已删除，不再写入）
-  - `data/ai_brain_last_prompt.txt`（历史 brain prompt 快照；脚本已删除）
-  - `data/factor_library_snapshot.json`（五大核心量化因子库快照）
-  - `data/snapshots.json`（历史权益与回撤走势快照）
-  - `data/news_sentiment.json`（全网实时快讯舆情库）
-  - `data/quant_trader.db`（SQLite 核心审计数据库）
+  - `data/keel_ledger.db`（Keel SQLite ledger；见 `KEEL_LEDGER_DB`）
+  - `data/trading_ledger.json` & `trading_ledger.xlsx`（历史流水；legacy）
+  - `data/AI_TRADING_MEMORY.md`（历史心法记忆；legacy self-improvement 已删除）
 
 ---
 
@@ -64,9 +56,7 @@ nohup python3 -m keel.worker > /tmp/keel-worker.log 2>&1 &
 
 ## 3. 常用维护与测试命令
 
-- **查看 Keel 健康 / 监控 API**：`curl -s http://127.0.0.1:8080/health` ；`curl -s http://127.0.0.1:8080/api/v1/overview | head -c 200`
-- **手工执行一次全系统云端备份**：`python3 scripts/nightly_backup_and_clean.py`
+- **查看 Keel 健康 / 监控 API**：`curl -s http://127.0.0.1:8080/health` ；`curl -s http://127.0.0.1:8080/api/v1/status | head -c 200`
 - **手工触发一次 Keel 交易周期**：`python3 -m keel.worker --once`
-- **强制触发每日 AI 策略自进化复盘**：`python3 scripts/self_improvement_engine.py`
-- **手工全量对账同步 OKX 账本**：`python3 scripts/sync_full_ledger.py`
+- **持续调度**：`python3 -m keel.worker`（或 `deploy/keel-worker.service`）
 

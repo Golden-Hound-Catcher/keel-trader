@@ -2,15 +2,10 @@
 """
 Comprehensive Quant System Mathematical & Probabilistic Test Suite
 Validates causal calculus engine, definite integrals, probability theory,
-factor library integration (kinematics pillars).
+kinematics pillars.
 """
 
-import sys
 import unittest
-from pathlib import Path
-
-# Add scripts directory (legacy factor_library helpers)
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from keel.factors.kinematics import (
     calculate_calculus,
@@ -25,8 +20,6 @@ from keel.factors.kinematics import (
     diff_series,
     clip_normalise,
 )
-import factor_library
-
 # Private-name aliases used by older assertions in this suite
 _normal_cdf = normal_cdf
 _ema = ema_series
@@ -165,24 +158,6 @@ class MultiTimeframeIntegrationTest(unittest.TestCase):
             "HIGH_PROB_BULL_CONTINUATION",
         )
 
-
-class FactorLibraryIntegrationTest(unittest.TestCase):
-    """Test Pillar 6 integration in factor_library.py."""
-
-    def test_factor_library_structure_contains_math_prob_foundations(self):
-        item = {"instId": "BTC-USDT-SWAP", "name": "BTC", "type": "crypto", "precision": 1}
-        factors = factor_library.compute_instrument_factors(item, {})
-        self.assertIn("calculus_dynamics", factors)
-        self.assertIn("definite_integrals", factors)
-        self.assertIn("probability_theory", factors)
-        
-        d_int = factors["definite_integrals"]
-        self.assertIn("energy_integral", d_int)
-        self.assertIn("deviation_area_integral", d_int)
-        
-        p_th = factors["probability_theory"]
-        self.assertIn("continuation_prob_pct", p_th)
-        self.assertIn("var_95_pct", p_th)
 
 
 if __name__ == "__main__":

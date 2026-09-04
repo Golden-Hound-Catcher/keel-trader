@@ -79,11 +79,7 @@ class KeelScheduler:
         self._thread: threading.Thread | None = None
 
     def _default_jobs(self) -> list[JobSpec]:
-        """Default job specifications.
-
-        SPEC-supported default is **trader only** (keel-api + keel-worker).
-        Legacy R20 script jobs (factor_library / news / daily_briefing /
-        nightly_backup) are opt-in via ``KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1``.
+        """Default job specifications: trader only (keel-api + keel-worker).
 
         Trader interval comes from ``settings.cycle_interval_seconds``
         (``KEEL_CYCLE_INTERVAL_SECONDS``, default 900). Timeout scales as
@@ -94,27 +90,9 @@ class KeelScheduler:
         settings = get_settings()
         interval = settings.cycle_interval_seconds
         trader_timeout = max(840, interval - 60)
-        jobs = [
+        return [
             JobSpec("trader", interval_seconds=interval, timeout_seconds=trader_timeout),
         ]
-        if settings.enable_legacy_scheduler_jobs:
-            jobs.extend(
-                [
-                    JobSpec("factor_library", interval_seconds=60, timeout_seconds=55),
-                    JobSpec("news", interval_seconds=10 * 60, timeout_seconds=300),
-                    JobSpec(
-                        "daily_briefing",
-                        schedule_times=("08:00", "20:00"),
-                        timeout_seconds=600,
-                    ),
-                    JobSpec(
-                        "nightly_backup",
-                        schedule_times=("02:00",),
-                        timeout_seconds=1800,
-                    ),
-                ]
-            )
-        return jobs
 
     def _acquire_lock(self) -> bool:
         """Try to acquire the scheduler lock. Returns True if successful."""
@@ -163,25 +141,17 @@ class KeelScheduler:
 
     def _run_job(self, spec: JobSpec) -> None:
         """Run a job in a subprocess."""
-        # Stage 2: trader job runs Keel paper/demo cycle (shim), not dual legacy paths.
+        # Trader job runs Keel cycle module only.
         module_map = {
             "trader": "keel.worker.cycle",
-        }
-        script_map = {
-            "factor_library": "scripts/factor_library.py",
-            "news": "scripts/news_sentiment_harvester.py",
-            "daily_briefing": "scripts/daily_summary_and_backup.py",
-            "nightly_backup": "scripts/nightly_backup_and_clean.py",
         }
 
         run = JobRun(name=spec.name, started_at=datetime.now(BJ_TZ))
 
         try:
-            if spec.name in module_map:
-                command = [sys.executable, "-m", module_map[spec.name]]
-            else:
-                script = self._root / script_map.get(spec.name, f"scripts/{spec.name}.py")
-                command = [sys.executable, str(script)]
+            if spec.name not in module_map:
+                raise ValueError(f"Unknown job: {spec.name}")
+            command = [sys.executable, "-m", module_map[spec.name]]
             result = subprocess.run(
                 command,
                 cwd=self._root,

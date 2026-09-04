@@ -13,7 +13,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-# Defaults aligned with (but simpler than) scripts/prompt_library.py
+# Defaults aligned with keel.llm.prompts composition (legacy scripts/prompt_library removed).
 MAX_MODULE_CHARS = 12_000
 MAX_SYSTEM_CHARS = 24_000
 MAX_USER_CHARS = 24_000
