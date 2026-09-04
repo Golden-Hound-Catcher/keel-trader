@@ -66,6 +66,14 @@ Gateway job ticks remain separately gated (notify-only by default). Prefer Keel 
 
 Keel code does **not** import these helpers; they remain for `r20_gateway` and remaining historical `scripts/` only.
 
+### Removed from `r20_gateway`
+
+| Path | Status |
+|------|--------|
+| `r20_gateway/agents.py` | **Deleted** (0 refs; admin-era agent registry) |
+| `r20_gateway/supervisor.py` | **Deleted** (0 refs; unused worker supervisor wrapper) |
+
+
 ## Deploy units
 
 Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabled/gated.
@@ -93,7 +101,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `r20_backend/qq_gateway_daemon.py` | Legacy QQ daemon helper (kept: spawned by `qq_bind`) |
 | `r20_backend/audit.py` | Append-only audit helper (kept: used by `qq_gateway_daemon`) |
 
-### Deleted scripts (this pass)
+### Deleted scripts / gateway helpers (inventory)
 
 | Path | Reason |
 |------|--------|
@@ -104,7 +112,10 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/debug_audit_bills.py` | Orphan OKX debug one-shot |
 | `scripts/remove_retired_personal_wechat.py` | Spent one-shot WeChat credential migration |
 | `scripts/cleanup_disk.py` | Orphan disk cleanup CLI; unused by nightly/Keel |
-| `scripts/calculus_replay.py` | Orphan offline replay CLI; `calculus_engine` kept for tests/traders |
+| `scripts/calculus_replay.py` | Orphan offline replay CLI |
+| `scripts/calculus_engine.py` | Deprecated shim; importers migrated to `keel.factors.kinematics` |
+| `r20_gateway/agents.py` | 0 external refs (admin-era agent registry) |
+| `r20_gateway/supervisor.py` | 0 external refs (unused supervisor wrapper) |
 
 ## Removed UI / admin artifacts
 
@@ -134,6 +145,9 @@ test ! -d dashboard
 test ! -d frontend/src/views/admin
 test ! -f scripts/sync_web_data.py
 test ! -f scripts/daemon_web_sync.py
+test ! -f scripts/calculus_engine.py
+test ! -f r20_gateway/agents.py
+test ! -f r20_gateway/supervisor.py
 make test                                # Keel core tests
 python -m pytest tests/test_legacy_quarantine.py tests/test_gateway_scheduler.py -v
 ```

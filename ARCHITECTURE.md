@@ -314,7 +314,7 @@ MIT
 
 - **API**: `/health`, `/ready`, and `/api/v1/{status,config,positions,balance,decisions,trades,events,factors}` return Pydantic models in `keel.api.schemas` so OpenAPI matches runtime JSON.
 - **Domain**: `Decision` (+ `validate_decision`), `TradeRecord`, `DecisionRecord`, `FactorSnapshot`, and `LedgerEvent` live under `keel.domain` and are reused by ledger / API / worker / execution. `keel.llm.client` re-exports `Decision` for compatibility.
-- **Factors**: unique pure math from `scripts/calculus_engine.py` ported to `keel.factors.kinematics` with honest names (`calculate_price_kinematics`, path integrals, return statistics). The scripts module is a thin deprecated shim.
+- **Factors**: unique pure math from `scripts/calculus_engine.py` ported to `keel.factors.kinematics` with honest names (`calculate_price_kinematics`, path integrals, return statistics). The deprecated `scripts/calculus_engine` shim was removed after importer migration.
 
 ## Elegance pass: unify Decision on the execution chain
 

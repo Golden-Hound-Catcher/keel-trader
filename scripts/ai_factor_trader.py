@@ -846,7 +846,7 @@ def fetch_single_instrument_data(item, all_positions, usdt_available):
     # 5. Causal Multi-Timeframe Calculus Dynamics
     f["calculus"] = {"valid": False, "regime": "RANGE_LOW_VELOCITY", "velocity": 0.0, "acceleration": 0.0, "impulse": 0.0, "max_abs_jerk": 0.0, "quality": 0.0}
     try:
-        from calculus_engine import calculate_multi_timeframe
+        from keel.factors.kinematics import calculate_multi_timeframe
         f["calculus"] = calculate_multi_timeframe({
             "15M": raw_15m,
             "1H": raw_1h,

@@ -224,8 +224,7 @@ def compute_instrument_factors(item: Dict[str, Any], smart_money_pool: Dict[str,
 
                 # Pillar 6: Calculus, Definite Integrals & Probability Theory (15M High-Resolution)
                 try:
-                    sys.path.append(os.path.join(WORKSPACE_DIR, "scripts"))
-                    from calculus_engine import calculate_calculus
+                    from keel.factors.kinematics import calculate_calculus
                     c_res = calculate_calculus(closes, highs, lows, vols)
                     if c_res.get("valid"):
                         # Calculus Dynamics

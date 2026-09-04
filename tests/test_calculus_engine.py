@@ -1,7 +1,4 @@
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from calculus_engine import calculate_calculus, calculate_multi_timeframe
+from keel.factors.kinematics import calculate_calculus, calculate_multi_timeframe
 
 
 def test_calculus_is_causal_and_bounded():
