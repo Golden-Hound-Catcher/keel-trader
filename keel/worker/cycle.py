@@ -14,6 +14,8 @@ keel.api can read the latest cycle from SQLite without hitting live OKX.
 Stage 5: optional OkxRestAdapter via keel.exchange.factory.build_exchange.
 
 Stage 6: DecisionPolicy port (Stub/Rule/LLM) + modular prompts; default Rule for offline.
+
+Optional notify port (keel.notify): after cycle, POST summary when KEEL_NOTIFY_WEBHOOK_URL set.
 """
 from __future__ import annotations
 
@@ -50,6 +52,13 @@ from keel.policy import (
     build_decision_policy,
     describe_policy,
     rule_based_decision,
+)
+from keel.notify import (
+    Notifier,
+    NotifyEvent,
+    build_notifier,
+    cycle_notify_payload,
+    describe_notifier,
 )
 
 
@@ -188,6 +197,7 @@ def run_paper_cycle(
     force_action: DecisionAction | str | None = None,
     force_paper: bool = False,
     policy: DecisionPolicy | None = None,
+    notifier: Notifier | None = None,
 ) -> dict[str, Any]:
     """
     Run one vertical trader cycle through Keel.
@@ -198,6 +208,9 @@ def run_paper_cycle(
 
     Decision policy (when ``policy`` is not injected):
     - ``build_decision_policy()`` → Rule by default; LLM when configured + env
+
+    Notifier (when ``notifier`` is not injected):
+    - ``build_notifier()`` → Null when ``KEEL_NOTIFY_WEBHOOK_URL`` empty; else Webhook
 
     Returns a JSON-serializable summary for tests and CLI.
     """
@@ -213,6 +226,9 @@ def run_paper_cycle(
 
     policy = policy or build_decision_policy(settings)
     policy_label = describe_policy(policy)
+
+    notifier = notifier or build_notifier(settings)
+    notifier_label = describe_notifier(notifier)
 
     now = time.time()
     snapshots: dict[str, MarketSnapshot] = {}
@@ -381,7 +397,7 @@ def run_paper_cycle(
             data={"instruments": len(ids), "results": len(results)},
         )
 
-    return {
+    summary: dict[str, Any] = {
         "ok": True,
         "mode": mode,
         "adapter": adapter_label,
@@ -393,7 +409,19 @@ def run_paper_cycle(
         "positions": len(exchange.get_positions()),
         "results": results,
         "ledger_db": str(getattr(ledger, "db_path", "")),
+        "notifier": notifier_label,
     }
+
+    notify_result = notifier.notify(
+        NotifyEvent(
+            event="trader_cycle_complete",
+            payload=cycle_notify_payload(summary),
+        )
+    )
+    summary["notify_success"] = notify_result.success
+    summary["notify_skipped"] = notify_result.skipped
+    summary["notify_detail"] = notify_result.detail
+    return summary
 
 
 def main(argv: list[str] | None = None) -> int:

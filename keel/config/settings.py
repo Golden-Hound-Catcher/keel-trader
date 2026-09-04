@@ -47,6 +47,9 @@ class Settings:
     # Ledger (SQLite). Override with KEEL_LEDGER_DB for tests / alternate data dirs.
     ledger_db: str = ""
 
+    # Optional notifications (empty → NullNotifier; see keel.notify)
+    notify_webhook_url: str = ""
+
     # Risk Limits
     max_concurrent_positions: int = 6
     max_same_direction_positions: int = 6
@@ -64,6 +67,10 @@ class Settings:
     @property
     def llm_configured(self) -> bool:
         return bool(self.llm_api_key)
+
+    @property
+    def notify_configured(self) -> bool:
+        return bool(self.notify_webhook_url.strip())
 
     @property
     def exchange_mode(self) -> str:
@@ -146,6 +153,7 @@ def get_settings() -> Settings:
         api_host=_env("KEEL_API_HOST", "0.0.0.0"),
         api_port=_env_int("KEEL_API_PORT", 8080),
         ledger_db=_env("KEEL_LEDGER_DB", ""),
+        notify_webhook_url=_env("KEEL_NOTIFY_WEBHOOK_URL", ""),
         max_concurrent_positions=_env_int("KEEL_MAX_POSITIONS", 6),
         max_daily_loss_usdt=_env_float("KEEL_MAX_DAILY_LOSS", 150.0),
         max_single_asset_margin=_env_float("KEEL_MAX_ASSET_MARGIN", 600.0),
