@@ -106,6 +106,9 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIn("risk_denies", lc)
         self.assertIn("errors", lc)
         self.assertIsInstance(lc["errors"], list)
+        self.assertIn("duration_ms", lc)
+        self.assertIsInstance(lc["duration_ms"], int)
+        self.assertGreaterEqual(lc["duration_ms"], 0)
 
     def test_status_and_config_expose_kill_switch(self):
         r = self.client.get("/api/v1/status")

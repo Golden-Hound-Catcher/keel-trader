@@ -130,11 +130,15 @@ class TestPaperCycle(unittest.TestCase):
         self.assertEqual(cs["decision_counts"].get("WAIT"), 2)
         self.assertEqual(cs["risk_denies"], 0)
         self.assertEqual(cs["errors"], [])
+        self.assertIn("duration_ms", cs)
+        self.assertIsInstance(cs["duration_ms"], int)
+        self.assertGreaterEqual(cs["duration_ms"], 0)
 
         stored = self.ledger.get_last_cycle_summary()
         self.assertIsNotNone(stored)
         self.assertEqual(stored["instruments"], 2)
         self.assertEqual(stored["decision_counts"].get("WAIT"), 2)
+        self.assertEqual(stored["duration_ms"], cs["duration_ms"])
         events = self.ledger.get_events(event_type="worker_cycle_summary", limit=5)
         self.assertGreaterEqual(len(events), 1)
 

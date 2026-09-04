@@ -159,6 +159,7 @@ class TestKeelLedger(unittest.TestCase):
             "risk_denies": 0,
             "errors": [],
             "policy_success": True,
+            "duration_ms": 17,
         }
         eid = self.ledger.record_cycle_summary(payload)
         self.assertGreater(eid, 0)
@@ -167,6 +168,7 @@ class TestKeelLedger(unittest.TestCase):
         self.assertEqual(got["mode"], "paper")
         self.assertEqual(got["decision_counts"]["BUY_LONG"], 1)
         self.assertEqual(got["timestamp"], 1_700_000_000.0)
+        self.assertEqual(got["duration_ms"], 17)
 
     def test_trade_time_str(self):
         trade = TradeRecord(

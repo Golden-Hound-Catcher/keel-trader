@@ -200,11 +200,13 @@ def build_cycle_summary(
     instruments: int,
     results: list[dict[str, Any]],
     policy_success: bool | None = None,
+    duration_ms: int = 0,
 ) -> dict[str, Any]:
     """
     Structured last-cycle payload for ledger + GET /api/v1/status.
 
     Aggregates decision counts by action, risk denies, and non-risk errors.
+    Includes wall-clock ``duration_ms`` for the cycle run.
     """
     decision_counts: dict[str, int] = {}
     risk_denies = 0
@@ -230,6 +232,7 @@ def build_cycle_summary(
         "decision_counts": decision_counts,
         "risk_denies": risk_denies,
         "errors": errors,
+        "duration_ms": int(duration_ms),
     }
     if policy_success is not None:
         payload["policy_success"] = policy_success
@@ -262,6 +265,7 @@ def run_paper_cycle(
 
     Returns a JSON-serializable summary for tests and CLI.
     """
+    cycle_t0 = time.perf_counter()
     settings = get_settings()
     pool = InstrumentPool()
     ids = instrument_ids or [i.inst_id for i in pool.all()]
@@ -428,6 +432,7 @@ def run_paper_cycle(
         )
 
     mode = "paper" if isinstance(exchange, PaperAdapter) else "okx_rest"
+    duration_ms = max(0, int(round((time.perf_counter() - cycle_t0) * 1000)))
     cycle_summary = build_cycle_summary(
         timestamp=now,
         mode=mode,
@@ -436,6 +441,7 @@ def run_paper_cycle(
         instruments=len(ids),
         results=results,
         policy_success=policy_result.success,
+        duration_ms=duration_ms,
     )
     ledger.record_cycle_summary(cycle_summary)
     ledger.record_event(
