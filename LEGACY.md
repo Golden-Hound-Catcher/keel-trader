@@ -120,6 +120,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/calculus_engine.py` | Deprecated shim; importers migrated to `keel.factors.kinematics` |
 | `scripts/qq_notifier.py` | QQ product non-goal; call sites removed; Keel uses `keel.notify` |
 | `scripts/ai_brain_trader.py` | Retired LLM brain loop (council already gone); product path is `python -m keel.worker` |
+| `scripts/db_manager.py` | Orphan SQLite helper; zero refs after `ai_factor_trader` drop |
 | `r20_gateway/agents.py` | 0 external refs (admin-era agent registry) |
 | `r20_gateway/supervisor.py` | 0 external refs (unused supervisor wrapper) |
 | `r20_backend/qq_bind.py` | QQ product non-goal; 0 Keel/scripts importers |
@@ -161,6 +162,7 @@ test ! -f r20_backend/okx_setup.py
 test ! -f scripts/r20_okx_setup.py
 test ! -f scripts/ai_brain_trader.py
 test ! -f scripts/ai_factor_trader.py
+test ! -f scripts/db_manager.py
 test ! -f tests/test_okx_setup.py
 test ! -f r20_backend/qq_bind.py
 test ! -f r20_backend/qq_gateway_daemon.py

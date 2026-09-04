@@ -298,6 +298,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Inventory-gated delete: `r20_backend/okx_setup.py` + `scripts/r20_okx_setup.py` (+ test); install.sh → `KEEL_OKX_*` / keel.exchange |
 | 2026-09-04 | Inventory-gated delete: `scripts/ai_brain_trader.py` (council already gone; product path `python -m keel.worker`) |
 | 2026-09-04 | Inventory-gated delete: `scripts/ai_factor_trader.py` (~90k OKX-CLI/shim); product path `python -m keel.worker` / `keel.worker.cycle` only |
+| 2026-09-04 | Inventory-gated delete: `scripts/db_manager.py` (zero refs after ai_factor_trader drop) |
 
 ---
 
@@ -434,5 +435,9 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Stripped `ai_factor_trader`-dependent cases from `tests/test_quant_system_calculus.py`
   (kept pure kinematics + `factor_library` integration). Quarantine asserts script gone.
 - Removed gateway `JOBS` trader JobSpec referencing the deleted script.
-- **Not** cascade-deleted: `instrument_pool`, `okx_runtime`, `factor_library` (still used);
-  `db_manager` newly zero-ref outside itself — left in-tree for a later cut.
+- **Not** cascade-deleted: `instrument_pool`, `okx_runtime`, `factor_library` (still used).
+
+## Addendum: db_manager removed (inventory)
+
+- Deleted orphan `scripts/db_manager.py` (zero external refs after `ai_factor_trader` drop).
+  Quarantine asserts it gone.

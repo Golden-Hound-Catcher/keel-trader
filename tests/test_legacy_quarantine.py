@@ -214,6 +214,7 @@ class TestDeletedLegacyScripts(unittest.TestCase):
             "qq_notifier.py",
             "r20_okx_setup.py",
             "ai_brain_trader.py",
+            "db_manager.py",
         ]
         for name in gone:
             self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)
