@@ -23,8 +23,10 @@ Opt-in flags:
 | `KEEL_USE_LEGACY=1` | Acknowledge legacy scripts; silence import quarantine warnings |
 | `KEEL_ALLOW_LEGACY_BACKEND=1` | **Required** to import/serve `r20_backend.app` (410 stub only) |
 | `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` | Emergency: re-enable gateway job ticks (worker + `GatewayScheduler.tick`) |
+| `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` | Opt-in: KeelScheduler also runs factor/news/briefing/backup script jobs (default is trader-only) |
 
 Gateway job ticks remain separately gated (notify-only by default). Prefer Keel units only.
+Default Keel scheduler is **trader-only**; legacy script JobSpecs need the flag above.
 
 ---
 
@@ -98,10 +100,10 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 
 | Path | Status |
 |------|--------|
-| `scripts/daily_summary_and_backup.py` | Historical briefing job (still launched by `keel.worker`) |
+| `scripts/daily_summary_and_backup.py` | Historical briefing job; KeelScheduler only if `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` |
 | `scripts/self_improvement_engine.py` | Historical evolution job (tests + optional gateway JOBS) |
-| `scripts/nightly_backup_and_clean.py` | Historical nightly job (still launched by `keel.worker`) |
-| `scripts/factor_library.py` / `news_sentiment_harvester.py` | Still launched by `keel.worker` |
+| `scripts/nightly_backup_and_clean.py` | Historical nightly job; KeelScheduler only if `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` |
+| `scripts/factor_library.py` / `news_sentiment_harvester.py` | KeelScheduler only if `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` |
 | `scripts/sync_full_ledger.py` / `backup_runtime.py` / `okx_runtime.py` / … | Helpers still used by remaining scripts/tests |
 
 ### Deleted scripts / gateway helpers (inventory)

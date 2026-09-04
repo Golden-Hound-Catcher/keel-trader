@@ -17,6 +17,7 @@ from keel.worker.scheduler import KeelScheduler
 class TestCycleIntervalSettings(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("KEEL_CYCLE_INTERVAL_SECONDS", None)
+        os.environ.pop("KEEL_ENABLE_LEGACY_SCHEDULER_JOBS", None)
         refresh_settings()
 
     def test_clamp_bounds(self):
@@ -67,6 +68,35 @@ class TestCycleIntervalSettings(unittest.TestCase):
         trader = sched._jobs["trader"]
         self.assertEqual(trader.interval_seconds, 3600)
         self.assertEqual(trader.timeout_seconds, 3540)  # max(840, 3600 - 60)
+
+    def test_default_scheduler_jobs_trader_only(self):
+        os.environ.pop("KEEL_ENABLE_LEGACY_SCHEDULER_JOBS", None)
+        s = refresh_settings()
+        self.assertFalse(s.enable_legacy_scheduler_jobs)
+        self.assertEqual(s.scheduler_jobs, ("trader",))
+        sched = KeelScheduler()
+        self.assertEqual(list(sched._jobs.keys()), ["trader"])
+
+    def test_legacy_scheduler_jobs_flag_restores_extras(self):
+        os.environ["KEEL_ENABLE_LEGACY_SCHEDULER_JOBS"] = "1"
+        s = refresh_settings()
+        self.assertTrue(s.enable_legacy_scheduler_jobs)
+        expected = (
+            "trader",
+            "factor_library",
+            "news",
+            "daily_briefing",
+            "nightly_backup",
+        )
+        self.assertEqual(s.scheduler_jobs, expected)
+        sched = KeelScheduler()
+        self.assertEqual(list(sched._jobs.keys()), list(expected))
+
+    def test_legacy_scheduler_jobs_true_string(self):
+        os.environ["KEEL_ENABLE_LEGACY_SCHEDULER_JOBS"] = "true"
+        s = refresh_settings()
+        self.assertTrue(s.enable_legacy_scheduler_jobs)
+        self.assertIn("factor_library", s.scheduler_jobs)
 
 
 if __name__ == "__main__":

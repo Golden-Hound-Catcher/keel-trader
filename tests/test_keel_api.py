@@ -186,6 +186,34 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIn("decision_policy", body)
         self.assertIsInstance(body["decision_policy"], str)
         self.assertTrue(body["decision_policy"])
+        self.assertIn("scheduler_jobs", body)
+        self.assertEqual(body["scheduler_jobs"], ["trader"])
+        self.assertIn("legacy_scheduler_jobs", body)
+        self.assertFalse(body["legacy_scheduler_jobs"])
+
+    def test_config_legacy_scheduler_jobs_when_enabled(self):
+        os.environ["KEEL_ENABLE_LEGACY_SCHEDULER_JOBS"] = "1"
+        try:
+            refresh_settings()
+            app = create_app()
+            client = TestClient(app)
+            r = client.get("/api/v1/config")
+            self.assertEqual(r.status_code, 200)
+            body = r.json()
+            self.assertTrue(body["legacy_scheduler_jobs"])
+            self.assertEqual(
+                body["scheduler_jobs"],
+                [
+                    "trader",
+                    "factor_library",
+                    "news",
+                    "daily_briefing",
+                    "nightly_backup",
+                ],
+            )
+        finally:
+            os.environ.pop("KEEL_ENABLE_LEGACY_SCHEDULER_JOBS", None)
+            refresh_settings()
 
     def test_daily_pnl_endpoint(self):
         import time
