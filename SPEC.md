@@ -119,7 +119,7 @@ Base: `keel.api.app`
 | GET | `/health` | Liveness |
 | GET | `/ready` | Readiness: ledger open + `seconds_since_last_cycle` / `worker_stale` (stale when lag > max(2×cycle_interval, cycle_interval+300); null lag = cold-start OK) |
 | GET | `/api/v1/status` | Worker/exchange/policy summary; `decision_policy`; optional `last_cycle`; `seconds_since_last_cycle`; `worker_stale` (same threshold as `/ready`) |
-| GET | `/api/v1/config` | Non-secret config echo (incl. instruments from `KEEL_INSTRUMENTS`, `decision_policy`, exchange_mode, notify_configured, `cycle_interval_seconds`) |
+| GET | `/api/v1/config` | Non-secret config echo (incl. instruments from `KEEL_INSTRUMENTS`, `decision_policy`, exchange_mode, notify_configured, `cycle_interval_seconds`, `scheduler_jobs`, `legacy_scheduler_jobs`) |
 | GET | `/api/v1/pnl/daily` | Realized daily PnL from ledger (Beijing date; optional `?date=YYYY-MM-DD`) |
 | GET | `/api/v1/positions` | Open positions |
 | GET | `/api/v1/balance` | Account balance snapshot |
@@ -161,6 +161,7 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_INSTRUMENTS` | empty → defaults | Comma-separated OKX swap ids; empty → `DEFAULT_CRYPTO_INSTRUMENTS`; worker + `/config` instruments |
 | `KEEL_DECISION_POLICY` | `rule` | `rule` \| `stub` \| `llm` — exposed as `decision_policy` on `/status` + `/config` |
 | `KEEL_CYCLE_INTERVAL_SECONDS` | `900` | Trader cycle interval; clamped `[60, 86400]` |
+| `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS` | `0` | Opt-in legacy script JobSpecs in `KeelScheduler` (factor/news/briefing/backup); default trader-only |
 | `KEEL_API_TOKEN` | empty | Optional bearer for `/api/v1/*`; empty → no auth |
 | `KEEL_USE_LEGACY` | unset | Silence legacy import quarantine warnings |
 
@@ -231,6 +232,10 @@ UI is a **client of the SPEC API**, not a second source of truth.
 | Last | Remove remaining `r20_backend` helpers once gateway/scripts no longer need them |
 
 Supported deployments: **keel-api** + **keel-worker** + optional **frontend** U1 monitor only.
+Default `KeelScheduler` jobs: **trader only**. Legacy R20 script jobs
+(`factor_library`, `news`, `daily_briefing`, `nightly_backup`) are opt-in via
+`KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` (see addendum). Scripts remain in-tree
+for inventory-gated deletion later.
 No mass-delete without inventory check against `LEGACY.md`.
 
 ---
@@ -312,6 +317,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Inventory-gated delete: `scripts/ai_factor_trader.py` (~90k OKX-CLI/shim); product path `python -m keel.worker` / `keel.worker.cycle` only |
 | 2026-09-04 | Inventory-gated delete: `scripts/db_manager.py` (zero refs after ai_factor_trader drop) |
 | 2026-09-04 | `GET /api/v1/pnl/daily`; status `seconds_since_last_cycle`; richer non-secret config; monitor Overview PnL/lag/config strip |
+| 2026-09-04 | Default Keel scheduler trader-only; legacy script jobs opt-in via `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS`; `/config` exposes `scheduler_jobs` / `legacy_scheduler_jobs` |
 
 ---
 
@@ -368,10 +374,20 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
   `generate_snapshots`, `debug_aggregate_orders`, `debug_audit_bills`,
   `remove_retired_personal_wechat`, `cleanup_disk`, `calculus_replay`.
 - Deleted `ai_factor_trader` / `ai_brain_trader` shims; trader path is `python -m keel.worker` only.
-  Scripts still launched by `keel.worker`: factor/news/briefing/backup/self-improvement helpers.
+  Default `KeelScheduler` is **trader-only**; factor/news/briefing/backup script
+  jobs require `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` (scripts kept for later inventory).
 - `r20_gateway.worker` remains notify-only by default; `GatewayScheduler.tick()` /
   `_execute` are no-ops unless `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1`.
 - Remaining `r20_backend` helpers stay until gateway/scripts no longer need them.
+
+## Addendum: Keel scheduler trader-only (default)
+
+- SPEC-supported runtime is **keel-api** + **keel-worker**. `KeelScheduler._default_jobs`
+  schedules only `JobSpec("trader")` (interval/timeout from `KEEL_CYCLE_INTERVAL_SECONDS`).
+- Legacy R20 script jobs (`factor_library`, `news`, `daily_briefing`, `nightly_backup`
+  via `scripts/*.py`) are **opt-in** with `KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1` (or `true`).
+- `GET /api/v1/config` exposes non-secret `scheduler_jobs` (names that would run) and
+  `legacy_scheduler_jobs` (bool). Do not delete the scripts in this change — inventory later.
 
 ## Addendum: Typed API + domain / factors elegance
 

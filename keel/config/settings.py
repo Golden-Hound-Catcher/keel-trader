@@ -63,6 +63,9 @@ class Settings:
     # Trader cycle interval (KEEL_CYCLE_INTERVAL_SECONDS); default 900 = 15min
     cycle_interval_seconds: int = 900
 
+    # Opt-in legacy script jobs in KeelScheduler (KEEL_ENABLE_LEGACY_SCHEDULER_JOBS)
+    enable_legacy_scheduler_jobs: bool = False
+
     # Active OKX swap instruments (KEEL_INSTRUMENTS); empty env → DEFAULT_CRYPTO_INSTRUMENTS
     instruments: tuple[str, ...] = ()
 
@@ -88,6 +91,19 @@ class Settings:
         if self.okx_configured:
             return f"okx_rest:{self.okx_environment}"
         return "paper"
+
+    @property
+    def scheduler_jobs(self) -> tuple[str, ...]:
+        """Job names KeelScheduler would run with current settings (trader-only by default)."""
+        jobs: tuple[str, ...] = ("trader",)
+        if self.enable_legacy_scheduler_jobs:
+            jobs = jobs + (
+                "factor_library",
+                "news",
+                "daily_briefing",
+                "nightly_backup",
+            )
+        return jobs
 
     @property
     def ledger_path(self) -> Path:
@@ -220,6 +236,7 @@ def get_settings() -> Settings:
         max_single_asset_margin=_env_float("KEEL_MAX_ASSET_MARGIN", 600.0),
         kill_switch=_env_bool("KEEL_KILL_SWITCH", False),
         cycle_interval_seconds=_env_cycle_interval_seconds(),
+        enable_legacy_scheduler_jobs=_env_bool("KEEL_ENABLE_LEGACY_SCHEDULER_JOBS", False),
         instruments=_env_instruments(),
     )
 

@@ -184,6 +184,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("notify_configured", config_props)
         self.assertIn("exchange_mode", config_props)
         self.assertIn("cycle_interval_seconds", config_props)
+        self.assertIn("scheduler_jobs", config_props)
+        self.assertIn("legacy_scheduler_jobs", config_props)
         self.assertIn("decision_policy", config_props)
         self.assertIn("decision_policy", status_props)
         self.assertIn("DailyPnlResponse", comps)
@@ -221,6 +223,8 @@ class TestApiSchemas(unittest.TestCase):
             notify_configured=True,
             exchange_mode="paper",
             cycle_interval_seconds=900,
+            scheduler_jobs=["trader"],
+            legacy_scheduler_jobs=False,
         )
         self.assertFalse(cfg.kill_switch)
         self.assertEqual(cfg.decision_policy, "stub")
@@ -228,6 +232,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertTrue(cfg.notify_configured)
         self.assertEqual(cfg.exchange_mode, "paper")
         self.assertEqual(cfg.cycle_interval_seconds, 900)
+        self.assertEqual(cfg.scheduler_jobs, ["trader"])
+        self.assertFalse(cfg.legacy_scheduler_jobs)
 
     def test_daily_pnl_response_model(self):
         m = DailyPnlResponse(date="2026-09-04", realized_pnl=12.5)

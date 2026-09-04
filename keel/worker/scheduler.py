@@ -81,6 +81,10 @@ class KeelScheduler:
     def _default_jobs(self) -> list[JobSpec]:
         """Default job specifications.
 
+        SPEC-supported default is **trader only** (keel-api + keel-worker).
+        Legacy R20 script jobs (factor_library / news / daily_briefing /
+        nightly_backup) are opt-in via ``KEEL_ENABLE_LEGACY_SCHEDULER_JOBS=1``.
+
         Trader interval comes from ``settings.cycle_interval_seconds``
         (``KEEL_CYCLE_INTERVAL_SECONDS``, default 900). Timeout scales as
         ``max(840, interval - 60)`` so the classic 15min cycle keeps an 840s
@@ -90,13 +94,27 @@ class KeelScheduler:
         settings = get_settings()
         interval = settings.cycle_interval_seconds
         trader_timeout = max(840, interval - 60)
-        return [
+        jobs = [
             JobSpec("trader", interval_seconds=interval, timeout_seconds=trader_timeout),
-            JobSpec("factor_library", interval_seconds=60, timeout_seconds=55),
-            JobSpec("news", interval_seconds=10 * 60, timeout_seconds=300),
-            JobSpec("daily_briefing", schedule_times=("08:00", "20:00"), timeout_seconds=600),
-            JobSpec("nightly_backup", schedule_times=("02:00",), timeout_seconds=1800),
         ]
+        if settings.enable_legacy_scheduler_jobs:
+            jobs.extend(
+                [
+                    JobSpec("factor_library", interval_seconds=60, timeout_seconds=55),
+                    JobSpec("news", interval_seconds=10 * 60, timeout_seconds=300),
+                    JobSpec(
+                        "daily_briefing",
+                        schedule_times=("08:00", "20:00"),
+                        timeout_seconds=600,
+                    ),
+                    JobSpec(
+                        "nightly_backup",
+                        schedule_times=("02:00",),
+                        timeout_seconds=1800,
+                    ),
+                ]
+            )
+        return jobs
 
     def _acquire_lock(self) -> bool:
         """Try to acquire the scheduler lock. Returns True if successful."""

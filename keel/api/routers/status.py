@@ -66,4 +66,6 @@ def config() -> ConfigResponse:
         notify_configured=settings.notify_configured,
         exchange_mode=settings.exchange_mode,
         cycle_interval_seconds=settings.cycle_interval_seconds,
+        scheduler_jobs=list(settings.scheduler_jobs),
+        legacy_scheduler_jobs=settings.enable_legacy_scheduler_jobs,
     )
