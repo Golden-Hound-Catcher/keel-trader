@@ -345,3 +345,9 @@ MIT
 - **Port**: `keel.notify.Notifier` with `NullNotifier` (default) and `WebhookNotifier` (simple POST JSON, injectable HTTP transport for CI).
 - **Wiring**: `keel.worker.cycle.run_paper_cycle` notifies `trader_cycle_complete` after ledger events; summary includes `notifier` / `notify_*` fields.
 - **Config**: `KEEL_NOTIFY_WEBHOOK_URL` in `keel.config.settings` (empty → Null). No multi-channel product expansion.
+
+## Elegance pass: last_cycle on status
+
+- **Ledger**: `KeelLedger.record_cycle_summary` / `get_last_cycle_summary` persist and read event type `worker_cycle_summary`.
+- **Worker**: `run_paper_cycle` builds a structured summary (decision counts, risk denies, errors) and records it when the cycle finishes.
+- **API**: `GET /api/v1/status` adds optional `last_cycle` (`LastCycleSummary` in `keel.api.schemas`) for the monitor without a new endpoint.

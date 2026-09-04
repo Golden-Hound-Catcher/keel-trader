@@ -16,6 +16,8 @@ Stage 5: optional OkxRestAdapter via keel.exchange.factory.build_exchange.
 Stage 6: DecisionPolicy port (Stub/Rule/LLM) + modular prompts; default Rule for offline.
 
 Optional notify port (keel.notify): after cycle, POST summary when KEEL_NOTIFY_WEBHOOK_URL set.
+
+Monitor: writes worker_cycle_summary to the ledger for GET /api/v1/status last_cycle.
 """
 from __future__ import annotations
 
@@ -186,6 +188,52 @@ def _seed_paper_tickers(
                 timestamp=snap.timestamp,
             )
         )
+
+
+
+def build_cycle_summary(
+    *,
+    timestamp: float,
+    mode: str,
+    adapter: str,
+    policy: str,
+    instruments: int,
+    results: list[dict[str, Any]],
+    policy_success: bool | None = None,
+) -> dict[str, Any]:
+    """
+    Structured last-cycle payload for ledger + GET /api/v1/status.
+
+    Aggregates decision counts by action, risk denies, and non-risk errors.
+    """
+    decision_counts: dict[str, int] = {}
+    risk_denies = 0
+    errors: list[dict[str, Any]] = []
+    for row in results:
+        action = str(row.get("action") or "UNKNOWN")
+        decision_counts[action] = decision_counts.get(action, 0) + 1
+        if row.get("risk_gate_failed"):
+            risk_denies += 1
+        elif row.get("error") and not row.get("success"):
+            errors.append(
+                {
+                    "inst_id": row.get("inst_id"),
+                    "error": str(row["error"]),
+                }
+            )
+    payload: dict[str, Any] = {
+        "timestamp": timestamp,
+        "mode": mode,
+        "adapter": adapter,
+        "policy": policy,
+        "instruments": instruments,
+        "decision_counts": decision_counts,
+        "risk_denies": risk_denies,
+        "errors": errors,
+    }
+    if policy_success is not None:
+        payload["policy_success"] = policy_success
+    return payload
 
 
 def run_paper_cycle(
@@ -379,6 +427,16 @@ def run_paper_cycle(
         )
 
     mode = "paper" if isinstance(exchange, PaperAdapter) else "okx_rest"
+    cycle_summary = build_cycle_summary(
+        timestamp=now,
+        mode=mode,
+        adapter=adapter_label,
+        policy=policy_label,
+        instruments=len(ids),
+        results=results,
+        policy_success=policy_result.success,
+    )
+    ledger.record_cycle_summary(cycle_summary)
     ledger.record_event(
         "trader_cycle_complete",
         data={
@@ -388,13 +446,18 @@ def run_paper_cycle(
             "mode": mode,
             "policy": policy_label,
             "policy_success": policy_result.success,
+            "decision_counts": cycle_summary["decision_counts"],
+            "risk_denies": cycle_summary["risk_denies"],
+            "errors": cycle_summary["errors"],
         },
+        timestamp=now,
     )
     # Keep legacy event name for older API consumers / tests.
     if mode == "paper":
         ledger.record_event(
             "paper_cycle_complete",
             data={"instruments": len(ids), "results": len(results)},
+            timestamp=now,
         )
 
     summary: dict[str, Any] = {
@@ -410,6 +473,7 @@ def run_paper_cycle(
         "results": results,
         "ledger_db": str(getattr(ledger, "db_path", "")),
         "notifier": notifier_label,
+        "cycle_summary": cycle_summary,
     }
 
     notify_result = notifier.notify(

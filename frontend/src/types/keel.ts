@@ -8,6 +8,18 @@ export interface KeelHealth {
   environment: string
 }
 
+export interface KeelLastCycle {
+  timestamp: number
+  mode: string
+  adapter?: string
+  policy?: string
+  instruments?: number
+  decision_counts?: Record<string, number>
+  risk_denies?: number
+  errors?: Array<Record<string, unknown>>
+  policy_success?: boolean | null
+}
+
 export interface KeelStatus {
   version: string
   mode: string
@@ -18,6 +30,7 @@ export interface KeelStatus {
     llm: boolean
   }
   ledger_db: string
+  last_cycle?: KeelLastCycle | null
 }
 
 export interface KeelConfig {

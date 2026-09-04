@@ -59,6 +59,14 @@ const factorRows = computed(() =>
     f: store.factors[id],
   })),
 )
+
+const lastCycle = computed(() => store.status?.last_cycle ?? null)
+const lastCycleActions = computed(() => {
+  const counts = lastCycle.value?.decision_counts || {}
+  return Object.entries(counts)
+    .map(([k, v]) => `${k}:${v}`)
+    .join(' · ')
+})
 </script>
 
 <template>
@@ -188,6 +196,45 @@ const factorRows = computed(() =>
               </div>
               <div class="text-[11px] font-mono text-[#707E94] mt-1 truncate" :title="store.status?.ledger_db">
                 {{ store.status?.mode || '—' }}
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="lastCycle"
+            class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
+          >
+            <h2 class="text-xs font-mono font-bold text-white uppercase mb-2">Last worker cycle</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
+              <div>
+                <div class="text-[#707E94]">When</div>
+                <div class="text-white">{{ fmtTs(lastCycle.timestamp) }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">Mode / adapter</div>
+                <div class="text-white">{{ lastCycle.mode }} · {{ lastCycle.adapter || '—' }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">Policy</div>
+                <div class="text-white">{{ lastCycle.policy || '—' }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">Instruments</div>
+                <div class="text-white">{{ lastCycle.instruments ?? '—' }}</div>
+              </div>
+              <div class="md:col-span-2">
+                <div class="text-[#707E94]">Decisions</div>
+                <div class="text-cyan-400">{{ lastCycleActions || '—' }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">Risk denies</div>
+                <div class="text-white">{{ lastCycle.risk_denies ?? 0 }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">Errors</div>
+                <div :class="(lastCycle.errors?.length || 0) ? 'text-rose-400' : 'text-white'">
+                  {{ lastCycle.errors?.length ?? 0 }}
+                </div>
               </div>
             </div>
           </div>

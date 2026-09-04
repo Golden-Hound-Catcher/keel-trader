@@ -6,7 +6,8 @@ import time
 from fastapi import APIRouter
 
 from keel import __version__
-from keel.api.schemas import ConfigResponse, CredentialsStatus, StatusResponse
+from keel.api.deps import get_ledger
+from keel.api.schemas import ConfigResponse, CredentialsStatus, LastCycleSummary, StatusResponse
 from keel.config import get_settings
 
 router = APIRouter()
@@ -16,8 +17,10 @@ _START_TIME = time.time()
 
 @router.get("/status", response_model=StatusResponse)
 def status() -> StatusResponse:
-    """Get system status."""
+    """Get system status, including last worker cycle summary when available."""
     settings = get_settings()
+    last_raw = get_ledger().get_last_cycle_summary()
+    last_cycle = LastCycleSummary.model_validate(last_raw) if last_raw else None
     return StatusResponse(
         version=__version__,
         mode="read_only_control_plane",
@@ -28,6 +31,7 @@ def status() -> StatusResponse:
             llm=settings.llm_configured,
         ),
         ledger_db=str(settings.ledger_path),
+        last_cycle=last_cycle,
     )
 
 
