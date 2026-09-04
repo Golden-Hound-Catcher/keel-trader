@@ -171,6 +171,7 @@ class TestAdminApiRemoved(unittest.TestCase):
             "prompt_views.py",
             "account_baseline.py",
             "okx_trade_service.py",
+            "okx_setup.py",
             "qq_bind.py",
             "qq_gateway_daemon.py",
             "audit.py",
@@ -211,6 +212,7 @@ class TestDeletedLegacyScripts(unittest.TestCase):
             "calculus_replay.py",
             "calculus_engine.py",
             "qq_notifier.py",
+            "r20_okx_setup.py",
         ]
         for name in gone:
             self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)
@@ -224,6 +226,9 @@ class TestDeletedLegacyScripts(unittest.TestCase):
 
     def test_council_manager_test_removed(self):
         self.assertFalse((ROOT / "tests" / "test_council_manager.py").exists())
+
+    def test_okx_setup_test_removed(self):
+        self.assertFalse((ROOT / "tests" / "test_okx_setup.py").exists())
 
     def test_trader_shims_remain(self):
         self.assertTrue((ROOT / "scripts" / "ai_factor_trader.py").exists())

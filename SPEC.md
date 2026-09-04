@@ -295,6 +295,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Typed `last_cycle.errors` as `CycleError` (`inst_id?`, `error`) matching frontend/`RiskDenyReason` style |
 | 2026-09-04 | `last_cycle.error_count` full count + capped `errors` list (CYCLE_ERRORS_CAP=20); delete `scripts/qq_notifier.py` |
 | 2026-09-04 | Inventory-gated delete: `r20_backend/council_manager.py` (+ `tests/test_council_manager.py`); strip council from `ai_brain_trader` (SPEC non-goal) |
+| 2026-09-04 | Inventory-gated delete: `r20_backend/okx_setup.py` + `scripts/r20_okx_setup.py` (+ test); install.sh → `KEEL_OKX_*` / keel.exchange |
 
 ---
 
@@ -406,3 +407,12 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Stripped council import/debate path and `council_transcript` history field from
   `ai_brain_trader`; legacy single-model brain remains behind existing shim flags.
 - Prefer `python -m keel.worker` / DecisionPolicy for decisions — not council.
+
+## Addendum: Legacy OKX setup helpers removed (inventory)
+
+- Deleted `r20_backend/okx_setup.py`, `scripts/r20_okx_setup.py`, and `tests/test_okx_setup.py`
+  after repo-wide scan showed **zero** Keel importers (script only imported the module;
+  tests-only otherwise). Keel OKX access is `keel.exchange` REST via `KEEL_OKX_*`.
+- `deploy/install.sh` no longer installs the shell `okx` CLI or chmods `r20_okx_setup`;
+  it prepares the venv + `.env` and points operators at `KEEL_OKX_*` (see `env.example`).
+- **Kept** `scripts/okx_runtime.py` (secrets/runtime env helper still used by remaining scripts).

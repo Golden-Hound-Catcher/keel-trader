@@ -65,6 +65,7 @@ Gateway job ticks remain separately gated (notify-only by default). Prefer Keel 
 | `r20_backend/prompt_views.py` | **Deleted** (0 external refs; admin prompt editor gone) |
 | `r20_backend/account_baseline.py` | **Deleted** (0 external refs; mutual self/test only) |
 | `r20_backend/okx_trade_service.py` | **Deleted** (0 Keel/gateway/scripts refs; tests-only) |
+| `r20_backend/okx_setup.py` | **Deleted** (0 Keel importers; Keel uses `keel.exchange` OKX REST + `KEEL_OKX_*`) |
 | `r20_backend/qq_bind.py` | **Deleted** (QQ product non-goal; 0 Keel importers) |
 | `r20_backend/qq_gateway_daemon.py` | **Deleted** (only spawned by `qq_bind`) |
 | `r20_backend/audit.py` | **Deleted** (only imported by `qq_gateway_daemon`) |
@@ -127,6 +128,8 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `r20_gateway/plugins.py` | Plugin marketplace non-goal; tests-only refs |
 | `tests/test_qq_bind.py` | Covered deleted QQ bind module |
 | `tests/test_council_manager.py` | Covered deleted `council_manager` |
+| `scripts/r20_okx_setup.py` | CLI wrapper for deleted `okx_setup`; install.sh now points at `KEEL_OKX_*` |
+| `tests/test_okx_setup.py` | Covered deleted `okx_setup` |
 
 ## Removed UI / admin artifacts
 
@@ -154,6 +157,9 @@ test ! -f r20_backend/okx_client.py
 test ! -f r20_backend/prompt_views.py
 test ! -f r20_backend/account_baseline.py
 test ! -f r20_backend/okx_trade_service.py
+test ! -f r20_backend/okx_setup.py
+test ! -f scripts/r20_okx_setup.py
+test ! -f tests/test_okx_setup.py
 test ! -f r20_backend/qq_bind.py
 test ! -f r20_backend/qq_gateway_daemon.py
 test ! -f r20_backend/audit.py
