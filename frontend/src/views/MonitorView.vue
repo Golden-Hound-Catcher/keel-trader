@@ -69,6 +69,14 @@ const lastCycleActions = computed(() => {
     .join(' · ')
 })
 
+/** last_cycle.risk_denies is a count (int); schema has no reason list. */
+const riskDeniesCount = computed(() => {
+  const raw = lastCycle.value?.risk_denies
+  const n = typeof raw === 'number' ? raw : Number(raw ?? 0)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+})
+const riskDeniesWarn = computed(() => riskDeniesCount.value > 0)
+
 /** Read-only: armed via KEEL_KILL_SWITCH (status API); no admin toggle. */
 const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
 </script>
@@ -261,7 +269,19 @@ const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
               </div>
               <div>
                 <div class="text-[#707E94]">Risk denies</div>
-                <div class="text-white">{{ lastCycle.risk_denies ?? 0 }}</div>
+                <div class="mt-0.5">
+                  <span
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border tabular-nums"
+                    :class="riskDeniesWarn
+                      ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
+                      : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'"
+                    :title="riskDeniesWarn
+                      ? `${riskDeniesCount} instrument(s) denied by risk gates this cycle`
+                      : 'No risk-gate denies this cycle'"
+                  >
+                    {{ riskDeniesCount }}
+                  </span>
+                </div>
               </div>
               <div>
                 <div class="text-[#707E94]">Errors</div>

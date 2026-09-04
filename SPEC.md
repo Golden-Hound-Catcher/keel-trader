@@ -288,12 +288,13 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Monitor UI: read-only kill_switch badge/banner on Overview (env-only; no toggle) |
 | 2026-09-04 | `last_cycle.duration_ms` wall-clock cycle duration; delete unused `r20_backend/account_baseline` |
 | 2026-09-04 | Inventory-gated delete: `r20_backend/okx_trade_service.py` (tests-only refs; Keel owns OKX REST) |
+| 2026-09-04 | Monitor Last worker cycle: `risk_denies` count badge (amber when >0, muted at 0) |
 
 ---
 
 ## Addendum: last_cycle on status
 
-After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` event (via `KeelLedger.record_cycle_summary`). `GET /api/v1/status` includes optional `last_cycle` with timestamp, mode/adapter, policy, instruments, `decision_counts`, `risk_denies`, `errors`, and wall-clock `duration_ms`. Monitor UI shows it when present.
+After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` event (via `KeelLedger.record_cycle_summary`). `GET /api/v1/status` includes optional `last_cycle` with timestamp, mode/adapter, policy, instruments, `decision_counts`, `risk_denies` (int count), `errors`, and wall-clock `duration_ms`. Monitor Last worker cycle panel shows a `risk_denies` badge (amber when >0, muted at 0).
 
 ## Addendum: kill switch (hard gate)
 
