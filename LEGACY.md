@@ -47,7 +47,7 @@ Gateway job ticks remain separately gated (notify-only by default). Prefer Keel 
 
 | Path | Why it remains | Accidental-use guard |
 |------|----------------|----------------------|
-| `r20_backend/` | Helper modules for optional gateway/scripts (notifications, llm_manager, backup_*, settings_store, council, etc.) | Import warn; prefer `keel.api` |
+| `r20_backend/` | Helper modules for optional gateway/scripts (notifications, llm_manager, backup_*, settings_store, etc.) | Import warn; prefer `keel.api` |
 | `r20_backend/app.py` | Soft-blocked **410 stub** (admin HTTP API removed) | **`KEEL_ALLOW_LEGACY_BACKEND=1` required** to import via uvicorn; else exit `2` |
 | `r20_backend/scheduler.py` | Hard guard against double-firing | Immediate exit code `2` |
 | `r20_gateway/` | Optional notification delivery | Import warn; no job ticks by default |
@@ -68,6 +68,7 @@ Gateway job ticks remain separately gated (notify-only by default). Prefer Keel 
 | `r20_backend/qq_bind.py` | **Deleted** (QQ product non-goal; 0 Keel importers) |
 | `r20_backend/qq_gateway_daemon.py` | **Deleted** (only spawned by `qq_bind`) |
 | `r20_backend/audit.py` | **Deleted** (only imported by `qq_gateway_daemon`) |
+| `r20_backend/council_manager.py` | **Deleted** (multi-agent council non-goal; only `ai_brain_trader` + its test) |
 
 Keel code does **not** import these helpers; they remain for `r20_gateway` and remaining historical `scripts/` only.
 Keel notify uses `keel.notify` (Null/Webhook) instead of the removed QQ bind/daemon stack and deleted `scripts/qq_notifier.py` bridge.
@@ -97,7 +98,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | Path | Status |
 |------|--------|
 | `scripts/ai_factor_trader.py` | Defaults to `keel.worker.cycle`; legacy OKX-CLI loop only if `KEEL_USE_LEGACY=1` |
-| `scripts/ai_brain_trader.py` | Legacy brain loop; warns unless `KEEL_USE_LEGACY=1` (optional `KEEL_BRAIN_SHIM=1` -> cycle) |
+| `scripts/ai_brain_trader.py` | Legacy brain loop (council path removed); warns unless `KEEL_USE_LEGACY=1` (optional `KEEL_BRAIN_SHIM=1` -> cycle) |
 | `scripts/daily_summary_and_backup.py` | Historical briefing job (still launched by `keel.worker`) |
 | `scripts/self_improvement_engine.py` | Historical evolution job (tests + optional gateway JOBS) |
 | `scripts/nightly_backup_and_clean.py` | Historical nightly job (still launched by `keel.worker`) |
@@ -125,6 +126,7 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `r20_backend/audit.py` | Only imported by deleted `qq_gateway_daemon` |
 | `r20_gateway/plugins.py` | Plugin marketplace non-goal; tests-only refs |
 | `tests/test_qq_bind.py` | Covered deleted QQ bind module |
+| `tests/test_council_manager.py` | Covered deleted `council_manager` |
 
 ## Removed UI / admin artifacts
 
@@ -155,8 +157,10 @@ test ! -f r20_backend/okx_trade_service.py
 test ! -f r20_backend/qq_bind.py
 test ! -f r20_backend/qq_gateway_daemon.py
 test ! -f r20_backend/audit.py
+test ! -f r20_backend/council_manager.py
 test ! -f r20_gateway/plugins.py
 test ! -f tests/test_qq_bind.py
+test ! -f tests/test_council_manager.py
 test ! -d dashboard
 test ! -d frontend/src/views/admin
 test ! -f scripts/sync_web_data.py

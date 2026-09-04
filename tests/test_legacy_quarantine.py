@@ -174,6 +174,7 @@ class TestAdminApiRemoved(unittest.TestCase):
             "qq_bind.py",
             "qq_gateway_daemon.py",
             "audit.py",
+            "council_manager.py",
         ):
             self.assertFalse((ROOT / "r20_backend" / name).exists(), msg=name)
 
@@ -220,6 +221,9 @@ class TestDeletedLegacyScripts(unittest.TestCase):
 
     def test_qq_bind_test_removed(self):
         self.assertFalse((ROOT / "tests" / "test_qq_bind.py").exists())
+
+    def test_council_manager_test_removed(self):
+        self.assertFalse((ROOT / "tests" / "test_council_manager.py").exists())
 
     def test_trader_shims_remain(self):
         self.assertTrue((ROOT / "scripts" / "ai_factor_trader.py").exists())

@@ -807,75 +807,54 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
         raw_res = None
         brain_output = None
 
-        # Transparent check: is Multi-Agent Council enabled?
-        council_enabled = False
-        try:
-            from r20_backend.council_manager import load_council_config, execute_council_debate
-            c_cfg = load_council_config()
-            council_enabled = bool(c_cfg.get("enabled"))
-        except Exception:
-            council_enabled = False
+        # Multi-agent council (r20_backend.council_manager) is retired.
+        # Prefer: python -m keel.worker --once (DecisionPolicy / keel.llm).
+        print(f"[AI Brain Batch] 🚀 正在发起单次全市场大模型宏观决策推演 ({model_name} / {api_format})...")
+        if execute_llm_request:
+            content, _, usage_dict, _ = execute_llm_request(
+                messages=[
+                    {"role": "system", "content": effective_system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                model=model_name,
+                base_url=base_url,
+                api_key=api_key,
+                api_format=api_format,
+                reasoning_effort=effort,
+                temperature=0.2,
+                response_format={"type": "json_object"},
+                timeout=50.0,
+            )
+            raw_res = {"usage": usage_dict} if isinstance(usage_dict, dict) else {}
+        else:
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": effective_system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.2,
+                "response_format": {"type": "json_object"}
+            }
+            if effort not in ("none", "auto"):
+                payload["reasoning_effort"] = effort
+            req = urllib.request.Request(
+                f"{base_url}/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+            )
+            with urllib.request.urlopen(req, timeout=50) as resp:
+                res = json.loads(resp.read().decode("utf-8"))
+                content = res["choices"][0]["message"]["content"].strip()
+                raw_res = res
 
-        if council_enabled:
-            print(f"[AI Brain Council] 🏛️ 多模型委员会已开启，正在启动各专家参谋现场辩论与首席仲裁...")
-            try:
-                brain_output, council_transcript = execute_council_debate(
-                    market_prompt=prompt,
-                    original_system_prompt=effective_system_prompt,
-                    timeout=float(c_cfg.get("timeout_seconds", 60.0)),
-                )
-                print(f"[AI Brain Council] ✅ 委员会辩论与终审完成，耗时: {council_transcript.get('total_duration_ms', 0)}ms")
-            except Exception as e:
-                print(f"[AI Brain Council] ⚠️ 委员会决策超时或异常: {e}，自动降级为单模型极速决策！")
-                brain_output = None
+        if content.startswith("```json"): content = content[7:]
+        if content.startswith("```"): content = content[3:]
+        if content.endswith("```"): content = content[:-3]
 
-        if brain_output is None:
-            print(f"[AI Brain Batch] 🚀 正在发起单次全市场大模型宏观决策推演 ({model_name} / {api_format})...")
-            if execute_llm_request:
-                content, _, usage_dict, _ = execute_llm_request(
-                    messages=[
-                        {"role": "system", "content": effective_system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    model=model_name,
-                    base_url=base_url,
-                    api_key=api_key,
-                    api_format=api_format,
-                    reasoning_effort=effort,
-                    temperature=0.2,
-                    response_format={"type": "json_object"},
-                    timeout=50.0,
-                )
-                raw_res = {"usage": usage_dict} if isinstance(usage_dict, dict) else {}
-            else:
-                payload = {
-                    "model": model_name,
-                    "messages": [
-                        {"role": "system", "content": effective_system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.2,
-                    "response_format": {"type": "json_object"}
-                }
-                if effort not in ("none", "auto"):
-                    payload["reasoning_effort"] = effort
-                req = urllib.request.Request(
-                    f"{base_url}/chat/completions",
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
-                )
-                with urllib.request.urlopen(req, timeout=50) as resp:
-                    res = json.loads(resp.read().decode("utf-8"))
-                    content = res["choices"][0]["message"]["content"].strip()
-                    raw_res = res
-
-            if content.startswith("```json"): content = content[7:]
-            if content.startswith("```"): content = content[3:]
-            if content.endswith("```"): content = content[:-3]
-
-            brain_output = json.loads(content.strip())
-            if not isinstance(brain_output, dict):
-                raise ValueError("LLM response root must be an object")
+        brain_output = json.loads(content.strip())
+        if not isinstance(brain_output, dict):
+            raise ValueError("LLM response root must be an object")
         decisions_dict = brain_output.get("decisions", {})
         pos_mgmt_list = brain_output.get("position_management", [])
         macro_summary = str(brain_output.get("macro_assessment", "宏观中性震荡"))[:120]
@@ -1020,7 +999,6 @@ def execute_batch_ai_brain_cycle(pos_summary: str = "当前总持仓 0/6", activ
             "macro_assessment": macro_summary,
             "ai_last_prompt": full_prompt_text,
             "position_management": pos_mgmt_list,
-            "council_transcript": brain_output.get("council_transcript") if isinstance(brain_output, dict) else None,
             "top_opportunities": [
                 {
                     "inst": p["name"],

@@ -294,6 +294,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Monitor Last worker cycle: `errors` count badge (rose when >0, muted at 0) + truncated `inst_id: error` preview |
 | 2026-09-04 | Typed `last_cycle.errors` as `CycleError` (`inst_id?`, `error`) matching frontend/`RiskDenyReason` style |
 | 2026-09-04 | `last_cycle.error_count` full count + capped `errors` list (CYCLE_ERRORS_CAP=20); delete `scripts/qq_notifier.py` |
+| 2026-09-04 | Inventory-gated delete: `r20_backend/council_manager.py` (+ `tests/test_council_manager.py`); strip council from `ai_brain_trader` (SPEC non-goal) |
 
 ---
 
@@ -396,3 +397,12 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - **Kept** `r20_backend/settings_store.py` (still used by `llm_manager`).
 - Deleted `scripts/qq_notifier.py` and removed call sites from legacy scripts (`ai_factor_trader`, harvester, daily summary, ledger sync, nightly backup). Gateway `publisher` / `channels` / `worker` retained for durable events if needed.
 - Keel notify remains `keel.notify` (Null/Webhook via `KEEL_NOTIFY_WEBHOOK_URL`), not QQ.
+
+## Addendum: Multi-agent council removed (inventory)
+
+- Deleted `r20_backend/council_manager.py` and `tests/test_council_manager.py` after
+  repo-wide scan showed external refs only in `scripts/ai_brain_trader.py` + that test
+  (no Keel importers). Aligns with SPEC non-goal: no multi-agent “council” platform theater.
+- Stripped council import/debate path and `council_transcript` history field from
+  `ai_brain_trader`; legacy single-model brain remains behind existing shim flags.
+- Prefer `python -m keel.worker` / DecisionPolicy for decisions — not council.
