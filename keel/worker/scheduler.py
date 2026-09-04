@@ -1,8 +1,8 @@
 """
 Single scheduler owner for Keel Trader.
 
-This is THE ONLY scheduler. The legacy schedulers in r20_backend/scheduler.py
-and r20_gateway/scheduler.py should be disabled.
+This is THE ONLY scheduler. Legacy ``r20_backend.scheduler`` is a hard-exit
+stub; the ``r20_gateway`` package (including GatewayScheduler) was removed.
 
 Design principles:
 - One process owns scheduling
@@ -50,11 +50,10 @@ class KeelScheduler:
     """
     Single-owner scheduler for Keel jobs.
     
-    This replaces the triple-scheduler situation:
-    - r20_gateway/scheduler.py (GatewayScheduler)
-    - r20_backend/scheduler.py (standalone scheduler)
-    - lifespan supervisor auto-spawn
-    
+    This replaces the former triple-scheduler situation (legacy packages removed
+    or soft-blocked): GatewayScheduler (``r20_gateway``, deleted), standalone
+    ``r20_backend.scheduler`` (hard-exit stub), and this Keel owner.
+
     Only ONE scheduler should run. It uses file locks to prevent duplicates.
     """
 

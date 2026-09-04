@@ -204,7 +204,7 @@ class MyNotifier:
 
 或设置 `KEEL_NOTIFY_WEBHOOK_URL=https://...`（空 / 未设 → `NullNotifier`）。
 Worker cycle 在 tick 结束后调用一次；失败软降级，不影响交易路径。
-**不做** QQ / WeCom / Telegram 产品扩展；不依赖 `r20_gateway`。
+**不做** QQ / WeCom / Telegram 产品扩展；`r20_gateway` 已删除，通知走 `keel.notify`。
 
 ## 调度器所有权
 
@@ -214,9 +214,10 @@ Worker cycle 在 tick 结束后调用一次；失败软降级，不影响交易�
 |------|------|------|
 | `keel/worker` (`python -m keel.worker`) | ✅ 唯一调度器 | Stage 2  sole owner |
 | `keel/worker/cycle.py` | ✅ paper/demo 垂直链路 | factors→decision→risk→execution→ledger |
-| `r20_gateway/scheduler.py` | ❌ 默认禁用 | 仅紧急回滚 `KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER=1` |
-| `r20_backend/scheduler.py` | ❌ 硬退出 | 调用即失败 |
+| `r20_gateway/` | ❌ **已删除** | 改用 `keel.notify` |
+| `r20_backend/scheduler.py` | ❌ 硬退出 stub | 调用即失败 |
 | `deploy/r20-scheduler.service` | ❌ 禁用 | 改用 `deploy/keel-worker.service` |
+| `deploy/r20-gateway.service` | ❌ **已删除** | 包已移除 |
 
 ## 配置
 
@@ -289,17 +290,18 @@ python -m pytest tests/ -v
 
 ## Stage 7（legacy 隔离 / quarantine）
 
-- 不批量删除 `r20_*` helpers；U2 已删 Jinja `dashboard/`；Vue /admin 与 `/api/v1/admin/*`/`admin_auth` 已移除；`r20_backend.app` 为 soft-block 410 stub
-- `keel.legacy.warn_legacy`：无 `KEEL_USE_LEGACY=1` 时对主要 legacy 包/脚本发出弃用警告
-- `r20_backend.scheduler` 仍硬退出；`r20_gateway.worker` 默认无 trader job tick（验证保留）
-- `deploy/r20-*.service`：仅 `keel-api` + `keel-worker` 为推荐启用示例；r20 units 默认 `ConditionPathExists` 关闭
+- U2 已删 Jinja `dashboard/`；Vue /admin 与 `/api/v1/admin/*`/`admin_auth` 已移除；`r20_backend.app` 为 soft-block 410 stub
+- `r20_gateway/` 整包与 gateway/script helpers 已硬删除；仅保留 `r20_backend` stubs
+- `keel.legacy.warn_legacy`：无 `KEEL_USE_LEGACY=1` 时对主要 legacy 包发出弃用警告
+- `r20_backend.scheduler` 仍硬退出；`deploy/r20-gateway.service` 已删
+- `deploy/r20-*.service`：仅 `keel-api` + `keel-worker` 为推荐启用示例；残留 r20 units 默认关闭
 - 清单见根目录 [`LEGACY.md`](LEGACY.md)
 
 ## Phase U2（drop Jinja dashboard）
 
 - 删除 `dashboard/` 包；`r20_backend.app` 不再 mount / 启动 dashboard worker
 - Vue 移除 `/legacy` 与 R20 `/api/all` shell；保留 `/` + `/monitor` Keel monitor
-- `r20_backend` 保留为 admin-only remnant（软拦截仍在）
+- `r20_backend` 仅保留 soft-block stubs（`app` / `scheduler` / `__init__`）
 
 ## 入口点（Stage 3 唯一推荐）
 
@@ -318,7 +320,7 @@ make test
 ```
 
 `r20_backend.app` 为 **legacy 410 stub**（admin HTTP 已移除）；勿作为新部署默认 API。监控 UI 走 `keel.api` + `frontend/`。
-`r20_backend.scheduler` 与 `r20-scheduler.service` 已禁用。
+`r20_backend.scheduler` 与 `r20-scheduler.service` 已禁用；`r20_gateway` 已删除。
 
 ## 免责声明
 

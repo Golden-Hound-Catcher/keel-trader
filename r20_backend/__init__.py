@@ -1,10 +1,10 @@
 """LEGACY R20 standalone backend package (quarantine).
 
 Prefer ``uvicorn keel.api.app:app``. The Vue ``/admin`` UI, Jinja dashboard,
-``admin_auth``, and ``/api/v1/admin/*`` HTTP routes are **gone**. This package
-still holds helper modules used by optional gateway/scripts (notifications,
-llm_manager, backup_store, OKX helpers, etc.). Accidental imports warn unless
-``KEEL_USE_LEGACY=1``. See LEGACY.md.
+``admin_auth``, and ``/api/v1/admin/*`` HTTP routes are **gone**. Helper modules
+that only served gateway/scripts are **deleted**. This package retains soft-blocked
+stubs (``app``, ``scheduler``) so accidental imports still exit or return 410.
+Accidental package imports warn unless ``KEEL_USE_LEGACY=1``. See LEGACY.md.
 """
 from keel.legacy import warn_legacy
 
@@ -14,6 +14,4 @@ warn_legacy(
     stacklevel=2,
 )
 
-from .config import settings
-
-__all__ = ["settings"]
+__all__: list[str] = []
