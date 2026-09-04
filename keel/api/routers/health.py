@@ -6,6 +6,8 @@ import time
 from fastapi import APIRouter
 
 from keel import __version__
+from keel.api.cycle_time import WORKER_STALE_SECONDS, seconds_since_last_cycle
+from keel.api.deps import get_ledger
 from keel.api.schemas import HealthResponse, ReadyResponse
 from keel.config import get_settings
 
@@ -27,10 +29,31 @@ def health() -> HealthResponse:
 
 @router.get("/ready", response_model=ReadyResponse)
 def ready() -> ReadyResponse:
-    """Readiness check."""
+    """Readiness check with worker lag.
+
+    ``ready`` is False when the ledger path is missing/unreadable, or when
+    ``worker_stale`` is True (last cycle older than 900s). When there is no
+    cycle yet (``seconds_since_last_cycle`` is null), cold start is OK:
+    ``ready`` stays True if the ledger opens. ``okx_configured`` /
+    ``llm_configured`` are always reported regardless of readiness.
+    """
     settings = get_settings()
+    seconds: int | None = None
+    ledger_ok = False
+    try:
+        ledger = get_ledger()
+        # Touch the DB so missing/unreadable paths fail closed.
+        last_raw = ledger.get_last_cycle_summary()
+        seconds = seconds_since_last_cycle(last_raw)
+        ledger_ok = True
+    except Exception:
+        ledger_ok = False
+
+    worker_stale = seconds is not None and seconds > WORKER_STALE_SECONDS
     return ReadyResponse(
-        ready=True,
+        ready=bool(ledger_ok and not worker_stale),
         okx_configured=settings.okx_configured,
         llm_configured=settings.llm_configured,
+        seconds_since_last_cycle=seconds,
+        worker_stale=worker_stale,
     )

@@ -41,6 +41,8 @@ export const useMonitorStore = defineStore('monitor', () => {
   const factorErrors = ref<Record<string, string>>({})
   /** Decisions tab filter; empty = All. Passed as GET /decisions?inst_id= when set. */
   const decisionInstFilter = ref('')
+  /** Trades tab filter; empty = All. Passed as GET /trades?inst_id= when set. */
+  const tradeInstFilter = ref('')
   const watchlist = ref<string[]>([...KEEL_DEFAULT_INSTRUMENTS])
 
   const loading = ref(false)
@@ -79,7 +81,11 @@ export const useMonitorStore = defineStore('monitor', () => {
             ? `/api/v1/decisions?limit=50&inst_id=${encodeURIComponent(decisionInstFilter.value)}`
             : '/api/v1/decisions?limit=50',
         ),
-        keelFetch<{ count: number; trades: KeelTrade[] }>('/api/v1/trades?limit=50'),
+        keelFetch<{ count: number; trades: KeelTrade[] }>(
+          tradeInstFilter.value
+            ? `/api/v1/trades?limit=50&inst_id=${encodeURIComponent(tradeInstFilter.value)}`
+            : '/api/v1/trades?limit=50',
+        ),
         keelFetch<{ count: number; events: Array<Record<string, unknown>> }>('/api/v1/events?limit=50'),
       ])
 
@@ -188,6 +194,14 @@ export const useMonitorStore = defineStore('monitor', () => {
     decisions.value = dec.decisions || []
   }
 
+  async function fetchTradesOnly() {
+    const url = tradeInstFilter.value
+      ? `/api/v1/trades?limit=50&inst_id=${encodeURIComponent(tradeInstFilter.value)}`
+      : '/api/v1/trades?limit=50'
+    const tr = await keelFetch<{ count: number; trades: KeelTrade[] }>(url)
+    trades.value = tr.trades || []
+  }
+
   function setFactorsLive(live: boolean) {
     if (factorsLive.value === live) return
     factorsLive.value = live
@@ -200,6 +214,15 @@ export const useMonitorStore = defineStore('monitor', () => {
     void fetchDecisionsOnly().catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err)
       error.value = `decisions: ${msg}`
+    })
+  }
+
+  function setTradeInstFilter(instId: string) {
+    if (tradeInstFilter.value === instId) return
+    tradeInstFilter.value = instId
+    void fetchTradesOnly().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      error.value = `trades: ${msg}`
     })
   }
 
@@ -232,6 +255,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     factorLoading,
     factorErrors,
     decisionInstFilter,
+    tradeInstFilter,
     watchlist,
     loading,
     isRefreshing,
@@ -245,6 +269,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     fetchFactors,
     setFactorsLive,
     setDecisionInstFilter,
+    setTradeInstFilter,
     startPolling,
     stopPolling,
   }

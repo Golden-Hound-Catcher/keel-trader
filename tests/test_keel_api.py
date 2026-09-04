@@ -154,6 +154,19 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertGreaterEqual(lag, 0)
         self.assertLess(lag, 120)
 
+    def test_ready_with_recent_cycle(self):
+        r = self.client.get("/ready")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertTrue(body["ready"])
+        self.assertFalse(body["worker_stale"])
+        lag = body["seconds_since_last_cycle"]
+        self.assertIsInstance(lag, int)
+        self.assertGreaterEqual(lag, 0)
+        self.assertLess(lag, 120)
+        self.assertIn("okx_configured", body)
+        self.assertIn("llm_configured", body)
+
     def test_config_exposes_non_secret_extensions(self):
         r = self.client.get("/api/v1/config")
         self.assertEqual(r.status_code, 200)
@@ -221,6 +234,15 @@ class TestApiStatusWithoutCycle(unittest.TestCase):
         self.assertIsNone(body.get("last_cycle"))
         self.assertIsNone(body.get("seconds_since_last_cycle"))
 
+    def test_ready_cold_start_without_cycle(self):
+        """No cycle yet: ready stays True if ledger opens (cold start OK)."""
+        r = self.client.get("/ready")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertTrue(body["ready"])
+        self.assertFalse(body["worker_stale"])
+        self.assertIsNone(body.get("seconds_since_last_cycle"))
+
     def test_daily_pnl_zero_without_trades(self):
         from datetime import datetime
         from keel.domain.records import BJ_TZ
@@ -233,6 +255,72 @@ class TestApiStatusWithoutCycle(unittest.TestCase):
         self.assertEqual(body["realized_pnl"], 0.0)
         self.assertEqual(body["source"], "ledger")
 
+
+
+class TestApiReadyWorkerLag(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "ready_lag.db"
+        set_ledger_path_override(self.db)
+        os.environ["KEEL_LEDGER_DB"] = str(self.db)
+        refresh_settings()
+        self.ledger = KeelLedger(self.db)
+        self.app = create_app()
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.ledger.close()
+        set_ledger_path_override(None)
+        os.environ.pop("KEEL_LEDGER_DB", None)
+        refresh_settings()
+        self.temp.cleanup()
+
+    def test_ready_worker_stale_when_cycle_older_than_900s(self):
+        import time
+
+        self.ledger.record_cycle_summary(
+            {
+                "timestamp": time.time() - 950,
+                "mode": "paper",
+                "adapter": "paper",
+                "policy": "rule",
+                "instruments": 1,
+                "decision_counts": {"WAIT": 1},
+                "risk_denies": 0,
+                "risk_deny_reasons": [],
+                "error_count": 0,
+                "errors": [],
+                "duration_ms": 1,
+            }
+        )
+        r = self.client.get("/ready")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertFalse(body["ready"])
+        self.assertTrue(body["worker_stale"])
+        lag = body["seconds_since_last_cycle"]
+        self.assertIsInstance(lag, int)
+        self.assertGreater(lag, 900)
+        self.assertIn("okx_configured", body)
+        self.assertIn("llm_configured", body)
+
+    def test_ready_false_when_ledger_unreadable(self):
+        # Point ledger at a directory path so sqlite cannot open it as a DB file.
+        bad = Path(self.temp.name) / "not_a_db"
+        bad.mkdir()
+        set_ledger_path_override(bad)
+        os.environ["KEEL_LEDGER_DB"] = str(bad)
+        refresh_settings()
+        app = create_app()
+        client = TestClient(app)
+        r = client.get("/ready")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertFalse(body["ready"])
+        self.assertFalse(body["worker_stale"])
+        self.assertIsNone(body.get("seconds_since_last_cycle"))
+        self.assertIn("okx_configured", body)
+        self.assertIn("llm_configured", body)
 
 
 class TestApiTokenAuth(unittest.TestCase):

@@ -117,7 +117,7 @@ Base: `keel.api.app`
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/health` | Liveness |
-| GET | `/ready` | Readiness (DB open, etc.) |
+| GET | `/ready` | Readiness: ledger open + `seconds_since_last_cycle` / `worker_stale` (>900s → ready=false; null lag = cold-start OK) |
 | GET | `/api/v1/status` | Worker/exchange/policy summary; optional `last_cycle`; `seconds_since_last_cycle` |
 | GET | `/api/v1/config` | Non-secret config echo (incl. instruments, exchange_mode, notify_configured) |
 | GET | `/api/v1/pnl/daily` | Realized daily PnL from ledger (Beijing date; optional `?date=YYYY-MM-DD`) |
@@ -125,7 +125,7 @@ Base: `keel.api.app`
 | GET | `/api/v1/balance` | Account balance snapshot |
 | GET | `/api/v1/decisions` | Recent decisions (`?inst_id=` optional) |
 | GET | `/api/v1/decisions/latest/{inst_id}` | Latest decision for instrument |
-| GET | `/api/v1/trades` | Recent trade/fill events |
+| GET | `/api/v1/trades` | Recent trade/fill events (`?inst_id=` optional) |
 | GET | `/api/v1/events` | Raw ledger events |
 | GET | `/api/v1/factors/{inst_id}` | Latest factor snapshot (`?live=1` → OKX public candles) |
 
@@ -278,6 +278,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 |------|------|
 | 2026-09-04 | Optional `KEEL_API_TOKEN` bearer/X-API-Key on `/api/v1/*`; monitor risk budget + positions UPL |
 | 2026-09-04 | Monitor: Factors live-candles toggle (`?live=1` + source badge); Decisions `inst_id` filter |
+| 2026-09-04 | Monitor Trades `inst_id` filter (mirror Decisions); `/ready` adds worker lag / `worker_stale` |
 | 2026-09-03 | Initial SPEC v1 drafted after stages 2–7 refactor |
 | 2026-09-03 | §11: U1 done; soft-block `r20_backend.app`; supported = keel-api + keel-worker + U1 UI |
 | 2026-09-03 | §10/§11: U2 done — Jinja `dashboard/` removed; `/legacy` gone; `r20_backend` admin-only remnant |
@@ -326,7 +327,7 @@ Default O1 = **monitor-only**. Vue shell reused for layout/theme; data layer reb
 | connectivity | `GET /health` |
 | status | `GET /api/v1/status` |
 | balance / positions | `GET /api/v1/balance`, `/api/v1/positions` |
-| decisions / trades / events | `GET /api/v1/decisions`, `/trades`, `/events` |
+| decisions / trades / events | `GET /api/v1/decisions`, `/trades`, `/events` (`?inst_id=` on decisions/trades) |
 | factors | `GET /api/v1/factors/{inst_id}` (`?live=1` optional; monitor toggle) |
 
 Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/admin/*` are removed. Admin features deferred to a future Keel admin API (SPEC addendum). Vite proxies `/api` + `/health` to `:8080`. See `frontend/README.md`.

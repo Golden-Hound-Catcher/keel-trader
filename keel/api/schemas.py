@@ -22,6 +22,8 @@ class ReadyResponse(BaseModel):
     ready: bool
     okx_configured: bool
     llm_configured: bool
+    seconds_since_last_cycle: int | None = None
+    worker_stale: bool = False
 
 
 class CredentialsStatus(BaseModel):
