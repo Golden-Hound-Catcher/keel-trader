@@ -36,6 +36,13 @@ class RiskDenyReason(BaseModel):
     reason: str = ""
 
 
+class CycleError(BaseModel):
+    """One non-risk instrument error from a worker cycle summary."""
+
+    inst_id: str | None = None
+    error: str
+
+
 class LastCycleSummary(BaseModel):
     """Structured summary of the most recent keel.worker.cycle run."""
 
@@ -47,7 +54,7 @@ class LastCycleSummary(BaseModel):
     decision_counts: dict[str, int] = Field(default_factory=dict)
     risk_denies: int = 0
     risk_deny_reasons: list[RiskDenyReason] = Field(default_factory=list)
-    errors: list[dict[str, Any]] = Field(default_factory=list)
+    errors: list[CycleError] = Field(default_factory=list)
     policy_success: bool | None = None
     duration_ms: int = 0
 
