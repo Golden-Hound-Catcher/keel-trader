@@ -91,6 +91,46 @@ const tradeFilterOptions = computed(() => [
   ...store.watchlist.map((id) => ({ value: id, label: id })),
 ])
 
+const eventInstFilterOptions = computed(() => [
+  { value: '', label: 'All' },
+  ...store.watchlist.map((id) => ({ value: id, label: id })),
+])
+
+/** Real event_type strings written by worker/orchestrator/ledger. */
+const COMMON_EVENT_TYPES = [
+  'worker_cycle_summary',
+  'trader_cycle_complete',
+  'paper_cycle_complete',
+  'decision_invalid',
+  'risk_gate_blocked',
+  'order_failed',
+  'order_resting',
+  'order_filled',
+  'order_accepted',
+] as const
+
+const eventTypeFilterOptions = computed(() => {
+  const fromLoaded = new Set<string>()
+  for (const e of store.events) {
+    const t = e?.event_type
+    if (typeof t === 'string' && t) fromLoaded.add(t)
+  }
+  const types = fromLoaded.size
+    ? [...new Set([...COMMON_EVENT_TYPES, ...fromLoaded])].sort()
+    : [...COMMON_EVENT_TYPES]
+  return [{ value: '', label: 'All' }, ...types.map((t) => ({ value: t, label: t }))]
+})
+
+const eventsEmptyMessage = computed(() => {
+  const inst = store.eventInstFilter
+  const typ = store.eventTypeFilter
+  if (!inst && !typ) return 'no events recorded'
+  const parts: string[] = []
+  if (typ) parts.push(`type ${typ}`)
+  if (inst) parts.push(inst)
+  return `no events for ${parts.join(' · ')}`
+})
+
 function onDecisionFilterChange(ev: Event) {
   const el = ev.target as HTMLSelectElement
   store.setDecisionInstFilter(el.value)
@@ -99,6 +139,16 @@ function onDecisionFilterChange(ev: Event) {
 function onTradeFilterChange(ev: Event) {
   const el = ev.target as HTMLSelectElement
   store.setTradeInstFilter(el.value)
+}
+
+function onEventInstFilterChange(ev: Event) {
+  const el = ev.target as HTMLSelectElement
+  store.setEventInstFilter(el.value)
+}
+
+function onEventTypeFilterChange(ev: Event) {
+  const el = ev.target as HTMLSelectElement
+  store.setEventTypeFilter(el.value)
 }
 
 function onFactorsLiveChange(ev: Event) {
@@ -819,9 +869,44 @@ const configStrip = computed(() => {
 
         <!-- EVENTS -->
         <div v-show="store.activeTab === 'events'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-          <h2 class="text-sm font-mono font-bold text-white mb-3">Ledger events</h2>
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h2 class="text-sm font-mono font-bold text-white">
+              Ledger events
+              <span class="text-[#707E94] font-normal">({{ store.events.length }})</span>
+            </h2>
+            <div class="flex flex-wrap items-center gap-3">
+              <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
+                <span class="text-[#707E94]">Instrument</span>
+                <select
+                  class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
+                  :value="store.eventInstFilter"
+                  @change="onEventInstFilterChange"
+                >
+                  <option
+                    v-for="opt in eventInstFilterOptions"
+                    :key="opt.value || 'all'"
+                    :value="opt.value"
+                  >{{ opt.label }}</option>
+                </select>
+              </label>
+              <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
+                <span class="text-[#707E94]">Type</span>
+                <select
+                  class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
+                  :value="store.eventTypeFilter"
+                  @change="onEventTypeFilterChange"
+                >
+                  <option
+                    v-for="opt in eventTypeFilterOptions"
+                    :key="opt.value || 'all'"
+                    :value="opt.value"
+                  >{{ opt.label }}</option>
+                </select>
+              </label>
+            </div>
+          </div>
           <div v-if="!store.events.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
-            No events
+            Empty — {{ eventsEmptyMessage }}
           </div>
           <ul v-else class="space-y-2 max-h-[32rem] overflow-y-auto">
             <li

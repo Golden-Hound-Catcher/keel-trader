@@ -43,6 +43,10 @@ export const useMonitorStore = defineStore('monitor', () => {
   const decisionInstFilter = ref('')
   /** Trades tab filter; empty = All. Passed as GET /trades?inst_id= when set. */
   const tradeInstFilter = ref('')
+  /** Events tab instrument filter; empty = All. Passed as GET /events?inst_id= when set. */
+  const eventInstFilter = ref('')
+  /** Events tab type filter; empty = All. Passed as GET /events?event_type= when set. */
+  const eventTypeFilter = ref('')
   const watchlist = ref<string[]>([...KEEL_DEFAULT_INSTRUMENTS])
 
   const loading = ref(false)
@@ -86,7 +90,9 @@ export const useMonitorStore = defineStore('monitor', () => {
             ? `/api/v1/trades?limit=50&inst_id=${encodeURIComponent(tradeInstFilter.value)}`
             : '/api/v1/trades?limit=50',
         ),
-        keelFetch<{ count: number; events: Array<Record<string, unknown>> }>('/api/v1/events?limit=50'),
+        keelFetch<{ count: number; events: Array<Record<string, unknown>> }>(
+          buildEventsUrl(),
+        ),
       ])
 
       const [h, st, cfg, pnl, bal, pos, dec, tr, ev] = results
@@ -202,6 +208,39 @@ export const useMonitorStore = defineStore('monitor', () => {
     trades.value = tr.trades || []
   }
 
+  function buildEventsUrl(): string {
+    const params = new URLSearchParams()
+    params.set('limit', '50')
+    if (eventTypeFilter.value) params.set('event_type', eventTypeFilter.value)
+    if (eventInstFilter.value) params.set('inst_id', eventInstFilter.value)
+    return `/api/v1/events?${params.toString()}`
+  }
+
+  async function fetchEventsOnly() {
+    const ev = await keelFetch<{ count: number; events: Array<Record<string, unknown>> }>(
+      buildEventsUrl(),
+    )
+    events.value = ev.events || []
+  }
+
+  function setEventInstFilter(instId: string) {
+    if (eventInstFilter.value === instId) return
+    eventInstFilter.value = instId
+    void fetchEventsOnly().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      error.value = `events: ${msg}`
+    })
+  }
+
+  function setEventTypeFilter(eventType: string) {
+    if (eventTypeFilter.value === eventType) return
+    eventTypeFilter.value = eventType
+    void fetchEventsOnly().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      error.value = `events: ${msg}`
+    })
+  }
+
   function setFactorsLive(live: boolean) {
     if (factorsLive.value === live) return
     factorsLive.value = live
@@ -256,6 +295,8 @@ export const useMonitorStore = defineStore('monitor', () => {
     factorErrors,
     decisionInstFilter,
     tradeInstFilter,
+    eventInstFilter,
+    eventTypeFilter,
     watchlist,
     loading,
     isRefreshing,
@@ -270,6 +311,9 @@ export const useMonitorStore = defineStore('monitor', () => {
     setFactorsLive,
     setDecisionInstFilter,
     setTradeInstFilter,
+    setEventInstFilter,
+    setEventTypeFilter,
+    fetchEventsOnly,
     startPolling,
     stopPolling,
   }
