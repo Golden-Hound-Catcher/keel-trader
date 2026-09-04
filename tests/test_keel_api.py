@@ -234,5 +234,59 @@ class TestApiStatusWithoutCycle(unittest.TestCase):
         self.assertEqual(body["source"], "ledger")
 
 
+
+class TestApiTokenAuth(unittest.TestCase):
+    """Optional KEEL_API_TOKEN: 401 without header; 200 with Bearer/X-API-Key; empty → open."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "token_auth.db"
+        set_ledger_path_override(self.db)
+        os.environ["KEEL_LEDGER_DB"] = str(self.db)
+        self._prev_token = os.environ.get("KEEL_API_TOKEN")
+
+    def tearDown(self):
+        set_ledger_path_override(None)
+        os.environ.pop("KEEL_LEDGER_DB", None)
+        if self._prev_token is None:
+            os.environ.pop("KEEL_API_TOKEN", None)
+        else:
+            os.environ["KEEL_API_TOKEN"] = self._prev_token
+        refresh_settings()
+        self.temp.cleanup()
+
+    def _client_with_token(self, token: str) -> TestClient:
+        if token:
+            os.environ["KEEL_API_TOKEN"] = token
+        else:
+            os.environ.pop("KEEL_API_TOKEN", None)
+        refresh_settings()
+        KeelLedger(self.db)  # ensure DB exists
+        return TestClient(create_app())
+
+    def test_token_set_requires_auth(self):
+        client = self._client_with_token("secret-token")
+        r = client.get("/api/v1/status")
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.json().get("detail"), "Unauthorized")
+
+        r = client.get("/health")
+        self.assertEqual(r.status_code, 200)
+
+        r = client.get("/api/v1/status", headers={"Authorization": "Bearer secret-token"})
+        self.assertEqual(r.status_code, 200)
+
+        r = client.get("/api/v1/config", headers={"X-API-Key": "secret-token"})
+        self.assertEqual(r.status_code, 200)
+
+        r = client.get("/api/v1/status", headers={"Authorization": "Bearer wrong"})
+        self.assertEqual(r.status_code, 401)
+
+    def test_empty_token_keeps_api_open(self):
+        client = self._client_with_token("")
+        r = client.get("/api/v1/status")
+        self.assertEqual(r.status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

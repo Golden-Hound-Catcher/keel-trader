@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from keel import __version__
+from keel.api.auth import ApiTokenMiddleware
 from keel.api.routers import health, status, positions, decisions, factors, pnl
 
 # repo_root/frontend/dist (keel/api/app.py -> parents[2] == repo root)
@@ -38,6 +39,9 @@ def create_app() -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+
+    # Optional KEEL_API_TOKEN: protect /api/v1/*; leave /health, /docs, /openapi.json open
+    app.add_middleware(ApiTokenMiddleware)
 
     app.include_router(health.router, tags=["health"])
     app.include_router(status.router, prefix="/api/v1", tags=["status"])

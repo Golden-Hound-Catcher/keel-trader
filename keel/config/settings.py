@@ -43,6 +43,8 @@ class Settings:
     # API Server
     api_host: str = "0.0.0.0"
     api_port: int = 8080
+    # Optional shared bearer for non-local binds (empty → no auth)
+    api_token: str = ""
 
     # Ledger (SQLite). Override with KEEL_LEDGER_DB for tests / alternate data dirs.
     ledger_db: str = ""
@@ -154,6 +156,7 @@ def get_settings() -> Settings:
         llm_reasoning_effort=_env("KEEL_LLM_REASONING_EFFORT") or _env("LLM_REASONING_EFFORT", "high"),
         api_host=_env("KEEL_API_HOST", "0.0.0.0"),
         api_port=_env_int("KEEL_API_PORT", 8080),
+        api_token=_env("KEEL_API_TOKEN", ""),
         ledger_db=_env("KEEL_LEDGER_DB", ""),
         notify_webhook_url=_env("KEEL_NOTIFY_WEBHOOK_URL", ""),
         max_concurrent_positions=_env_int("KEEL_MAX_POSITIONS", 6),
