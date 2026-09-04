@@ -293,12 +293,13 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Inventory-gated delete: QQ stack (`qq_bind`, `qq_gateway_daemon`, `audit`) + `r20_gateway/plugins.py`; Keel uses `keel.notify` |
 | 2026-09-04 | Monitor Last worker cycle: `errors` count badge (rose when >0, muted at 0) + truncated `inst_id: error` preview |
 | 2026-09-04 | Typed `last_cycle.errors` as `CycleError` (`inst_id?`, `error`) matching frontend/`RiskDenyReason` style |
+| 2026-09-04 | `last_cycle.error_count` full count + capped `errors` list (CYCLE_ERRORS_CAP=20); delete `scripts/qq_notifier.py` |
 
 ---
 
 ## Addendum: last_cycle on status
 
-After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` event (via `KeelLedger.record_cycle_summary`). `GET /api/v1/status` includes optional `last_cycle` with timestamp, mode/adapter, policy, instruments, `decision_counts`, `risk_denies` (int count, backward compatible), `risk_deny_reasons` (capped list of `{gate, reason}` objects, default cap 20), `errors` (list of `{inst_id?, error}` / `CycleError`), and wall-clock `duration_ms`. Monitor Last worker cycle panel shows a `risk_denies` badge (amber when >0, muted at 0) and, when present, a compact truncated preview of deny reasons under the badge; likewise an `errors` badge (rose when >0, muted at 0) with truncated `inst_id: error` lines (full list in title tooltip).
+After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` event (via `KeelLedger.record_cycle_summary`). `GET /api/v1/status` includes optional `last_cycle` with timestamp, mode/adapter, policy, instruments, `decision_counts`, `risk_denies` (int count, backward compatible), `risk_deny_reasons` (capped list of `{gate, reason}` objects, default cap 20), `error_count` (full non-risk error count), `errors` (capped list of `{inst_id?, error}` / `CycleError`, default cap 20), and wall-clock `duration_ms`. Monitor Last worker cycle panel shows a `risk_denies` badge (amber when >0, muted at 0) and, when present, a compact truncated preview of deny reasons under the badge; likewise an `errors` badge from `error_count` (fallback `errors.length`; rose when >0, muted at 0) with truncated `inst_id: error` lines (capped list + leftover count in title tooltip).
 
 ## Addendum: kill switch (hard gate)
 
@@ -392,6 +393,6 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
   audit only imported by the daemon). Aligns with SPEC non-goal: no QQ product.
 - Deleted `r20_gateway/plugins.py` (fake plugin manifests; only external ref was
   `tests/test_open_source_control.py`). Keeps `channels.py`, events, store, publisher, worker.
-- **Kept** `r20_backend/settings_store.py` (still used by `llm_manager`) and
-  `scripts/qq_notifier.py` (publisher/events bridge only; no deleted-module imports).
+- **Kept** `r20_backend/settings_store.py` (still used by `llm_manager`).
+- Deleted `scripts/qq_notifier.py` and removed call sites from legacy scripts (`ai_factor_trader`, harvester, daily summary, ledger sync, nightly backup). Gateway `publisher` / `channels` / `worker` retained for durable events if needed.
 - Keel notify remains `keel.notify` (Null/Webhook via `KEEL_NOTIFY_WEBHOOK_URL`), not QQ.

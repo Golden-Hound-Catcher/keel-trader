@@ -225,7 +225,7 @@ class KeelLedger:
 
         Event type: ``worker_cycle_summary``. Expected keys include timestamp,
         mode, adapter, policy, instruments, decision_counts, risk_denies,
-        risk_deny_reasons (capped), errors.
+        risk_deny_reasons (capped), error_count, errors (capped).
         """
         payload = dict(summary)
         ts = float(payload.get("timestamp") or time.time())

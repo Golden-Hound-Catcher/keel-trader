@@ -36,6 +36,7 @@ class TestApiSchemas(unittest.TestCase):
             decision_counts={"WAIT": 1},
             risk_denies=1,
             risk_deny_reasons=[RiskDenyReason(gate="kill_switch", reason="armed")],
+            error_count=1,
             errors=[CycleError(inst_id="BTC-USDT-SWAP", error="timeout")],
             duration_ms=42,
         )
@@ -43,6 +44,7 @@ class TestApiSchemas(unittest.TestCase):
         self.assertEqual(m.duration_ms, 42)
         self.assertEqual(m.risk_denies, 1)
         self.assertEqual(m.risk_deny_reasons[0].gate, "kill_switch")
+        self.assertEqual(m.error_count, 1)
         self.assertEqual(m.errors[0].inst_id, "BTC-USDT-SWAP")
         self.assertEqual(m.errors[0].error, "timeout")
         status = StatusResponse(
@@ -67,6 +69,7 @@ class TestApiSchemas(unittest.TestCase):
             "decision_counts": {"WAIT": 1},
             "risk_denies": 0,
             "risk_deny_reasons": [],
+            "error_count": 2,
             "errors": [
                 {"inst_id": "ETH-USDT-SWAP", "error": "boom", "legacy_extra": True},
                 {"error": "no-inst"},
@@ -75,6 +78,7 @@ class TestApiSchemas(unittest.TestCase):
             "unknown_top_level": "ignored",
         }
         m = LastCycleSummary.model_validate(raw)
+        self.assertEqual(m.error_count, 2)
         self.assertEqual(len(m.errors), 2)
         self.assertIsInstance(m.errors[0], CycleError)
         self.assertEqual(m.errors[0].inst_id, "ETH-USDT-SWAP")
@@ -160,6 +164,7 @@ class TestApiSchemas(unittest.TestCase):
         last_cycle_props = comps["LastCycleSummary"]["properties"]
         self.assertIn("duration_ms", last_cycle_props)
         self.assertIn("risk_deny_reasons", last_cycle_props)
+        self.assertIn("error_count", last_cycle_props)
         self.assertIn("errors", last_cycle_props)
         self.assertIn("RiskDenyReason", comps)
         self.assertIn("CycleError", comps)

@@ -10,6 +10,7 @@ from unittest.mock import patch
 from keel.exchange.paper import PaperAdapter
 from keel.ledger import KeelLedger
 from keel.worker.cycle import (
+    CYCLE_ERRORS_CAP,
     RISK_DENY_REASONS_CAP,
     build_cycle_summary,
     build_synthetic_candles,
@@ -132,6 +133,7 @@ class TestPaperCycle(unittest.TestCase):
         self.assertEqual(cs["decision_counts"].get("WAIT"), 2)
         self.assertEqual(cs["risk_denies"], 0)
         self.assertEqual(cs["risk_deny_reasons"], [])
+        self.assertEqual(cs["error_count"], 0)
         self.assertEqual(cs["errors"], [])
         self.assertIn("duration_ms", cs)
         self.assertIsInstance(cs["duration_ms"], int)
@@ -173,6 +175,7 @@ class TestBuildCycleSummaryRiskDenies(unittest.TestCase):
         self.assertEqual(len(cs["risk_deny_reasons"]), 1)
         self.assertEqual(cs["risk_deny_reasons"][0]["gate"], "kill_switch")
         self.assertEqual(cs["risk_deny_reasons"][0]["reason"], "Kill switch active")
+        self.assertEqual(cs["error_count"], 0)
         self.assertEqual(cs["errors"], [])
 
     def test_caps_reason_list(self):
@@ -203,7 +206,63 @@ class TestBuildCycleSummaryRiskDenies(unittest.TestCase):
         )
 
 
+class TestBuildCycleSummaryErrors(unittest.TestCase):
+    def test_collects_error_count_and_detail(self):
+        cs = build_cycle_summary(
+            timestamp=1.0,
+            mode="paper",
+            adapter="paper",
+            policy="rule",
+            instruments=2,
+            results=[
+                {
+                    "inst_id": "BTC-USDT-SWAP",
+                    "action": "BUY_LONG",
+                    "success": False,
+                    "error": "timeout",
+                },
+                {
+                    "inst_id": "ETH-USDT-SWAP",
+                    "action": "WAIT",
+                    "success": True,
+                },
+            ],
+        )
+        self.assertEqual(cs["error_count"], 1)
+        self.assertEqual(len(cs["errors"]), 1)
+        self.assertEqual(cs["errors"][0]["inst_id"], "BTC-USDT-SWAP")
+        self.assertEqual(cs["errors"][0]["error"], "timeout")
+        self.assertEqual(cs["risk_denies"], 0)
+
+    def test_caps_errors_list_keeps_full_count(self):
+        results = [
+            {
+                "inst_id": f"X{i}",
+                "action": "BUY_LONG",
+                "success": False,
+                "error": f"err-{i}",
+            }
+            for i in range(CYCLE_ERRORS_CAP + 5)
+        ]
+        cs = build_cycle_summary(
+            timestamp=1.0,
+            mode="paper",
+            adapter="paper",
+            policy="rule",
+            instruments=len(results),
+            results=results,
+        )
+        self.assertEqual(cs["error_count"], CYCLE_ERRORS_CAP + 5)
+        self.assertEqual(len(cs["errors"]), CYCLE_ERRORS_CAP)
+        self.assertEqual(cs["errors"][0]["error"], "err-0")
+        self.assertEqual(
+            cs["errors"][-1]["error"],
+            f"err-{CYCLE_ERRORS_CAP - 1}",
+        )
+
+
 class TestKeelSchedulerTraderJob(unittest.TestCase):
+
     def test_trader_job_invokes_keel_cycle_module(self):
         scheduler = KeelScheduler(jobs=[JobSpec("trader", interval_seconds=60, timeout_seconds=30)])
         with patch("keel.worker.scheduler.subprocess.run") as run_mock:

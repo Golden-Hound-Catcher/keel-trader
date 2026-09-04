@@ -29,7 +29,9 @@ export interface KeelLastCycle {
   risk_denies?: number
   /** Capped list of deny gate/reason pairs (see backend RISK_DENY_REASONS_CAP). */
   risk_deny_reasons?: KeelRiskDenyReason[]
-  /** Per-instrument non-risk errors from the last worker cycle. */
+  /** Full count of non-risk instrument errors this cycle (list may be capped). */
+  error_count?: number
+  /** Capped per-instrument non-risk errors (see backend CYCLE_ERRORS_CAP). */
   errors?: KeelCycleError[]
   policy_success?: boolean | null
   duration_ms?: number

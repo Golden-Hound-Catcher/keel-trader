@@ -107,8 +107,12 @@ const riskDenyReasonsTitle = computed(() => {
   return lines.join('\n') + extra
 })
 
-/** last_cycle.errors count + compact inst_id: error preview (rose when >0). */
+/** last_cycle.error_count (preferred) else errors.length + capped preview. */
 const cycleErrorsCount = computed(() => {
+  const rawCount = lastCycle.value?.error_count
+  if (typeof rawCount === 'number' && Number.isFinite(rawCount) && rawCount >= 0) {
+    return Math.floor(rawCount)
+  }
   const raw = lastCycle.value?.errors
   return Array.isArray(raw) ? raw.length : 0
 })
@@ -138,7 +142,10 @@ const cycleErrorsPreview = computed(() => {
 const cycleErrorsTitle = computed(() => {
   const lines = cycleErrorLines.value
   if (!lines.length) return ''
-  return lines.join('\n')
+  const extra = cycleErrorsCount.value > lines.length
+    ? `\n(+${cycleErrorsCount.value - lines.length} more)`
+    : ''
+  return lines.join('\n') + extra
 })
 
 /** Read-only: armed via KEEL_KILL_SWITCH (status API); no admin toggle. */

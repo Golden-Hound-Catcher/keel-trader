@@ -44,12 +44,9 @@ try:
     import sys
     sys.path.append(os.path.join(WORKSPACE_DIR, "scripts"))
     from db_manager import record_trade_sqlite
-    from qq_notifier import notify_trade_open, notify_trade_close
     from ai_brain_trader import execute_batch_ai_brain_cycle, get_latest_ai_decision
 except Exception:
     record_trade_sqlite = None
-    notify_trade_open = None
-    notify_trade_close = None
     execute_batch_ai_brain_cycle = None
     get_latest_ai_decision = None
 
@@ -970,8 +967,6 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             "remark": f"价格 {cur_px} 触及保护止损 {hard_stop_px}，交易所确认平仓"
         })
         add_stop_cooldown(inst_id, "long" if is_long else "short", "硬止损")
-        if notify_trade_close:
-            notify_trade_close(name, pnl_val, "硬止损平仓", cur_px)
         trackers.pop(pos_key, None)
         return True, "已硬止损"
 
@@ -997,8 +992,6 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             "remark": f"云端 OCO 无法达到全仓覆盖，交易所确认安全平仓：{protection_detail}"
         })
         add_stop_cooldown(inst_id, "long" if is_long else "short", "云端保护失效")
-        if notify_trade_close:
-            notify_trade_close(name, pnl_val, "云端保护失效退出", cur_px)
         trackers.pop(pos_key, None)
         return True, "保护失效安全退出"
     t["cloudProtection"] = {"verifiedAt": timestamp_full, "detail": protection_detail}
@@ -1028,8 +1021,6 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
             "pnl": curr_pos["upl"],
             "remark": "持仓超 3.5 小时无突破，主动平仓释放配比"
         })
-        if notify_trade_close:
-            notify_trade_close(name, curr_pos["upl"], "时间止损平仓", cur_px)
         if pos_key in trackers: del trackers[pos_key]
         return True, "时间止损"
 
@@ -1077,8 +1068,6 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
                 "pnl": pnl_val,
                 "remark": f"最高 {t['highWaterMark']} 触发阶梯利润锁定线 {dynamic_floor_sl}"
             })
-            if notify_trade_close:
-                notify_trade_close(name, pnl_val, "阶梯锁利平仓", cur_px)
             if pos_key in trackers: del trackers[pos_key]
             return True, "已阶梯锁利"
 
@@ -1107,8 +1096,6 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
                 "pnl": pnl_val,
                 "remark": f"最高 {t['highWaterMark']} 动能回撤触及移动止盈线"
             })
-            if notify_trade_close:
-                notify_trade_close(name, pnl_val, "移动止盈", cur_px)
             if pos_key in trackers: del trackers[pos_key]
             return True, "已移动止盈"
 
@@ -1148,8 +1135,6 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
                 "pnl": pnl_val,
                 "remark": f"最低 {t['lowWaterMark']} 触发阶梯利润锁定线 {dynamic_floor_sl}"
             })
-            if notify_trade_close:
-                notify_trade_close(name, pnl_val, "阶梯锁利平仓", cur_px)
             if pos_key in trackers: del trackers[pos_key]
             return True, "已阶梯锁利"
 
@@ -1178,8 +1163,6 @@ def manage_position_tp_and_trailing(f, curr_pos, trackers, timestamp_full, execu
                 "pnl": pnl_val,
                 "remark": f"最低 {t['lowWaterMark']} 动能反弹触及移动止盈线"
             })
-            if notify_trade_close:
-                notify_trade_close(name, pnl_val, "移动止盈", cur_px)
             if pos_key in trackers: del trackers[pos_key]
             return True, "已移动止盈"
 
@@ -1779,15 +1762,11 @@ def execute_portfolio():
                             tracker["scale_count"] = tracker.get("scale_count", 0) + 1
                             save_trackers(trackers)
                             executed_actions.append(f"[{f['name']}] 🚀 AI顺势浮盈金字塔加多挂单已提交 {actual_sz}张@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
-                            if notify_trade_open:
-                                notify_trade_open(f["name"], "多 (顺势加仓)", actual_sz, limit_px, "🚀 顺势金字塔加多", f"TP={tp_px}, SL={sl_px} | {ai_reason}")
                         else:
                             executed_actions.append(f"[{f['name']}] AI限价多单已提交待成交 {actual_sz}张@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
                             pending_inst_ids.add(inst_id)
                             reserved_slot_count += 1
                             reserved_long_count += 1
-                            if notify_trade_open:
-                                notify_trade_open(f["name"], "多", actual_sz, limit_px, strat_tag, f"TP={tp_px}, SL={sl_px} | {ai_reason}")
                     else:
                         executed_actions.append(f"[{f['name']}] AI限价多单提交失败: {order_ref}")
 
@@ -1848,15 +1827,11 @@ def execute_portfolio():
                             tracker["scale_count"] = tracker.get("scale_count", 0) + 1
                             save_trackers(trackers)
                             executed_actions.append(f"[{f['name']}] 🌪️ AI顺势浮盈金字塔加空挂单已提交 {actual_sz}张@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
-                            if notify_trade_open:
-                                notify_trade_open(f["name"], "空 (顺势加仓)", actual_sz, limit_px, "🌪️ 顺势金字塔加空", f"TP={tp_px}, SL={sl_px} | {ai_reason}")
                         else:
                             executed_actions.append(f"[{f['name']}] AI限价空单已提交待成交 {actual_sz}张@{limit_px} (order={order_ref}, TP={tp_px}, SL={sl_px})")
                             pending_inst_ids.add(inst_id)
                             reserved_slot_count += 1
                             reserved_short_count += 1
-                            if notify_trade_open:
-                                notify_trade_open(f["name"], "空", actual_sz, limit_px, strat_tag, f"TP={tp_px}, SL={sl_px} | {ai_reason}")
                     else:
                         executed_actions.append(f"[{f['name']}] AI限价空单提交失败: {order_ref}")
 

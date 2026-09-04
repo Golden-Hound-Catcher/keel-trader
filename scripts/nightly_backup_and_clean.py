@@ -15,16 +15,10 @@ from backup_runtime import run_backup_job
 
 
 def notify(result: dict) -> None:
-    try:
-        from qq_notifier import send_qq_message
-        icon = "✅" if result["status"] == "success" else "⚠️" if result["status"] == "partial" else "❌"
-        lines = [f"{icon} 【R20 自定义灾备】{result['job_name']}", f"状态：{result['status']}", f"时间：{result['started_at']} - {result['finished_at']}"]
-        if result.get("sha256"): lines.append(f"SHA256：{result['sha256'][:16]}...")
-        lines.append(f"目标：{len(result.get('targets', []))}，SQLite：{len(result.get('sqlite', []))}")
-        if result.get("errors"): lines.append("错误：" + "；".join(result["errors"])[:600])
-        send_qq_message("\n".join(lines))
-    except Exception:
-        pass
+    """QQ notifier retired; keep job hooks as local log only."""
+    icon = "✅" if result["status"] == "success" else "⚠️" if result["status"] == "partial" else "❌"
+    print(f"{icon} backup notify (qq retired): {result.get('job_name')} status={result.get('status')}")
+
 
 
 def main() -> int:

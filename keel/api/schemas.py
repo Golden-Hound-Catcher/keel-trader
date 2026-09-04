@@ -54,6 +54,7 @@ class LastCycleSummary(BaseModel):
     decision_counts: dict[str, int] = Field(default_factory=dict)
     risk_denies: int = 0
     risk_deny_reasons: list[RiskDenyReason] = Field(default_factory=list)
+    error_count: int = 0
     errors: list[CycleError] = Field(default_factory=list)
     policy_success: bool | None = None
     duration_ms: int = 0
