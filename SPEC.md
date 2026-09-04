@@ -118,8 +118,9 @@ Base: `keel.api.app`
 |--------|------|---------|
 | GET | `/health` | Liveness |
 | GET | `/ready` | Readiness (DB open, etc.) |
-| GET | `/api/v1/status` | Worker/exchange/policy summary; optional `last_cycle` |
-| GET | `/api/v1/config` | Non-secret config echo |
+| GET | `/api/v1/status` | Worker/exchange/policy summary; optional `last_cycle`; `seconds_since_last_cycle` |
+| GET | `/api/v1/config` | Non-secret config echo (incl. instruments, exchange_mode, notify_configured) |
+| GET | `/api/v1/pnl/daily` | Realized daily PnL from ledger (Beijing date; optional `?date=YYYY-MM-DD`) |
 | GET | `/api/v1/positions` | Open positions |
 | GET | `/api/v1/balance` | Account balance snapshot |
 | GET | `/api/v1/decisions` | Recent decisions |
@@ -299,6 +300,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | Inventory-gated delete: `scripts/ai_brain_trader.py` (council already gone; product path `python -m keel.worker`) |
 | 2026-09-04 | Inventory-gated delete: `scripts/ai_factor_trader.py` (~90k OKX-CLI/shim); product path `python -m keel.worker` / `keel.worker.cycle` only |
 | 2026-09-04 | Inventory-gated delete: `scripts/db_manager.py` (zero refs after ai_factor_trader drop) |
+| 2026-09-04 | `GET /api/v1/pnl/daily`; status `seconds_since_last_cycle`; richer non-secret config; monitor Overview PnL/lag/config strip |
 
 ---
 

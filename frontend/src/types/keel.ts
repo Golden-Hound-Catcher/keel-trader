@@ -49,6 +49,8 @@ export interface KeelStatus {
   ledger_db: string
   kill_switch: boolean
   last_cycle?: KeelLastCycle | null
+  /** Seconds since last_cycle.timestamp; null if missing/unparsable. */
+  seconds_since_last_cycle?: number | null
 }
 
 export interface KeelConfig {
@@ -58,6 +60,15 @@ export interface KeelConfig {
   max_asset_margin: number
   llm_model: string
   kill_switch: boolean
+  instruments: string[]
+  notify_configured: boolean
+  exchange_mode: string
+}
+
+export interface KeelDailyPnl {
+  date: string
+  realized_pnl: number
+  source: string
 }
 
 export interface KeelPosition {

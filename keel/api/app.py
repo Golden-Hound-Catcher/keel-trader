@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from keel import __version__
-from keel.api.routers import health, status, positions, decisions, factors
+from keel.api.routers import health, status, positions, decisions, factors, pnl
 
 # repo_root/frontend/dist (keel/api/app.py -> parents[2] == repo root)
 _FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -44,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(positions.router, prefix="/api/v1", tags=["positions"])
     app.include_router(decisions.router, prefix="/api/v1", tags=["decisions"])
     app.include_router(factors.router, prefix="/api/v1", tags=["factors"])
+    app.include_router(pnl.router, prefix="/api/v1", tags=["pnl"])
 
     # Optional U1 static monitor (built with: cd frontend && npm run build)
     if _FRONTEND_DIST.is_dir() and (_FRONTEND_DIST / "index.html").is_file():
