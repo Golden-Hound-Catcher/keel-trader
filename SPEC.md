@@ -286,12 +286,13 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-04 | `GET /api/v1/status` exposes optional `last_cycle` from ledger `worker_cycle_summary` |
 | 2026-09-04 | Wire real kill switch: `KEEL_KILL_SWITCH` → settings → risk gates; expose on status/config |
 | 2026-09-04 | Monitor UI: read-only kill_switch badge/banner on Overview (env-only; no toggle) |
+| 2026-09-04 | `last_cycle.duration_ms` wall-clock cycle duration; delete unused `r20_backend/account_baseline` |
 
 ---
 
 ## Addendum: last_cycle on status
 
-After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` event (via `KeelLedger.record_cycle_summary`). `GET /api/v1/status` includes optional `last_cycle` with timestamp, mode/adapter, policy, instruments, `decision_counts`, `risk_denies`, and `errors`. Monitor UI shows it when present.
+After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` event (via `KeelLedger.record_cycle_summary`). `GET /api/v1/status` includes optional `last_cycle` with timestamp, mode/adapter, policy, instruments, `decision_counts`, `risk_denies`, `errors`, and wall-clock `duration_ms`. Monitor UI shows it when present.
 
 ## Addendum: kill switch (hard gate)
 
@@ -361,6 +362,7 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - **Kept** `r20_backend/qq_gateway_daemon.py` (spawned by `qq_bind.ensure_qq_gateway_daemon_running`)
   and `r20_backend/audit.py` (imported by the daemon).
 - No dedicated unit tests existed solely for the deleted modules.
+- Deleted `r20_backend/account_baseline.py` (+ `tests/test_account_baseline.py`) — 0 importers outside mutual self/test.
 
 ## Addendum: More dead scripts / gateway helpers (inventory)
 

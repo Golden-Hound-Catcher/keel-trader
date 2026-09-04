@@ -63,6 +63,7 @@ Gateway job ticks remain separately gated (notify-only by default). Prefer Keel 
 | `r20_backend/admin.html` | **Deleted** (prior PR) |
 | `r20_backend/okx_client.py` | **Deleted** (0 external refs; Keel uses `keel` OKX REST) |
 | `r20_backend/prompt_views.py` | **Deleted** (0 external refs; admin prompt editor gone) |
+| `r20_backend/account_baseline.py` | **Deleted** (0 external refs; mutual self/test only) |
 
 Keel code does **not** import these helpers; they remain for `r20_gateway` and remaining historical `scripts/` only.
 
@@ -141,6 +142,7 @@ KEEL_ALLOW_LEGACY_BACKEND=1 python -c "import r20_backend.app"  # opt-in ok (410
 test ! -f r20_backend/admin_auth.py
 test ! -f r20_backend/okx_client.py
 test ! -f r20_backend/prompt_views.py
+test ! -f r20_backend/account_baseline.py
 test ! -d dashboard
 test ! -d frontend/src/views/admin
 test ! -f scripts/sync_web_data.py

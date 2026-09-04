@@ -18,6 +18,7 @@ export interface KeelLastCycle {
   risk_denies?: number
   errors?: Array<Record<string, unknown>>
   policy_success?: boolean | null
+  duration_ms?: number
 }
 
 export interface KeelStatus {

@@ -34,8 +34,10 @@ class TestApiSchemas(unittest.TestCase):
             decision_counts={"WAIT": 1},
             risk_denies=0,
             errors=[],
+            duration_ms=42,
         )
         self.assertEqual(m.mode, "paper")
+        self.assertEqual(m.duration_ms, 42)
         status = StatusResponse(
             version="0.1.0",
             mode="read_only_control_plane",
@@ -119,6 +121,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("HealthResponse", comps)
         self.assertIn("StatusResponse", comps)
         self.assertIn("LastCycleSummary", comps)
+        last_cycle_props = comps["LastCycleSummary"]["properties"]
+        self.assertIn("duration_ms", last_cycle_props)
         self.assertIn("DecisionsResponse", comps)
         self.assertIn("FactorsResponse", comps)
         status_props = comps["StatusResponse"]["properties"]

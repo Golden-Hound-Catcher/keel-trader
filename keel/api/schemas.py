@@ -41,6 +41,7 @@ class LastCycleSummary(BaseModel):
     risk_denies: int = 0
     errors: list[dict[str, Any]] = Field(default_factory=list)
     policy_success: bool | None = None
+    duration_ms: int = 0
 
 
 class StatusResponse(BaseModel):

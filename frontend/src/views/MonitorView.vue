@@ -251,6 +251,10 @@ const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
                 <div class="text-[#707E94]">Instruments</div>
                 <div class="text-white">{{ lastCycle.instruments ?? '—' }}</div>
               </div>
+              <div>
+                <div class="text-[#707E94]">Duration</div>
+                <div class="text-white">{{ lastCycle.duration_ms != null ? `${lastCycle.duration_ms} ms` : '—' }}</div>
+              </div>
               <div class="md:col-span-2">
                 <div class="text-[#707E94]">Decisions</div>
                 <div class="text-cyan-400">{{ lastCycleActions || '—' }}</div>

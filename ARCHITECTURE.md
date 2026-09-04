@@ -350,7 +350,7 @@ MIT
 ## Elegance pass: last_cycle on status
 
 - **Ledger**: `KeelLedger.record_cycle_summary` / `get_last_cycle_summary` persist and read event type `worker_cycle_summary`.
-- **Worker**: `run_paper_cycle` builds a structured summary (decision counts, risk denies, errors) and records it when the cycle finishes.
+- **Worker**: `run_paper_cycle` builds a structured summary (decision counts, risk denies, errors, wall-clock `duration_ms`) and records it when the cycle finishes.
 - **API**: `GET /api/v1/status` adds optional `last_cycle` (`LastCycleSummary` in `keel.api.schemas`) for the monitor without a new endpoint.
 
 ## Elegance pass: kill switch
