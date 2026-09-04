@@ -63,6 +63,9 @@ class Settings:
     # Trader cycle interval (KEEL_CYCLE_INTERVAL_SECONDS); default 900 = 15min
     cycle_interval_seconds: int = 900
 
+    # Active OKX swap instruments (KEEL_INSTRUMENTS); empty env → DEFAULT_CRYPTO_INSTRUMENTS
+    instruments: tuple[str, ...] = ()
+
     @property
     def is_demo(self) -> bool:
         return self.okx_environment == "demo"
@@ -141,6 +144,39 @@ def _env_cycle_interval_seconds() -> int:
     return clamp_cycle_interval_seconds(raw)
 
 
+def parse_instruments(raw: str | list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    """
+    Parse instrument ids: strip, drop empties, dedupe (preserve order).
+
+    Empty input → DEFAULT_CRYPTO_INSTRUMENTS ids.
+    """
+    from keel.domain.instruments import DEFAULT_CRYPTO_INSTRUMENTS
+
+    if raw is None:
+        parts: list[str] = []
+    elif isinstance(raw, str):
+        parts = raw.split(",")
+    else:
+        parts = list(raw)
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in parts:
+        inst_id = str(part).strip()
+        if not inst_id or inst_id in seen:
+            continue
+        seen.add(inst_id)
+        out.append(inst_id)
+    if not out:
+        return tuple(i.inst_id for i in DEFAULT_CRYPTO_INSTRUMENTS)
+    return tuple(out)
+
+
+def _env_instruments() -> tuple[str, ...]:
+    """Parse KEEL_INSTRUMENTS (comma-separated OKX swap ids)."""
+    return parse_instruments(_env("KEEL_INSTRUMENTS", ""))
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Load settings from environment. Cached for performance."""
@@ -184,6 +220,7 @@ def get_settings() -> Settings:
         max_single_asset_margin=_env_float("KEEL_MAX_ASSET_MARGIN", 600.0),
         kill_switch=_env_bool("KEEL_KILL_SWITCH", False),
         cycle_interval_seconds=_env_cycle_interval_seconds(),
+        instruments=_env_instruments(),
     )
 
 

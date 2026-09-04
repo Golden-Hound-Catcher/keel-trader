@@ -48,6 +48,8 @@ export interface KeelStatus {
   }
   ledger_db: string
   kill_switch: boolean
+  /** Active decision policy name (rule|stub|llm) from build_decision_policy. */
+  decision_policy: string
   last_cycle?: KeelLastCycle | null
   /** Seconds since last_cycle.timestamp; null if missing/unparsable. */
   seconds_since_last_cycle?: number | null
@@ -62,6 +64,8 @@ export interface KeelConfig {
   max_asset_margin: number
   llm_model: string
   kill_switch: boolean
+  /** Active decision policy name (same as status.decision_policy). */
+  decision_policy: string
   instruments: string[]
   notify_configured: boolean
   exchange_mode: string

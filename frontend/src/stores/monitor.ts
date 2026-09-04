@@ -39,6 +39,8 @@ export const useMonitorStore = defineStore('monitor', () => {
   const factorLoading = ref<Record<string, boolean>>({})
   /** Per-instrument factor fetch error message (stale data kept on failure). */
   const factorErrors = ref<Record<string, string>>({})
+  /** Positions tab filter; empty = All. Client-side filter over loaded positions. */
+  const positionInstFilter = ref('')
   /** Decisions tab filter; empty = All. Passed as GET /decisions?inst_id= when set. */
   const decisionInstFilter = ref('')
   /** Trades tab filter; empty = All. Passed as GET /trades?inst_id= when set. */
@@ -58,6 +60,12 @@ export const useMonitorStore = defineStore('monitor', () => {
   const activeTab = ref<'overview' | 'positions' | 'decisions' | 'trades' | 'events' | 'factors'>('overview')
 
   const positionCount = computed(() => positions.value.length)
+  /** Positions rows after client-side instrument filter (empty filter = all). */
+  const filteredPositions = computed(() => {
+    const f = positionInstFilter.value
+    if (!f) return positions.value
+    return positions.value.filter((p) => p.inst_id === f)
+  })
   const uptimeLabel = computed(() => {
     const s = status.value?.uptime_seconds ?? 0
     if (s < 60) return `${s}s`
@@ -247,6 +255,11 @@ export const useMonitorStore = defineStore('monitor', () => {
     void fetchFactors()
   }
 
+  function setPositionInstFilter(instId: string) {
+    if (positionInstFilter.value === instId) return
+    positionInstFilter.value = instId
+  }
+
   function setDecisionInstFilter(instId: string) {
     if (decisionInstFilter.value === instId) return
     decisionInstFilter.value = instId
@@ -286,6 +299,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     balance,
     positions,
     positionsSource,
+    filteredPositions,
     decisions,
     trades,
     events,
@@ -293,6 +307,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     factorsLive,
     factorLoading,
     factorErrors,
+    positionInstFilter,
     decisionInstFilter,
     tradeInstFilter,
     eventInstFilter,
@@ -309,6 +324,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     fetchAll,
     fetchFactors,
     setFactorsLive,
+    setPositionInstFilter,
     setDecisionInstFilter,
     setTradeInstFilter,
     setEventInstFilter,

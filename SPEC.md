@@ -118,8 +118,8 @@ Base: `keel.api.app`
 |--------|------|---------|
 | GET | `/health` | Liveness |
 | GET | `/ready` | Readiness: ledger open + `seconds_since_last_cycle` / `worker_stale` (stale when lag > max(2×cycle_interval, cycle_interval+300); null lag = cold-start OK) |
-| GET | `/api/v1/status` | Worker/exchange/policy summary; optional `last_cycle`; `seconds_since_last_cycle`; `worker_stale` (same threshold as `/ready`) |
-| GET | `/api/v1/config` | Non-secret config echo (incl. instruments, exchange_mode, notify_configured, `cycle_interval_seconds`) |
+| GET | `/api/v1/status` | Worker/exchange/policy summary; `decision_policy`; optional `last_cycle`; `seconds_since_last_cycle`; `worker_stale` (same threshold as `/ready`) |
+| GET | `/api/v1/config` | Non-secret config echo (incl. instruments from `KEEL_INSTRUMENTS`, `decision_policy`, exchange_mode, notify_configured, `cycle_interval_seconds`) |
 | GET | `/api/v1/pnl/daily` | Realized daily PnL from ledger (Beijing date; optional `?date=YYYY-MM-DD`) |
 | GET | `/api/v1/positions` | Open positions |
 | GET | `/api/v1/balance` | Account balance snapshot |
@@ -158,6 +158,9 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_LLM_MODEL` | — | |
 | `KEEL_LEDGER_DB` | local path | SQLite file |
 | `KEEL_KILL_SWITCH` | `0` | `0` \| `1` / true\|false — deny all trading when on |
+| `KEEL_INSTRUMENTS` | empty → defaults | Comma-separated OKX swap ids; empty → `DEFAULT_CRYPTO_INSTRUMENTS`; worker + `/config` instruments |
+| `KEEL_DECISION_POLICY` | `rule` | `rule` \| `stub` \| `llm` — exposed as `decision_policy` on `/status` + `/config` |
+| `KEEL_CYCLE_INTERVAL_SECONDS` | `900` | Trader cycle interval; clamped `[60, 86400]` |
 | `KEEL_API_TOKEN` | empty | Optional bearer for `/api/v1/*`; empty → no auth |
 | `KEEL_USE_LEGACY` | unset | Silence legacy import quarantine warnings |
 
@@ -179,6 +182,8 @@ Must validate against schema (action, instrument, size/notion, optional TP/SL in
 - Daily loss circuit breaker  
 
 LLM cannot bypass gates. Exposed as non-secret `kill_switch` on `GET /api/v1/status` and `GET /api/v1/config`.
+
+Active decision policy name (`build_decision_policy` → `describe_policy`, no cycle run) is exposed as `decision_policy` on the same endpoints (and on the monitor Config strip).
 
 ---
 

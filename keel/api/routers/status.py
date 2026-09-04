@@ -11,10 +11,16 @@ from keel.api.deps import get_ledger
 from keel.api.schemas import ConfigResponse, CredentialsStatus, LastCycleSummary, StatusResponse
 from keel.config import get_settings
 from keel.domain.instruments import InstrumentPool
+from keel.policy import build_decision_policy, describe_policy
 
 router = APIRouter()
 
 _START_TIME = time.time()
+
+
+def _active_decision_policy_name(settings) -> str:
+    """Cheap policy label via factory (no trader cycle)."""
+    return describe_policy(build_decision_policy(settings))
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -35,6 +41,7 @@ def status() -> StatusResponse:
         ),
         ledger_db=str(settings.ledger_path),
         kill_switch=settings.kill_switch,
+        decision_policy=_active_decision_policy_name(settings),
         last_cycle=last_cycle,
         seconds_since_last_cycle=lag,
         worker_stale=is_worker_stale(lag, settings.cycle_interval_seconds),
@@ -45,7 +52,8 @@ def status() -> StatusResponse:
 def config() -> ConfigResponse:
     """Get non-sensitive configuration."""
     settings = get_settings()
-    instruments = [i.inst_id for i in InstrumentPool().all()]
+    pool = InstrumentPool.from_ids(list(settings.instruments))
+    instruments = [i.inst_id for i in pool.all()]
     return ConfigResponse(
         environment=settings.okx_environment,
         max_positions=settings.max_concurrent_positions,
@@ -53,6 +61,7 @@ def config() -> ConfigResponse:
         max_asset_margin=settings.max_single_asset_margin,
         llm_model=settings.llm_model,
         kill_switch=settings.kill_switch,
+        decision_policy=_active_decision_policy_name(settings),
         instruments=instruments,
         notify_configured=settings.notify_configured,
         exchange_mode=settings.exchange_mode,

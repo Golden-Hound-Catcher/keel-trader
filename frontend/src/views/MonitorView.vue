@@ -91,6 +91,11 @@ const tradeFilterOptions = computed(() => [
   ...store.watchlist.map((id) => ({ value: id, label: id })),
 ])
 
+const positionFilterOptions = computed(() => [
+  { value: '', label: 'All' },
+  ...store.watchlist.map((id) => ({ value: id, label: id })),
+])
+
 const eventInstFilterOptions = computed(() => [
   { value: '', label: 'All' },
   ...store.watchlist.map((id) => ({ value: id, label: id })),
@@ -130,6 +135,11 @@ const eventsEmptyMessage = computed(() => {
   if (inst) parts.push(inst)
   return `no events for ${parts.join(' · ')}`
 })
+
+function onPositionFilterChange(ev: Event) {
+  const el = ev.target as HTMLSelectElement
+  store.setPositionInstFilter(el.value)
+}
 
 function onDecisionFilterChange(ev: Event) {
   const el = ev.target as HTMLSelectElement
@@ -338,6 +348,7 @@ const configStrip = computed(() => {
   const maxPos = c?.max_positions ?? '—'
   const kill = c?.kill_switch ?? store.status?.kill_switch ?? false
   const notify = c?.notify_configured
+  const policy = c?.decision_policy || store.status?.decision_policy || '—'
   const intervalSec = cycleIntervalSeconds.value
   return {
     env,
@@ -346,6 +357,7 @@ const configStrip = computed(() => {
     maxPos,
     kill: kill ? 'ON' : 'off',
     notify: notify == null ? '—' : notify ? 'yes' : 'no',
+    policy,
     cycle: formatCycleIntervalLabel(intervalSec),
     cycleTitle: `Trader cycle interval ${intervalSec}s; stale threshold uses max(2×interval, interval+300) = ${workerStaleThreshold.value}s`,
   }
@@ -601,6 +613,7 @@ const configStrip = computed(() => {
             </div>
             <span class="text-[#A8B3C7]">env <span class="text-white">{{ configStrip.env }}</span></span>
             <span class="text-[#A8B3C7]">mode <span class="text-white">{{ configStrip.mode }}</span></span>
+            <span class="text-[#A8B3C7]">policy <span class="text-white">{{ configStrip.policy }}</span></span>
             <span class="text-[#A8B3C7]">instruments <span class="text-white">{{ configStrip.instCount }}</span></span>
             <span class="text-[#A8B3C7]">max_pos <span class="text-white">{{ configStrip.maxPos }}</span></span>
             <span class="text-[#A8B3C7]">kill <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
@@ -746,12 +759,34 @@ const configStrip = computed(() => {
 
         <!-- POSITIONS -->
         <div v-show="store.activeTab === 'positions'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-          <h2 class="text-sm font-mono font-bold text-white mb-3">
-            Positions
-            <span class="text-[#707E94] font-normal">({{ store.positionCount }} · {{ store.positionsSource || '—' }})</span>
-          </h2>
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h2 class="text-sm font-mono font-bold text-white">
+              Positions
+              <span class="text-[#707E94] font-normal">({{ store.filteredPositions.length }}/{{ store.positionCount }} · {{ store.positionsSource || '—' }})</span>
+            </h2>
+            <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
+              <span class="text-[#707E94]">Instrument</span>
+              <select
+                class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
+                :value="store.positionInstFilter"
+                @change="onPositionFilterChange"
+              >
+                <option
+                  v-for="opt in positionFilterOptions"
+                  :key="opt.value || 'all'"
+                  :value="opt.value"
+                >{{ opt.label }}</option>
+              </select>
+            </label>
+          </div>
           <div v-if="!store.positions.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
             No open positions
+          </div>
+          <div
+            v-else-if="!store.filteredPositions.length"
+            class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg"
+          >
+            Empty — no positions for {{ store.positionInstFilter }}
           </div>
           <div v-else class="overflow-x-auto">
             <table class="w-full text-left text-xs font-mono">
@@ -768,7 +803,7 @@ const configStrip = computed(() => {
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
-                <tr v-for="p in store.positions" :key="p.inst_id + p.side" class="hover:bg-[#121824]/50">
+                <tr v-for="p in store.filteredPositions" :key="p.inst_id + p.side" class="hover:bg-[#121824]/50">
                   <td class="py-2.5 pr-3 text-white font-bold">{{ p.inst_id }}</td>
                   <td class="py-2.5 pr-3">
                     <span
