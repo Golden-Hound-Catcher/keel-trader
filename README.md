@@ -60,6 +60,8 @@ LLM_MODEL=gpt-4o
 无 OKX 密钥时 worker 使用 `PaperExchange`；配置 `KEEL_OKX_*` 后改用 `OkxRestAdapter`（demo 默认）。
 Paper / 规则决策循环（`python -m keel.worker --once`）不强制需要 LLM 或交易所凭证。 决策经 `keel.policy.DecisionPolicy`（默认 `rule`；`KEEL_DECISION_POLICY=llm` 启用模块化提示词 + LLM）。
 
+运维步骤（paper 无 key、demo 本机 key、kill-switch）：见 **[RUNBOOK.md](RUNBOOK.md)**。Paper 自动验收：`./scripts/run_acceptance.sh`。
+
 ### 3. 启动（推荐）
 
 ```bash
@@ -86,7 +88,8 @@ python -m uvicorn keel.api.app:app --host 0.0.0.0 --port 8080
 ```bash
 make test
 # 或: sh scripts/run_keel_tests.sh
-# 或: python -m pytest tests/test_keel_*.py -v
+# 或: python -m pytest tests/test_keel_*.py tests/test_legacy_quarantine.py tests/test_acceptance_paper.py -q
+# Paper 验收（无 OKX key）: ./scripts/run_acceptance.sh
 ```
 
 ---
@@ -112,7 +115,7 @@ keel-trader/
 │   ├── worker/              # 唯一调度器 + paper cycle ★
 │   ├── config/ exchange/ factors/ ledger/ llm/ risk/ execution/
 ├── frontend/                # 监控 UI（绑定 keel.api；无 /legacy、无 /admin）
-├── scripts/                 # run_keel_tests.sh only
+├── scripts/                 # run_keel_tests.sh + run_acceptance.sh (paper)
 ├── deploy/                  # systemd：仅 keel-*.service 为安装示例
 ├── tests/                   # 含 test_keel_*.py
 ├── ARCHITECTURE.md
@@ -155,6 +158,7 @@ keel-trader/
 
 ## 📖 文档
 
+- [RUNBOOK.md](RUNBOOK.md) — **运维手册**（paper 干跑 / demo 验收 / 健康检查 / 紧急停止）
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 架构与迁移阶段
 - [STANDALONE.md](STANDALONE.md) — 独立部署拓扑（Stage 3）
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Stage 7：legacy quarantine + DecisionPolicy
