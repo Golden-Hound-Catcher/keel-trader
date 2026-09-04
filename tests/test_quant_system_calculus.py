@@ -11,10 +11,10 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-# Add scripts directory
+# Add scripts directory (legacy factor_library / trader helpers)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from calculus_engine import (
+from keel.factors.kinematics import (
     calculate_calculus,
     calculate_multi_timeframe,
     calculate_definite_integrals,
@@ -22,13 +22,19 @@ from calculus_engine import (
     classify_regime,
     classify_integral_regime,
     classify_probability_regime,
-    _normal_cdf,
-    _ema,
-    _diff,
-    _normalise
+    normal_cdf,
+    ema_series,
+    diff_series,
+    clip_normalise,
 )
 import factor_library
 import ai_factor_trader
+
+# Private-name aliases used by older assertions in this suite
+_normal_cdf = normal_cdf
+_ema = ema_series
+_diff = diff_series
+_normalise = clip_normalise
 
 
 class CalculusEngineMathTest(unittest.TestCase):

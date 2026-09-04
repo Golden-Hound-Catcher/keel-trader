@@ -278,6 +278,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-03 | Removed `r20_backend` `/api/v1/admin/*` + `admin_auth`; stub returns 410 |
 | 2026-09-03 | Elegance: Pydantic API schemas; domain owns Decision/records; kinematics in keel.factors; calculus_engine shim |
 | 2026-09-04 | Inventory-gated delete: `r20_backend/okx_client.py`, `prompt_views.py` (0 refs); kept `qq_gateway_daemon`/`audit` (qq_bind) |
+| 2026-09-04 | Inventory-gated delete: `scripts/calculus_engine.py` (migrated to kinematics), `r20_gateway/agents.py`, `supervisor.py` (0 refs); trader shims kept |
 
 ---
 
@@ -333,7 +334,7 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 
 - Introduced `keel.api.schemas` Pydantic models for health/status/positions/balance/decisions/trades/events/factors.
 - Moved ledger record dataclasses and `Decision` into `keel.domain` (llm re-exports Decision).
-- Ported `scripts/calculus_engine` pure math into `keel.factors.kinematics` (honest names); scripts module is a deprecated shim for legacy imports.
+- Ported `scripts/calculus_engine` pure math into `keel.factors.kinematics` (honest names); deprecated shim later deleted after importer migration.
 
 ## Addendum: Dead r20_backend helpers removed (inventory)
 
@@ -343,3 +344,11 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - **Kept** `r20_backend/qq_gateway_daemon.py` (spawned by `qq_bind.ensure_qq_gateway_daemon_running`)
   and `r20_backend/audit.py` (imported by the daemon).
 - No dedicated unit tests existed solely for the deleted modules.
+
+## Addendum: More dead scripts / gateway helpers (inventory)
+
+- Deleted `scripts/calculus_engine.py` after migrating remaining importers
+  (`factor_library`, trader shims, calculus tests) to `keel.factors.kinematics`.
+- Deleted `r20_gateway/agents.py` and `r20_gateway/supervisor.py` (zero importers).
+- **Kept** trader shims (`ai_factor_trader`, `ai_brain_trader`) and scripts still
+  launched by `keel.worker` / gateway JOBS.

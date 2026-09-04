@@ -200,9 +200,14 @@ class TestDeletedLegacyScripts(unittest.TestCase):
             "remove_retired_personal_wechat.py",
             "cleanup_disk.py",
             "calculus_replay.py",
+            "calculus_engine.py",
         ]
         for name in gone:
             self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)
+
+    def test_dead_gateway_helpers_gone(self):
+        for name in ("agents.py", "supervisor.py"):
+            self.assertFalse((ROOT / "r20_gateway" / name).exists(), msg=name)
 
     def test_trader_shims_remain(self):
         self.assertTrue((ROOT / "scripts" / "ai_factor_trader.py").exists())

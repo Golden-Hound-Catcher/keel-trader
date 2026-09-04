@@ -2,7 +2,7 @@
 Price kinematics and return statistics — pure functions.
 
 Honest naming for the math formerly branded as "causal calculus" /
-"quantum" in ``scripts/calculus_engine.py``. Same algorithms; clearer names.
+Honest names for the former ``scripts/calculus_engine`` algorithms (that shim is deleted).
 
 All functions are side-effect free and chronological (newest observation last).
 """

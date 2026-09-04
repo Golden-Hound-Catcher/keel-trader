@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import unittest
-import warnings
 
 from keel.factors.kinematics import (
     calculate_multi_timeframe_kinematics,
@@ -71,25 +70,12 @@ class TestPriceKinematics(unittest.TestCase):
         self.assertEqual(classify_path_energy_regime(0.0, 0.0), "BALANCED_ENERGY")
 
 
-class TestCalculusShim(unittest.TestCase):
-    def test_shim_reexports(self):
-        import importlib
-        import sys
+class TestCalculusShimRemoved(unittest.TestCase):
+    def test_scripts_calculus_engine_gone(self):
         from pathlib import Path
 
-        scripts = str(Path(__file__).resolve().parents[1] / "scripts")
-        if scripts not in sys.path:
-            sys.path.insert(0, scripts)
-        sys.modules.pop("calculus_engine", None)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            import calculus_engine as ce
-
-            self.assertTrue(any(issubclass(x.category, DeprecationWarning) for x in w))
-        base = [100, 101, 102, 104, 107, 111, 116, 122, 129, 137]
-        a = ce.calculate_calculus(base)
-        self.assertTrue(a["valid"])
-        self.assertIs(ce.calculate_calculus, calculate_price_kinematics)
+        root = Path(__file__).resolve().parents[1]
+        self.assertFalse((root / "scripts" / "calculus_engine.py").exists())
 
 
 if __name__ == "__main__":

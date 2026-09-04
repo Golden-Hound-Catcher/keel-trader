@@ -374,7 +374,7 @@ def fetch_single_instrument_package(item: Dict[str, Any]) -> Dict[str, Any]:
         and len(pkg["recent_4h"]) >= 6
     )
     try:
-        from calculus_engine import calculate_multi_timeframe
+        from keel.factors.kinematics import calculate_multi_timeframe
         pkg["calculus"] = calculate_multi_timeframe({
             "15M": pkg["recent_15m"],
             "1H": pkg["recent_1h"],
