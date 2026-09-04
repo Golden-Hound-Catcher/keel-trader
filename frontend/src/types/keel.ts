@@ -13,6 +13,11 @@ export interface KeelRiskDenyReason {
   reason?: string
 }
 
+export interface KeelCycleError {
+  inst_id?: string | null
+  error: string
+}
+
 export interface KeelLastCycle {
   timestamp: number
   mode: string
@@ -24,7 +29,8 @@ export interface KeelLastCycle {
   risk_denies?: number
   /** Capped list of deny gate/reason pairs (see backend RISK_DENY_REASONS_CAP). */
   risk_deny_reasons?: KeelRiskDenyReason[]
-  errors?: Array<Record<string, unknown>>
+  /** Per-instrument non-risk errors from the last worker cycle. */
+  errors?: KeelCycleError[]
   policy_success?: boolean | null
   duration_ms?: number
 }
