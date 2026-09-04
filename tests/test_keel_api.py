@@ -104,6 +104,8 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIsInstance(lc["decision_counts"], dict)
         self.assertIn("BUY_LONG", lc["decision_counts"])
         self.assertIn("risk_denies", lc)
+        self.assertIn("risk_deny_reasons", lc)
+        self.assertIsInstance(lc["risk_deny_reasons"], list)
         self.assertIn("errors", lc)
         self.assertIsInstance(lc["errors"], list)
         self.assertIn("duration_ms", lc)

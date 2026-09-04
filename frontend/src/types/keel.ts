@@ -8,6 +8,11 @@ export interface KeelHealth {
   environment: string
 }
 
+export interface KeelRiskDenyReason {
+  gate: string
+  reason?: string
+}
+
 export interface KeelLastCycle {
   timestamp: number
   mode: string
@@ -15,8 +20,10 @@ export interface KeelLastCycle {
   policy?: string
   instruments?: number
   decision_counts?: Record<string, number>
-  /** Count of instruments denied by risk gates this cycle (not a reason list). */
+  /** Count of instruments denied by risk gates this cycle. */
   risk_denies?: number
+  /** Capped list of deny gate/reason pairs (see backend RISK_DENY_REASONS_CAP). */
+  risk_deny_reasons?: KeelRiskDenyReason[]
   errors?: Array<Record<string, unknown>>
   policy_success?: boolean | null
   duration_ms?: number

@@ -69,13 +69,43 @@ const lastCycleActions = computed(() => {
     .join(' · ')
 })
 
-/** last_cycle.risk_denies is a count (int); schema has no reason list. */
+/** last_cycle.risk_denies count + optional capped risk_deny_reasons. */
 const riskDeniesCount = computed(() => {
   const raw = lastCycle.value?.risk_denies
   const n = typeof raw === 'number' ? raw : Number(raw ?? 0)
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
 })
 const riskDeniesWarn = computed(() => riskDeniesCount.value > 0)
+
+function formatDenyReason(r: { gate?: string; reason?: string } | string): string {
+  if (typeof r === 'string') return r
+  const gate = (r.gate || '').trim()
+  const reason = (r.reason || '').trim()
+  if (gate && reason) return `${gate}: ${reason}`
+  return gate || reason || 'deny'
+}
+
+const riskDenyReasonLines = computed(() => {
+  const raw = lastCycle.value?.risk_deny_reasons
+  if (!Array.isArray(raw) || !raw.length) return [] as string[]
+  return raw.map((r) => formatDenyReason(r as { gate?: string; reason?: string } | string))
+})
+
+const riskDenyReasonsPreview = computed(() => {
+  const lines = riskDenyReasonLines.value
+  if (!lines.length) return ''
+  const joined = lines.join(' · ')
+  return joined.length > 96 ? `${joined.slice(0, 93)}…` : joined
+})
+
+const riskDenyReasonsTitle = computed(() => {
+  const lines = riskDenyReasonLines.value
+  if (!lines.length) return ''
+  const extra = riskDeniesCount.value > lines.length
+    ? `\n(+${riskDeniesCount.value - lines.length} more)`
+    : ''
+  return lines.join('\n') + extra
+})
 
 /** Read-only: armed via KEEL_KILL_SWITCH (status API); no admin toggle. */
 const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
@@ -267,11 +297,11 @@ const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
                 <div class="text-[#707E94]">Decisions</div>
                 <div class="text-cyan-400">{{ lastCycleActions || '—' }}</div>
               </div>
-              <div>
+              <div class="md:col-span-2">
                 <div class="text-[#707E94]">Risk denies</div>
-                <div class="mt-0.5">
+                <div class="mt-0.5 flex flex-col gap-1 min-w-0">
                   <span
-                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border tabular-nums"
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border tabular-nums w-fit"
                     :class="riskDeniesWarn
                       ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
                       : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'"
@@ -281,6 +311,13 @@ const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
                   >
                     {{ riskDeniesCount }}
                   </span>
+                  <div
+                    v-if="riskDenyReasonsPreview"
+                    class="text-[10px] font-mono text-amber-400/80 truncate max-w-full"
+                    :title="riskDenyReasonsTitle"
+                  >
+                    {{ riskDenyReasonsPreview }}
+                  </div>
                 </div>
               </div>
               <div>

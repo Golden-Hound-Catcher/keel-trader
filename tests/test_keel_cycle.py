@@ -10,6 +10,8 @@ from unittest.mock import patch
 from keel.exchange.paper import PaperAdapter
 from keel.ledger import KeelLedger
 from keel.worker.cycle import (
+    RISK_DENY_REASONS_CAP,
+    build_cycle_summary,
     build_synthetic_candles,
     enrich_snapshot,
     rule_based_decision,
@@ -129,6 +131,7 @@ class TestPaperCycle(unittest.TestCase):
         self.assertEqual(cs["instruments"], 2)
         self.assertEqual(cs["decision_counts"].get("WAIT"), 2)
         self.assertEqual(cs["risk_denies"], 0)
+        self.assertEqual(cs["risk_deny_reasons"], [])
         self.assertEqual(cs["errors"], [])
         self.assertIn("duration_ms", cs)
         self.assertIsInstance(cs["duration_ms"], int)
@@ -141,6 +144,63 @@ class TestPaperCycle(unittest.TestCase):
         self.assertEqual(stored["duration_ms"], cs["duration_ms"])
         events = self.ledger.get_events(event_type="worker_cycle_summary", limit=5)
         self.assertGreaterEqual(len(events), 1)
+
+
+class TestBuildCycleSummaryRiskDenies(unittest.TestCase):
+    def test_collects_gate_and_reason(self):
+        cs = build_cycle_summary(
+            timestamp=1.0,
+            mode="paper",
+            adapter="paper",
+            policy="rule",
+            instruments=2,
+            results=[
+                {
+                    "inst_id": "BTC-USDT-SWAP",
+                    "action": "BUY_LONG",
+                    "success": False,
+                    "risk_gate_failed": "kill_switch",
+                    "error": "Kill switch active",
+                },
+                {
+                    "inst_id": "ETH-USDT-SWAP",
+                    "action": "WAIT",
+                    "success": True,
+                },
+            ],
+        )
+        self.assertEqual(cs["risk_denies"], 1)
+        self.assertEqual(len(cs["risk_deny_reasons"]), 1)
+        self.assertEqual(cs["risk_deny_reasons"][0]["gate"], "kill_switch")
+        self.assertEqual(cs["risk_deny_reasons"][0]["reason"], "Kill switch active")
+        self.assertEqual(cs["errors"], [])
+
+    def test_caps_reason_list(self):
+        results = [
+            {
+                "inst_id": f"X{i}",
+                "action": "BUY_LONG",
+                "success": False,
+                "risk_gate_failed": "max_positions",
+                "error": f"deny-{i}",
+            }
+            for i in range(RISK_DENY_REASONS_CAP + 5)
+        ]
+        cs = build_cycle_summary(
+            timestamp=1.0,
+            mode="paper",
+            adapter="paper",
+            policy="rule",
+            instruments=len(results),
+            results=results,
+        )
+        self.assertEqual(cs["risk_denies"], RISK_DENY_REASONS_CAP + 5)
+        self.assertEqual(len(cs["risk_deny_reasons"]), RISK_DENY_REASONS_CAP)
+        self.assertEqual(cs["risk_deny_reasons"][0]["reason"], "deny-0")
+        self.assertEqual(
+            cs["risk_deny_reasons"][-1]["reason"],
+            f"deny-{RISK_DENY_REASONS_CAP - 1}",
+        )
 
 
 class TestKeelSchedulerTraderJob(unittest.TestCase):

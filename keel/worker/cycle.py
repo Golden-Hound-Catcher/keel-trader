@@ -191,6 +191,10 @@ def _seed_paper_tickers(
 
 
 
+# Cap risk-deny reason list on cycle summaries (monitor / status payloads).
+RISK_DENY_REASONS_CAP = 20
+
+
 def build_cycle_summary(
     *,
     timestamp: float,
@@ -205,17 +209,22 @@ def build_cycle_summary(
     """
     Structured last-cycle payload for ledger + GET /api/v1/status.
 
-    Aggregates decision counts by action, risk denies, and non-risk errors.
-    Includes wall-clock ``duration_ms`` for the cycle run.
+    Aggregates decision counts by action, risk denies (count + capped reasons),
+    and non-risk errors. Includes wall-clock ``duration_ms`` for the cycle run.
     """
     decision_counts: dict[str, int] = {}
     risk_denies = 0
+    risk_deny_reasons: list[dict[str, str]] = []
     errors: list[dict[str, Any]] = []
     for row in results:
         action = str(row.get("action") or "UNKNOWN")
         decision_counts[action] = decision_counts.get(action, 0) + 1
         if row.get("risk_gate_failed"):
             risk_denies += 1
+            if len(risk_deny_reasons) < RISK_DENY_REASONS_CAP:
+                gate = str(row["risk_gate_failed"])
+                reason = str(row.get("error") or "")
+                risk_deny_reasons.append({"gate": gate, "reason": reason})
         elif row.get("error") and not row.get("success"):
             errors.append(
                 {
@@ -231,6 +240,7 @@ def build_cycle_summary(
         "instruments": instruments,
         "decision_counts": decision_counts,
         "risk_denies": risk_denies,
+        "risk_deny_reasons": risk_deny_reasons,
         "errors": errors,
         "duration_ms": int(duration_ms),
     }
@@ -455,6 +465,7 @@ def run_paper_cycle(
             "policy_success": policy_result.success,
             "decision_counts": cycle_summary["decision_counts"],
             "risk_denies": cycle_summary["risk_denies"],
+            "risk_deny_reasons": cycle_summary["risk_deny_reasons"],
             "errors": cycle_summary["errors"],
         },
         timestamp=now,
