@@ -29,6 +29,13 @@ class CredentialsStatus(BaseModel):
     llm: bool
 
 
+class RiskDenyReason(BaseModel):
+    """One risk-gate deny captured in a worker cycle summary (capped list)."""
+
+    gate: str
+    reason: str = ""
+
+
 class LastCycleSummary(BaseModel):
     """Structured summary of the most recent keel.worker.cycle run."""
 
@@ -39,6 +46,7 @@ class LastCycleSummary(BaseModel):
     instruments: int = 0
     decision_counts: dict[str, int] = Field(default_factory=dict)
     risk_denies: int = 0
+    risk_deny_reasons: list[RiskDenyReason] = Field(default_factory=list)
     errors: list[dict[str, Any]] = Field(default_factory=list)
     policy_success: bool | None = None
     duration_ms: int = 0

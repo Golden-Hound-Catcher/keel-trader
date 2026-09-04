@@ -224,7 +224,8 @@ class KeelLedger:
         Persist a structured worker cycle summary for the monitor/status API.
 
         Event type: ``worker_cycle_summary``. Expected keys include timestamp,
-        mode, adapter, policy, instruments, decision_counts, risk_denies, errors.
+        mode, adapter, policy, instruments, decision_counts, risk_denies,
+        risk_deny_reasons (capped), errors.
         """
         payload = dict(summary)
         ts = float(payload.get("timestamp") or time.time())

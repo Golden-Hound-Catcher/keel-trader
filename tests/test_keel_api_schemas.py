@@ -16,6 +16,7 @@ from keel.api.schemas import (
     MacdBlock,
     PositionsResponse,
     LastCycleSummary,
+    RiskDenyReason,
     ConfigResponse,
     StatusResponse,
     TradesResponse,
@@ -32,12 +33,15 @@ class TestApiSchemas(unittest.TestCase):
             policy="rule",
             instruments=1,
             decision_counts={"WAIT": 1},
-            risk_denies=0,
+            risk_denies=1,
+            risk_deny_reasons=[RiskDenyReason(gate="kill_switch", reason="armed")],
             errors=[],
             duration_ms=42,
         )
         self.assertEqual(m.mode, "paper")
         self.assertEqual(m.duration_ms, 42)
+        self.assertEqual(m.risk_denies, 1)
+        self.assertEqual(m.risk_deny_reasons[0].gate, "kill_switch")
         status = StatusResponse(
             version="0.1.0",
             mode="read_only_control_plane",
@@ -123,6 +127,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("LastCycleSummary", comps)
         last_cycle_props = comps["LastCycleSummary"]["properties"]
         self.assertIn("duration_ms", last_cycle_props)
+        self.assertIn("risk_deny_reasons", last_cycle_props)
+        self.assertIn("RiskDenyReason", comps)
         self.assertIn("DecisionsResponse", comps)
         self.assertIn("FactorsResponse", comps)
         status_props = comps["StatusResponse"]["properties"]
