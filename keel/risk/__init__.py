@@ -9,6 +9,7 @@ from keel.risk.gates import (
     MaxMarginGate,
     CooldownGate,
     KillSwitchGate,
+    MaxNotionalGate,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "MaxMarginGate",
     "CooldownGate",
     "KillSwitchGate",
+    "MaxNotionalGate",
 ]

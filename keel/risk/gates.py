@@ -37,6 +37,11 @@ class GateContext:
     existing_margin_for_asset: float = 0.0
     cooldown_until: float = 0.0
     kill_switch_active: bool = False
+    # Requested order notional in USDT (typically margin_usdt * leverage).
+    notional: float = 0.0
+    existing_notional_for_asset: float = 0.0
+    # Existing contracts on this instrument (for scale-in + max_contracts).
+    existing_size_for_asset: float = 0.0
 
 
 @dataclass
@@ -234,6 +239,72 @@ class KillSwitchGate(RiskGate):
         return GateResult(passed=True, gate_name=self.name)
 
 
+class MaxNotionalGate(RiskGate):
+    """Limit notional (and optionally contracts) per instrument.
+
+    Notional is checked as existing + requested (USDT). Contracts are checked
+    only when ``ctx.size`` > 0 (size is in contract units for OKX swaps).
+    """
+
+    def __init__(
+        self,
+        max_notional: float | None = None,
+        max_contracts: int | None = None,
+    ):
+        settings = get_settings()
+        self._max_notional = (
+            settings.max_notional_per_instrument if max_notional is None else max_notional
+        )
+        self._max_contracts = (
+            settings.max_contracts_per_instrument if max_contracts is None else max_contracts
+        )
+
+    @property
+    def name(self) -> str:
+        return "max_notional"
+
+    def check(self, ctx: GateContext) -> GateResult:
+        if ctx.action == "close":
+            return GateResult(passed=True, gate_name=self.name)
+
+        total_notional = ctx.existing_notional_for_asset + ctx.notional
+        if total_notional > self._max_notional:
+            return GateResult(
+                passed=False,
+                gate_name=self.name,
+                reason=(
+                    f"单标的名义价值 {total_notional:.2f}U 将超限 {self._max_notional:.2f}U"
+                ),
+                details={
+                    "existing_notional": ctx.existing_notional_for_asset,
+                    "requested_notional": ctx.notional,
+                    "total_notional": total_notional,
+                    "max_notional": self._max_notional,
+                    "limit": "notional",
+                },
+            )
+
+        # Contracts check when size is known (orchestrator may estimate from entry).
+        total_size = ctx.existing_size_for_asset + ctx.size
+        if ctx.size > 0 and total_size > self._max_contracts:
+            return GateResult(
+                passed=False,
+                gate_name=self.name,
+                reason=(
+                    f"单标的合约数 {total_size:.4g} 将超限 {self._max_contracts}"
+                ),
+                details={
+                    "existing_size": ctx.existing_size_for_asset,
+                    "requested_size": ctx.size,
+                    "total_size": total_size,
+                    "max_contracts": self._max_contracts,
+                    "limit": "contracts",
+                },
+            )
+
+        return GateResult(passed=True, gate_name=self.name)
+
+
 class MinRiskRewardGate(RiskGate):
     """Enforce minimum risk:reward ratio."""
 
@@ -270,6 +341,7 @@ def get_default_gates() -> list[RiskGate]:
     return [
         KillSwitchGate(),
         DailyLossGate(),
+        MaxNotionalGate(),
         MaxPositionsGate(),
         MaxSameDirectionGate(),
         MaxMarginGate(),

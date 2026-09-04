@@ -190,6 +190,10 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertEqual(body["scheduler_jobs"], ["trader"])
         self.assertIn("legacy_scheduler_jobs", body)
         self.assertFalse(body["legacy_scheduler_jobs"])
+        self.assertIn("max_notional_per_instrument", body)
+        self.assertEqual(body["max_notional_per_instrument"], 2000.0)
+        self.assertIn("max_contracts_per_instrument", body)
+        self.assertEqual(body["max_contracts_per_instrument"], 50)
 
     def test_config_legacy_scheduler_jobs_when_enabled(self):
         os.environ["KEEL_ENABLE_LEGACY_SCHEDULER_JOBS"] = "1"

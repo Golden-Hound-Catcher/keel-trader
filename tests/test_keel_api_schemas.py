@@ -180,6 +180,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("ConfigResponse", comps)
         config_props = comps["ConfigResponse"]["properties"]
         self.assertIn("kill_switch", config_props)
+        self.assertIn("max_notional_per_instrument", config_props)
+        self.assertIn("max_contracts_per_instrument", config_props)
         self.assertIn("instruments", config_props)
         self.assertIn("notify_configured", config_props)
         self.assertIn("exchange_mode", config_props)
@@ -216,6 +218,8 @@ class TestApiSchemas(unittest.TestCase):
             max_positions=6,
             max_daily_loss=150.0,
             max_asset_margin=600.0,
+            max_notional_per_instrument=2000.0,
+            max_contracts_per_instrument=50,
             llm_model="gpt-4o",
             kill_switch=False,
             decision_policy="stub",
@@ -227,6 +231,8 @@ class TestApiSchemas(unittest.TestCase):
             legacy_scheduler_jobs=False,
         )
         self.assertFalse(cfg.kill_switch)
+        self.assertEqual(cfg.max_notional_per_instrument, 2000.0)
+        self.assertEqual(cfg.max_contracts_per_instrument, 50)
         self.assertEqual(cfg.decision_policy, "stub")
         self.assertEqual(cfg.instruments, ["BTC-USDT-SWAP"])
         self.assertTrue(cfg.notify_configured)
