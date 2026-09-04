@@ -51,6 +51,8 @@ export interface KeelStatus {
   last_cycle?: KeelLastCycle | null
   /** Seconds since last_cycle.timestamp; null if missing/unparsable. */
   seconds_since_last_cycle?: number | null
+  /** True when lag exceeds interval-based stale threshold (same as /ready). */
+  worker_stale?: boolean
 }
 
 export interface KeelConfig {
@@ -63,6 +65,8 @@ export interface KeelConfig {
   instruments: string[]
   notify_configured: boolean
   exchange_mode: string
+  /** Trader cycle interval in seconds (KEEL_CYCLE_INTERVAL_SECONDS). */
+  cycle_interval_seconds: number
 }
 
 export interface KeelDailyPnl {

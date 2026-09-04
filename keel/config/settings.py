@@ -60,6 +60,9 @@ class Settings:
     # Emergency kill switch (KEEL_KILL_SWITCH=0|1 / true|false); default off
     kill_switch: bool = False
 
+    # Trader cycle interval (KEEL_CYCLE_INTERVAL_SECONDS); default 900 = 15min
+    cycle_interval_seconds: int = 900
+
     @property
     def is_demo(self) -> bool:
         return self.okx_environment == "demo"
@@ -121,6 +124,23 @@ def _env_float(key: str, default: float) -> float:
         return default
 
 
+# Trader cycle interval bounds (seconds): min 1m, max 24h.
+CYCLE_INTERVAL_MIN_SECONDS = 60
+CYCLE_INTERVAL_MAX_SECONDS = 86400
+CYCLE_INTERVAL_DEFAULT_SECONDS = 900
+
+
+def clamp_cycle_interval_seconds(value: int) -> int:
+    """Clamp trader cycle interval to [60, 86400]."""
+    return max(CYCLE_INTERVAL_MIN_SECONDS, min(CYCLE_INTERVAL_MAX_SECONDS, int(value)))
+
+
+def _env_cycle_interval_seconds() -> int:
+    """Parse KEEL_CYCLE_INTERVAL_SECONDS with default 900 and sane clamp."""
+    raw = _env_int("KEEL_CYCLE_INTERVAL_SECONDS", CYCLE_INTERVAL_DEFAULT_SECONDS)
+    return clamp_cycle_interval_seconds(raw)
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Load settings from environment. Cached for performance."""
@@ -163,6 +183,7 @@ def get_settings() -> Settings:
         max_daily_loss_usdt=_env_float("KEEL_MAX_DAILY_LOSS", 150.0),
         max_single_asset_margin=_env_float("KEEL_MAX_ASSET_MARGIN", 600.0),
         kill_switch=_env_bool("KEEL_KILL_SWITCH", False),
+        cycle_interval_seconds=_env_cycle_interval_seconds(),
     )
 
 

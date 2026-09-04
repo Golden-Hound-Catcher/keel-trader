@@ -79,9 +79,19 @@ class KeelScheduler:
         self._thread: threading.Thread | None = None
 
     def _default_jobs(self) -> list[JobSpec]:
-        """Default job specifications."""
+        """Default job specifications.
+
+        Trader interval comes from ``settings.cycle_interval_seconds``
+        (``KEEL_CYCLE_INTERVAL_SECONDS``, default 900). Timeout scales as
+        ``max(840, interval - 60)`` so the classic 15min cycle keeps an 840s
+        budget; longer intervals get more room, while short intervals still
+        allow up to 840s for a slow run.
+        """
+        settings = get_settings()
+        interval = settings.cycle_interval_seconds
+        trader_timeout = max(840, interval - 60)
         return [
-            JobSpec("trader", interval_seconds=15 * 60, timeout_seconds=840),
+            JobSpec("trader", interval_seconds=interval, timeout_seconds=trader_timeout),
             JobSpec("factor_library", interval_seconds=60, timeout_seconds=55),
             JobSpec("news", interval_seconds=10 * 60, timeout_seconds=300),
             JobSpec("daily_briefing", schedule_times=("08:00", "20:00"), timeout_seconds=600),

@@ -176,12 +176,14 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("last_cycle", status_props)
         self.assertIn("kill_switch", status_props)
         self.assertIn("seconds_since_last_cycle", status_props)
+        self.assertIn("worker_stale", status_props)
         self.assertIn("ConfigResponse", comps)
         config_props = comps["ConfigResponse"]["properties"]
         self.assertIn("kill_switch", config_props)
         self.assertIn("instruments", config_props)
         self.assertIn("notify_configured", config_props)
         self.assertIn("exchange_mode", config_props)
+        self.assertIn("cycle_interval_seconds", config_props)
         self.assertIn("DailyPnlResponse", comps)
         self.assertIn("/api/v1/pnl/daily", paths)
         self.assertIn("/ready", paths)
@@ -213,11 +215,13 @@ class TestApiSchemas(unittest.TestCase):
             instruments=["BTC-USDT-SWAP"],
             notify_configured=True,
             exchange_mode="paper",
+            cycle_interval_seconds=900,
         )
         self.assertFalse(cfg.kill_switch)
         self.assertEqual(cfg.instruments, ["BTC-USDT-SWAP"])
         self.assertTrue(cfg.notify_configured)
         self.assertEqual(cfg.exchange_mode, "paper")
+        self.assertEqual(cfg.cycle_interval_seconds, 900)
 
     def test_daily_pnl_response_model(self):
         m = DailyPnlResponse(date="2026-09-04", realized_pnl=12.5)
@@ -277,6 +281,19 @@ class TestSecondsSinceLastCycleHelper(unittest.TestCase):
         self.assertIsInstance(lag, int)
         self.assertGreaterEqual(lag, 29)
         self.assertLessEqual(lag, 35)
+
+    def test_worker_stale_threshold_formula(self):
+        from keel.api.cycle_time import is_worker_stale, worker_stale_threshold_seconds
+
+        # Default 900 → max(1800, 1200) = 1800
+        self.assertEqual(worker_stale_threshold_seconds(900), 1800)
+        # Short interval → interval+300 wins
+        self.assertEqual(worker_stale_threshold_seconds(60), 360)
+        # Long interval → 2× wins
+        self.assertEqual(worker_stale_threshold_seconds(600), 1200)
+        self.assertFalse(is_worker_stale(None, 900))
+        self.assertFalse(is_worker_stale(1800, 900))
+        self.assertTrue(is_worker_stale(1801, 900))
 
 
 

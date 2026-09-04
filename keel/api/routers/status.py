@@ -6,7 +6,7 @@ import time
 from fastapi import APIRouter
 
 from keel import __version__
-from keel.api.cycle_time import seconds_since_last_cycle
+from keel.api.cycle_time import is_worker_stale, seconds_since_last_cycle
 from keel.api.deps import get_ledger
 from keel.api.schemas import ConfigResponse, CredentialsStatus, LastCycleSummary, StatusResponse
 from keel.config import get_settings
@@ -23,6 +23,7 @@ def status() -> StatusResponse:
     settings = get_settings()
     last_raw = get_ledger().get_last_cycle_summary()
     last_cycle = LastCycleSummary.model_validate(last_raw) if last_raw else None
+    lag = seconds_since_last_cycle(last_raw)
     return StatusResponse(
         version=__version__,
         mode="read_only_control_plane",
@@ -35,7 +36,8 @@ def status() -> StatusResponse:
         ledger_db=str(settings.ledger_path),
         kill_switch=settings.kill_switch,
         last_cycle=last_cycle,
-        seconds_since_last_cycle=seconds_since_last_cycle(last_raw),
+        seconds_since_last_cycle=lag,
+        worker_stale=is_worker_stale(lag, settings.cycle_interval_seconds),
     )
 
 
@@ -54,4 +56,5 @@ def config() -> ConfigResponse:
         instruments=instruments,
         notify_configured=settings.notify_configured,
         exchange_mode=settings.exchange_mode,
+        cycle_interval_seconds=settings.cycle_interval_seconds,
     )
