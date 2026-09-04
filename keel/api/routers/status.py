@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
-from typing import Any
 
 from fastapi import APIRouter
 
 from keel import __version__
+from keel.api.cycle_time import seconds_since_last_cycle
 from keel.api.deps import get_ledger
 from keel.api.schemas import ConfigResponse, CredentialsStatus, LastCycleSummary, StatusResponse
 from keel.config import get_settings
@@ -16,42 +15,6 @@ from keel.domain.instruments import InstrumentPool
 router = APIRouter()
 
 _START_TIME = time.time()
-
-
-def _parse_cycle_timestamp(value: Any) -> float | None:
-    """Parse last_cycle.timestamp (unix float/int or ISO-8601 string) → epoch seconds."""
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        ts = float(value)
-        return ts if ts > 0 else None
-    if isinstance(value, str):
-        s = value.strip()
-        if not s:
-            return None
-        try:
-            ts = float(s)
-            return ts if ts > 0 else None
-        except ValueError:
-            pass
-        try:
-            # Accept trailing Z
-            iso = s.replace("Z", "+00:00")
-            return datetime.fromisoformat(iso).timestamp()
-        except ValueError:
-            return None
-    return None
-
-
-def _seconds_since_last_cycle(last_raw: dict[str, Any] | None) -> int | None:
-    if not last_raw:
-        return None
-    ts = _parse_cycle_timestamp(last_raw.get("timestamp"))
-    if ts is None:
-        return None
-    return max(0, int(time.time() - ts))
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -72,7 +35,7 @@ def status() -> StatusResponse:
         ledger_db=str(settings.ledger_path),
         kill_switch=settings.kill_switch,
         last_cycle=last_cycle,
-        seconds_since_last_cycle=_seconds_since_last_cycle(last_raw),
+        seconds_since_last_cycle=seconds_since_last_cycle(last_raw),
     )
 
 

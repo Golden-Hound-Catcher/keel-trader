@@ -15,6 +15,7 @@ from keel.api.schemas import (
     EventItem,
     FactorsResponse,
     HealthResponse,
+    ReadyResponse,
     MacdBlock,
     PositionsResponse,
     LastCycleSummary,
@@ -183,6 +184,11 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("exchange_mode", config_props)
         self.assertIn("DailyPnlResponse", comps)
         self.assertIn("/api/v1/pnl/daily", paths)
+        self.assertIn("/ready", paths)
+        self.assertIn("ReadyResponse", comps)
+        ready_props = comps["ReadyResponse"]["properties"]
+        self.assertIn("seconds_since_last_cycle", ready_props)
+        self.assertIn("worker_stale", ready_props)
 
     def test_kill_switch_on_status_and_config(self):
         status = StatusResponse(
@@ -229,6 +235,24 @@ class TestApiSchemas(unittest.TestCase):
         )
 
 
+class TestReadyResponseModel(unittest.TestCase):
+    def test_ready_response_defaults_and_fields(self):
+        m = ReadyResponse(ready=True, okx_configured=False, llm_configured=True)
+        self.assertTrue(m.ready)
+        self.assertIsNone(m.seconds_since_last_cycle)
+        self.assertFalse(m.worker_stale)
+        stale = ReadyResponse(
+            ready=False,
+            okx_configured=True,
+            llm_configured=False,
+            seconds_since_last_cycle=950,
+            worker_stale=True,
+        )
+        self.assertFalse(stale.ready)
+        self.assertEqual(stale.seconds_since_last_cycle, 950)
+        self.assertTrue(stale.worker_stale)
+
+
 class TestDomainRecordsExports(unittest.TestCase):
     def test_trade_and_factor_snapshot(self):
         t = TradeRecord(inst_id="BTC-USDT-SWAP", action="open", direction="long", size=1, price=100)
@@ -239,17 +263,17 @@ class TestDomainRecordsExports(unittest.TestCase):
 
 class TestSecondsSinceLastCycleHelper(unittest.TestCase):
     def test_parse_unix_and_iso(self):
-        from keel.api.routers.status import _parse_cycle_timestamp, _seconds_since_last_cycle
+        from keel.api.cycle_time import parse_cycle_timestamp, seconds_since_last_cycle
         import time
 
-        self.assertAlmostEqual(_parse_cycle_timestamp(1_700_000_000.0), 1_700_000_000.0)
-        self.assertIsNotNone(_parse_cycle_timestamp("2026-09-04T03:00:00+00:00"))
-        self.assertIsNone(_parse_cycle_timestamp("not-a-timestamp"))
-        self.assertIsNone(_parse_cycle_timestamp(None))
-        self.assertIsNone(_seconds_since_last_cycle(None))
-        self.assertIsNone(_seconds_since_last_cycle({"timestamp": "bogus"}))
+        self.assertAlmostEqual(parse_cycle_timestamp(1_700_000_000.0), 1_700_000_000.0)
+        self.assertIsNotNone(parse_cycle_timestamp("2026-09-04T03:00:00+00:00"))
+        self.assertIsNone(parse_cycle_timestamp("not-a-timestamp"))
+        self.assertIsNone(parse_cycle_timestamp(None))
+        self.assertIsNone(seconds_since_last_cycle(None))
+        self.assertIsNone(seconds_since_last_cycle({"timestamp": "bogus"}))
         now = time.time()
-        lag = _seconds_since_last_cycle({"timestamp": now - 30})
+        lag = seconds_since_last_cycle({"timestamp": now - 30})
         self.assertIsInstance(lag, int)
         self.assertGreaterEqual(lag, 29)
         self.assertLessEqual(lag, 35)

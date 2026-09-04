@@ -86,9 +86,19 @@ const decisionFilterOptions = computed(() => [
   ...store.watchlist.map((id) => ({ value: id, label: id })),
 ])
 
+const tradeFilterOptions = computed(() => [
+  { value: '', label: 'All' },
+  ...store.watchlist.map((id) => ({ value: id, label: id })),
+])
+
 function onDecisionFilterChange(ev: Event) {
   const el = ev.target as HTMLSelectElement
   store.setDecisionInstFilter(el.value)
+}
+
+function onTradeFilterChange(ev: Event) {
+  const el = ev.target as HTMLSelectElement
+  store.setTradeInstFilter(el.value)
 }
 
 function onFactorsLiveChange(ev: Event) {
@@ -753,9 +763,28 @@ const configStrip = computed(() => {
 
         <!-- TRADES -->
         <div v-show="store.activeTab === 'trades'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-          <h2 class="text-sm font-mono font-bold text-white mb-3">Trades (ledger)</h2>
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h2 class="text-sm font-mono font-bold text-white">
+              Trades (ledger)
+              <span class="text-[#707E94] font-normal">({{ store.trades.length }})</span>
+            </h2>
+            <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
+              <span class="text-[#707E94]">Instrument</span>
+              <select
+                class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
+                :value="store.tradeInstFilter"
+                @change="onTradeFilterChange"
+              >
+                <option
+                  v-for="opt in tradeFilterOptions"
+                  :key="opt.value || 'all'"
+                  :value="opt.value"
+                >{{ opt.label }}</option>
+              </select>
+            </label>
+          </div>
           <div v-if="!store.trades.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
-            No trades recorded
+            Empty — {{ store.tradeInstFilter ? `no trades for ${store.tradeInstFilter}` : 'no trades recorded' }}
           </div>
           <div v-else class="overflow-x-auto">
             <table class="w-full text-left text-xs font-mono">
