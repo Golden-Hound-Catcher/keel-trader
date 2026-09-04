@@ -207,14 +207,24 @@ class CooldownGate(RiskGate):
 
 
 class KillSwitchGate(RiskGate):
-    """Emergency kill switch."""
+    """Emergency kill switch — blocks all gate actions when armed.
+
+    Armed via ``KEEL_KILL_SWITCH`` (settings) and/or ``GateContext.kill_switch_active``.
+    Decision ``WAIT`` never reaches gates (orchestrator short-circuit).
+    """
+
+    def __init__(self, active: bool | None = None):
+        if active is None:
+            self._active = get_settings().kill_switch
+        else:
+            self._active = active
 
     @property
     def name(self) -> str:
         return "kill_switch"
 
     def check(self, ctx: GateContext) -> GateResult:
-        if ctx.kill_switch_active:
+        if self._active or ctx.kill_switch_active:
             return GateResult(
                 passed=False,
                 gate_name=self.name,

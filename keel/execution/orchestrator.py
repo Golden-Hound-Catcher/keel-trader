@@ -13,6 +13,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+from keel.config import get_settings
 from keel.exchange.paper import PaperAdapter
 from keel.exchange.protocol import ExchangeProtocol, OrderRequest, OrderResult
 from keel.risk.gates import GateContext, check_all_gates, gate_action_for_decision, RiskGate
@@ -63,7 +64,7 @@ class ExecutionOrchestrator:
         decision: Decision,
         daily_pnl: float = 0.0,
         cooldown_until: float = 0.0,
-        kill_switch: bool = False,
+        kill_switch: bool | None = None,
     ) -> ExecutionResult:
         """
         Execute a trading decision.
@@ -72,11 +73,13 @@ class ExecutionOrchestrator:
             decision: The LLM/rule decision to execute
             daily_pnl: Today's realized PnL
             cooldown_until: Timestamp when cooldown ends
-            kill_switch: Whether emergency stop is active
+            kill_switch: Emergency stop; None → ``settings.kill_switch`` (KEEL_KILL_SWITCH)
 
         Returns:
             ExecutionResult
         """
+        if kill_switch is None:
+            kill_switch = get_settings().kill_switch
         decision = validate_decision(decision)
 
         if decision.action == "WAIT":

@@ -16,6 +16,7 @@ from keel.api.schemas import (
     MacdBlock,
     PositionsResponse,
     LastCycleSummary,
+    ConfigResponse,
     StatusResponse,
     TradesResponse,
 )
@@ -122,6 +123,31 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("FactorsResponse", comps)
         status_props = comps["StatusResponse"]["properties"]
         self.assertIn("last_cycle", status_props)
+        self.assertIn("kill_switch", status_props)
+        self.assertIn("ConfigResponse", comps)
+        config_props = comps["ConfigResponse"]["properties"]
+        self.assertIn("kill_switch", config_props)
+
+    def test_kill_switch_on_status_and_config(self):
+        status = StatusResponse(
+            version="0.1.0",
+            mode="read_only_control_plane",
+            uptime_seconds=1,
+            environment="demo",
+            credentials={"okx": False, "llm": False},
+            ledger_db="/tmp/x.db",
+            kill_switch=True,
+        )
+        self.assertTrue(status.kill_switch)
+        cfg = ConfigResponse(
+            environment="demo",
+            max_positions=6,
+            max_daily_loss=150.0,
+            max_asset_margin=600.0,
+            llm_model="gpt-4o",
+            kill_switch=False,
+        )
+        self.assertFalse(cfg.kill_switch)
 
 
 class TestDomainRecordsExports(unittest.TestCase):

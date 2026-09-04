@@ -55,6 +55,8 @@ class Settings:
     max_same_direction_positions: int = 6
     max_daily_loss_usdt: float = 150.0
     max_single_asset_margin: float = 600.0
+    # Emergency kill switch (KEEL_KILL_SWITCH=0|1 / true|false); default off
+    kill_switch: bool = False
 
     @property
     def is_demo(self) -> bool:
@@ -157,6 +159,7 @@ def get_settings() -> Settings:
         max_concurrent_positions=_env_int("KEEL_MAX_POSITIONS", 6),
         max_daily_loss_usdt=_env_float("KEEL_MAX_DAILY_LOSS", 150.0),
         max_single_asset_margin=_env_float("KEEL_MAX_ASSET_MARGIN", 600.0),
+        kill_switch=_env_bool("KEEL_KILL_SWITCH", False),
     )
 
 

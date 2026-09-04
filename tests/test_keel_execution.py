@@ -148,6 +148,44 @@ class TestOrchestratorLedgerCoherence(unittest.TestCase):
         self.assertEqual(result.risk_gate_failed, "kill_switch")
         self.assertGreaterEqual(len(self.ledger.get_events(event_type="risk_gate_blocked")), 1)
 
+    def test_wait_ok_when_kill_switch(self):
+        orch = ExecutionOrchestrator(
+            exchange=self.exchange,
+            ledger=self.ledger,
+            risk_gates=[KillSwitchGate()],
+        )
+        decision = Decision(inst_id="BTC-USDT-SWAP", action="WAIT", reason="idle")
+        result = orch.execute_decision(decision, kill_switch=True)
+        self.assertTrue(result.success)
+        self.assertEqual(result.action, "WAIT")
+        self.assertIsNone(result.risk_gate_failed)
+
+    def test_kill_switch_from_settings(self):
+        import os
+        from keel.config import refresh_settings
+
+        prev = os.environ.get("KEEL_KILL_SWITCH")
+        os.environ["KEEL_KILL_SWITCH"] = "1"
+        refresh_settings()
+        try:
+            decision = Decision(
+                inst_id="BTC-USDT-SWAP",
+                action="BUY_LONG",
+                entry_price=100.2,
+                take_profit=122.0,
+                stop_loss=90.0,
+                margin_usdt=50.0,
+            )
+            result = self.orch.execute_decision(decision)
+            self.assertFalse(result.success)
+            self.assertEqual(result.risk_gate_failed, "kill_switch")
+        finally:
+            if prev is None:
+                os.environ.pop("KEEL_KILL_SWITCH", None)
+            else:
+                os.environ["KEEL_KILL_SWITCH"] = prev
+            refresh_settings()
+
 
 if __name__ == "__main__":
     unittest.main()

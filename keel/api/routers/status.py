@@ -31,6 +31,7 @@ def status() -> StatusResponse:
             llm=settings.llm_configured,
         ),
         ledger_db=str(settings.ledger_path),
+        kill_switch=settings.kill_switch,
         last_cycle=last_cycle,
     )
 
@@ -45,4 +46,5 @@ def config() -> ConfigResponse:
         max_daily_loss=settings.max_daily_loss_usdt,
         max_asset_margin=settings.max_single_asset_margin,
         llm_model=settings.llm_model,
+        kill_switch=settings.kill_switch,
     )

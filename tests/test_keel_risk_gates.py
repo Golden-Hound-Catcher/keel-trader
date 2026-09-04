@@ -1,7 +1,9 @@
 """Tests for keel.risk.gates module - hard risk gates."""
+import os
 import unittest
 import time
 
+from keel.config import refresh_settings
 from keel.risk.gates import (
     GateContext,
     GateResult,
@@ -307,6 +309,76 @@ class TestCheckAllGates(unittest.TestCase):
         passed, results = check_all_gates(ctx)
         self.assertFalse(passed)
         self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].gate_name, "kill_switch")
+
+
+
+class TestKillSwitchFromSettings(unittest.TestCase):
+    """Kill switch armed via KEEL_KILL_SWITCH settings (SPEC hard gate)."""
+
+    def setUp(self):
+        self._prev = os.environ.get("KEEL_KILL_SWITCH")
+        os.environ.pop("KEEL_KILL_SWITCH", None)
+        refresh_settings()
+
+    def tearDown(self):
+        if self._prev is None:
+            os.environ.pop("KEEL_KILL_SWITCH", None)
+        else:
+            os.environ["KEEL_KILL_SWITCH"] = self._prev
+        refresh_settings()
+
+    def _open_ctx(self, **kwargs):
+        base = dict(
+            inst_id="BTC-USDT-SWAP",
+            action="open_long",
+            size=1,
+            margin_required=100,
+            current_positions=0,
+            long_positions=0,
+            short_positions=0,
+            daily_pnl=0,
+            kill_switch_active=False,
+        )
+        base.update(kwargs)
+        return GateContext(**base)
+
+    def test_default_off(self):
+        gate = KillSwitchGate()
+        self.assertTrue(gate.check(self._open_ctx()).passed)
+
+    def test_env_one_blocks(self):
+        os.environ["KEEL_KILL_SWITCH"] = "1"
+        refresh_settings()
+        gate = KillSwitchGate()
+        result = gate.check(self._open_ctx())
+        self.assertFalse(result.passed)
+        self.assertEqual(result.gate_name, "kill_switch")
+
+    def test_env_true_blocks(self):
+        os.environ["KEEL_KILL_SWITCH"] = "true"
+        refresh_settings()
+        gate = KillSwitchGate()
+        self.assertFalse(gate.check(self._open_ctx()).passed)
+
+    def test_env_blocks_close_too(self):
+        os.environ["KEEL_KILL_SWITCH"] = "1"
+        refresh_settings()
+        gate = KillSwitchGate()
+        result = gate.check(self._open_ctx(action="close", margin_required=0))
+        self.assertFalse(result.passed)
+
+    def test_constructor_override_off_despite_env(self):
+        os.environ["KEEL_KILL_SWITCH"] = "1"
+        refresh_settings()
+        gate = KillSwitchGate(active=False)
+        self.assertTrue(gate.check(self._open_ctx()).passed)
+
+    def test_check_all_gates_respects_settings(self):
+        os.environ["KEEL_KILL_SWITCH"] = "1"
+        refresh_settings()
+        passed, results = check_all_gates(self._open_ctx())
+        self.assertFalse(passed)
         self.assertEqual(results[0].gate_name, "kill_switch")
 
 
