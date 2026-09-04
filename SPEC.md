@@ -277,6 +277,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-03 | Removed Vue `/admin/*` product surface; admin features deferred to future Keel admin API |
 | 2026-09-03 | Removed `r20_backend` `/api/v1/admin/*` + `admin_auth`; stub returns 410 |
 | 2026-09-03 | Elegance: Pydantic API schemas; domain owns Decision/records; kinematics in keel.factors; calculus_engine shim |
+| 2026-09-04 | Inventory-gated delete: `r20_backend/okx_client.py`, `prompt_views.py` (0 refs); kept `qq_gateway_daemon`/`audit` (qq_bind) |
 
 ---
 
@@ -333,3 +334,12 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Introduced `keel.api.schemas` Pydantic models for health/status/positions/balance/decisions/trades/events/factors.
 - Moved ledger record dataclasses and `Decision` into `keel.domain` (llm re-exports Decision).
 - Ported `scripts/calculus_engine` pure math into `keel.factors.kinematics` (honest names); scripts module is a deprecated shim for legacy imports.
+
+## Addendum: Dead r20_backend helpers removed (inventory)
+
+- Deleted `r20_backend/okx_client.py` and `r20_backend/prompt_views.py` after repo-wide
+  reference scan showed **zero** external imports/usages (admin UI already gone; Keel
+  OKX REST lives under `keel`).
+- **Kept** `r20_backend/qq_gateway_daemon.py` (spawned by `qq_bind.ensure_qq_gateway_daemon_running`)
+  and `r20_backend/audit.py` (imported by the daemon).
+- No dedicated unit tests existed solely for the deleted modules.

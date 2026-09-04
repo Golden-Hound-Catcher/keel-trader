@@ -61,6 +61,8 @@ Gateway job ticks remain separately gated (notify-only by default). Prefer Keel 
 | `r20_backend/admin_auth.py` | **Deleted** |
 | `r20_backend/app.py` admin FastAPI routes (`/api/v1/admin/*`, HTML `/admin`) | **Deleted** (replaced by 410 stub) |
 | `r20_backend/admin.html` | **Deleted** (prior PR) |
+| `r20_backend/okx_client.py` | **Deleted** (0 external refs; Keel uses `keel` OKX REST) |
+| `r20_backend/prompt_views.py` | **Deleted** (0 external refs; admin prompt editor gone) |
 
 Keel code does **not** import these helpers; they remain for `r20_gateway` and remaining historical `scripts/` only.
 
@@ -88,7 +90,8 @@ Install examples / enable only `keel-*.service`. All `r20-*.service` stay disabl
 | `scripts/factor_library.py` / `news_sentiment_harvester.py` | Still launched by `keel.worker` |
 | `scripts/qq_notifier.py` | Bridge into gateway events |
 | `scripts/sync_full_ledger.py` / `backup_runtime.py` / `okx_runtime.py` / … | Helpers still used by remaining scripts/tests |
-| `r20_backend/qq_gateway_daemon.py` | Legacy QQ daemon helper |
+| `r20_backend/qq_gateway_daemon.py` | Legacy QQ daemon helper (kept: spawned by `qq_bind`) |
+| `r20_backend/audit.py` | Append-only audit helper (kept: used by `qq_gateway_daemon`) |
 
 ### Deleted scripts (this pass)
 
@@ -125,6 +128,8 @@ python -m r20_backend.scheduler          # must exit 2
 python -c "import r20_backend.app"       # must exit 2 without KEEL_ALLOW_LEGACY_BACKEND=1
 KEEL_ALLOW_LEGACY_BACKEND=1 python -c "import r20_backend.app"  # opt-in ok (410 stub only)
 test ! -f r20_backend/admin_auth.py
+test ! -f r20_backend/okx_client.py
+test ! -f r20_backend/prompt_views.py
 test ! -d dashboard
 test ! -d frontend/src/views/admin
 test ! -f scripts/sync_web_data.py
