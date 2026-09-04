@@ -51,6 +51,10 @@ class Settings:
 
     # Optional notifications (empty → NullNotifier; see keel.notify)
     notify_webhook_url: str = ""
+    # When true, skip webhook unless cycle payload alert=True
+    notify_alerts_only: bool = False
+    # Webhook JSON shape: keel={"event","payload"} | discord={"content": text}
+    notify_format: Literal["keel", "discord"] = "keel"
 
     # Risk Limits
     max_concurrent_positions: int = 6
@@ -186,6 +190,15 @@ def _env_instruments() -> tuple[str, ...]:
     return parse_instruments(_env("KEEL_INSTRUMENTS", ""))
 
 
+
+def _env_notify_format() -> Literal["keel", "discord"]:
+    """Parse KEEL_NOTIFY_FORMAT; unknown values fall back to keel."""
+    raw = (_env("KEEL_NOTIFY_FORMAT", "keel") or "keel").strip().lower()
+    if raw == "discord":
+        return "discord"
+    return "keel"
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Load settings from environment. Cached for performance."""
@@ -224,6 +237,8 @@ def get_settings() -> Settings:
         api_token=_env("KEEL_API_TOKEN", ""),
         ledger_db=_env("KEEL_LEDGER_DB", ""),
         notify_webhook_url=_env("KEEL_NOTIFY_WEBHOOK_URL", ""),
+        notify_alerts_only=_env_bool("KEEL_NOTIFY_ALERTS_ONLY", False),
+        notify_format=_env_notify_format(),
         max_concurrent_positions=_env_int("KEEL_MAX_POSITIONS", 6),
         max_daily_loss_usdt=_env_float("KEEL_MAX_DAILY_LOSS", 150.0),
         max_single_asset_margin=_env_float("KEEL_MAX_ASSET_MARGIN", 600.0),

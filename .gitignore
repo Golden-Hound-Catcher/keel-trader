@@ -125,3 +125,6 @@ tool_results/
 linux_do_post_draft.html
 linux_do_promo_card*.html
 *_TODO.md
+
+# Rewritten systemd units from deploy/install.sh
+deploy/*.service.local

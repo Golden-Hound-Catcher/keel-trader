@@ -15,7 +15,8 @@ Stage 5: optional OkxRestAdapter via keel.exchange.factory.build_exchange.
 
 Stage 6: DecisionPolicy port (Stub/Rule/LLM) + modular prompts; default Rule for offline.
 
-Optional notify port (keel.notify): after cycle, POST summary when KEEL_NOTIFY_WEBHOOK_URL set.
+Optional notify port (keel.notify): after cycle, POST summary when KEEL_NOTIFY_WEBHOOK_URL set;
+respects KEEL_NOTIFY_ALERTS_ONLY / KEEL_NOTIFY_FORMAT (keel|discord).
 
 Monitor: writes worker_cycle_summary to the ledger for GET /api/v1/status last_cycle.
 """
@@ -501,10 +502,19 @@ def run_paper_cycle(
         "cycle_summary": cycle_summary,
     }
 
+    notify_payload = cycle_notify_payload(summary)
+    summary["notify_alert"] = bool(notify_payload.get("alert"))
+    summary["notify_severity"] = notify_payload.get("severity")
+    if settings.notify_alerts_only and not notify_payload.get("alert"):
+        summary["notify_success"] = True
+        summary["notify_skipped"] = True
+        summary["notify_detail"] = "alerts_only"
+        return summary
+
     notify_result = notifier.notify(
         NotifyEvent(
             event="trader_cycle_complete",
-            payload=cycle_notify_payload(summary),
+            payload=notify_payload,
         )
     )
     summary["notify_success"] = notify_result.success

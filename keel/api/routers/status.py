@@ -66,6 +66,8 @@ def config() -> ConfigResponse:
         decision_policy=_active_decision_policy_name(settings),
         instruments=instruments,
         notify_configured=settings.notify_configured,
+        notify_alerts_only=settings.notify_alerts_only,
+        notify_format=settings.notify_format,
         exchange_mode=settings.exchange_mode,
         cycle_interval_seconds=settings.cycle_interval_seconds,
         scheduler_jobs=list(settings.scheduler_jobs),
