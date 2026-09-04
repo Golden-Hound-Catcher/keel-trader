@@ -24,8 +24,8 @@ sudo systemctl enable --now keel-worker keel-api
 | Unit | Status | Re-enable marker (opt-in) |
 |------|--------|---------------------------|
 | `r20-quantum.service` | **ConditionPathExists** gate + `KEEL_ALLOW_LEGACY_BACKEND=1` | `data/.enable_legacy_r20_quantum` |
-| `r20-gateway.service` | **ConditionPathExists** gate | `data/.enable_legacy_r20_gateway` |
-| `r20-scheduler.service` | **DISABLED** — `ConditionPathExists` + `/bin/false` | never (use keel-worker) |
+| `r20-scheduler.service` | **DISABLED** — `ConditionPathExists` + `/bin/false` | never (use keel-worker; aligns with soft-blocked `r20_backend.scheduler`) |
+| `r20-gateway.service` | **removed** (package `r20_gateway/` deleted) | n/a |
 
 New installs should **not** enable any `r20-*.service`. Inventory and rationale: [`../LEGACY.md`](../LEGACY.md).
 Do not run two schedulers. See [`../STANDALONE.md`](../STANDALONE.md).

@@ -3,7 +3,7 @@ Typed Protocol for optional cycle notifications.
 
 Notifier is a replaceable port: Null (default) or Webhook POST JSON.
 Does not expand into QQ / WeCom / Telegram product channels; those stay
-outside Keel core (see SPEC non-goals). Independent of r20_gateway.
+outside Keel core (see SPEC non-goals). Independent of the removed r20_gateway package.
 """
 from __future__ import annotations
 

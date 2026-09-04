@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
 import warnings
 from pathlib import Path
@@ -34,33 +33,6 @@ class TestLegacySchedulerExits(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 2)
 
 
-class TestGatewayWorkerNoSchedulerByDefault(unittest.TestCase):
-    def test_worker_skips_gateway_scheduler_without_flag(self):
-        import r20_gateway.worker as worker
-
-        with patch.dict(os.environ, {"KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER": ""}, clear=False):
-            os.environ.pop("KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER", None)
-            with tempfile.TemporaryDirectory() as tmp:
-                lock = Path(tmp) / ".r20_gateway.lock"
-                log = Path(tmp) / "r20_gateway.log"
-                with (
-                    patch.object(worker, "LOCK_FILE", lock),
-                    patch.object(worker, "LOG_FILE", log),
-                    patch("r20_gateway.worker.GatewayStore") as store_cls,
-                    patch("r20_gateway.worker.GatewayScheduler") as sched_cls,
-                ):
-                    store_cls.return_value.recover_processing = lambda: None
-                    prev = worker.RUNNING
-                    try:
-                        worker.RUNNING = False  # skip delivery loop after setup
-                        worker.run()
-                        sched_cls.assert_not_called()
-                        self.assertTrue(log.exists())
-                        self.assertIn("notification delivery only", log.read_text())
-                    finally:
-                        worker.RUNNING = prev
-
-
 class TestLegacyWarnHelper(unittest.TestCase):
     def test_warn_legacy_respects_opt_in(self):
         import keel.legacy as legacy
@@ -83,7 +55,6 @@ class TestLegacyWarnHelper(unittest.TestCase):
                 legacy.warn_legacy("unit-test-component", prefer="keel.api", loud=False)
             self.assertTrue(any(issubclass(w.category, DeprecationWarning) for w in caught))
             self.assertIn("unit-test-component", str(caught[0].message))
-
 
 
 class TestLegacyBackendSoftBlock(unittest.TestCase):
@@ -160,7 +131,6 @@ class TestLegacyBackendSoftBlock(unittest.TestCase):
         )
 
 
-
 class TestAdminApiRemoved(unittest.TestCase):
     def test_admin_auth_module_gone(self):
         self.assertFalse((ROOT / "r20_backend" / "admin_auth.py").exists())
@@ -176,8 +146,21 @@ class TestAdminApiRemoved(unittest.TestCase):
             "qq_gateway_daemon.py",
             "audit.py",
             "council_manager.py",
+            "config.py",
+            "backup_secrets.py",
+            "backup_store.py",
+            "llm_manager.py",
+            "settings_store.py",
+            "notifications.py",
+            "schedule_store.py",
+            "net_security.py",
         ):
             self.assertFalse((ROOT / "r20_backend" / name).exists(), msg=name)
+
+    def test_soft_block_stubs_remain(self):
+        self.assertTrue((ROOT / "r20_backend" / "__init__.py").exists())
+        self.assertTrue((ROOT / "r20_backend" / "app.py").exists())
+        self.assertTrue((ROOT / "r20_backend" / "scheduler.py").exists())
 
     def test_stub_returns_410_for_former_admin_paths(self):
         from fastapi.testclient import TestClient
@@ -195,8 +178,6 @@ class TestAdminApiRemoved(unittest.TestCase):
             body = response.json()
             self.assertEqual(body.get("status"), "gone")
             self.assertIn("keel.api", body.get("prefer", ""))
-
-
 
 
 class TestDeletedLegacyScripts(unittest.TestCase):
@@ -229,9 +210,9 @@ class TestDeletedLegacyScripts(unittest.TestCase):
         for name in gone:
             self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)
 
-    def test_dead_gateway_helpers_gone(self):
-        for name in ("agents.py", "supervisor.py", "plugins.py"):
-            self.assertFalse((ROOT / "r20_gateway" / name).exists(), msg=name)
+    def test_r20_gateway_package_removed(self):
+        self.assertFalse((ROOT / "r20_gateway").exists())
+        self.assertFalse((ROOT / "deploy" / "r20-gateway.service").exists())
 
     def test_qq_bind_test_removed(self):
         self.assertFalse((ROOT / "tests" / "test_qq_bind.py").exists())
@@ -248,21 +229,19 @@ class TestDeletedLegacyScripts(unittest.TestCase):
             "test_backup_methods.py",
             "test_prompt_math_foundations.py",
             "test_custom_systems.py",
+            "test_gateway.py",
+            "test_gateway_runtime.py",
+            "test_gateway_scheduler.py",
+            "test_notifications.py",
+            "test_llm_multi_provider.py",
+            "test_control_plane_v2.py",
+            "test_open_source_control.py",
         ):
             self.assertFalse((ROOT / "tests" / name).exists(), msg=name)
 
     def test_retired_trader_scripts_gone(self):
         self.assertFalse((ROOT / "scripts" / "ai_factor_trader.py").exists())
         self.assertFalse((ROOT / "scripts" / "ai_brain_trader.py").exists())
-
-    def test_gateway_scheduler_tick_gated(self):
-        from r20_gateway.scheduler import legacy_gateway_jobs_enabled
-
-        with patch.dict(os.environ, {"KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER": ""}, clear=False):
-            os.environ.pop("KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER", None)
-            self.assertFalse(legacy_gateway_jobs_enabled())
-        with patch.dict(os.environ, {"KEEL_ENABLE_LEGACY_GATEWAY_SCHEDULER": "1"}):
-            self.assertTrue(legacy_gateway_jobs_enabled())
 
 
 if __name__ == "__main__":
