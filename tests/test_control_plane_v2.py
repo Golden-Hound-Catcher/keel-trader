@@ -7,42 +7,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import r20_backend.notifications as notifications
-import r20_backend.okx_trade_service as okx
 import scripts.prompt_library as prompts
 from r20_gateway.events import GatewayEvent
 from r20_gateway.store import GatewayStore
-from scripts.okx_runtime import OKXEnvironment
-
-
-class OKXV5Tests(unittest.TestCase):
-    def test_demo_request_is_signed_and_uses_v5_header(self):
-        env=OKXEnvironment("demo","AK","SK","PP")
-        class Response:
-            status=200
-            def __enter__(self): return self
-            def __exit__(self,*_): return False
-            def read(self): return b'{"code":"0","data":[]}'
-        captured={}
-        def open_(request,timeout=0):
-            captured["request"]=request; return Response()
-        with patch.object(okx.urllib.request,"urlopen",side_effect=open_):
-            self.assertEqual(okx._request("GET","/api/v5/account/positions",{"instType":"SWAP"},env),[])
-        req=captured["request"]
-        headers={k.lower():v for k,v in req.header_items()}
-        self.assertIn("/api/v5/account/positions?instType=SWAP",req.full_url)
-        self.assertEqual(headers["x-simulated-trading"],"1")
-        self.assertEqual(headers["ok-access-key"],"AK")
-        self.assertTrue(headers["ok-access-sign"])
-
-    def test_business_scode_fails_closed(self):
-        env=OKXEnvironment("live","AK","SK","PP")
-        class Response:
-            status=200
-            def __enter__(self): return self
-            def __exit__(self,*_): return False
-            def read(self): return b'{"code":"0","data":[{"sCode":"51008","sMsg":"margin"}]}'
-        with patch.object(okx.urllib.request,"urlopen",return_value=Response()):
-            with self.assertRaises(RuntimeError): okx._request("POST","/api/v5/trade/close-position",{"instId":"BTC-USDT-SWAP"},env)
 
 
 class ChannelBusinessCodeTests(unittest.TestCase):
@@ -140,6 +107,5 @@ class GatewayFDTests(unittest.TestCase):
             for i in range(150): store.set_state("x",str(i)); store.get_state("x"); store.stats()
             after=len(os.listdir("/proc/self/fd"))
             self.assertLessEqual(after-before,3)
-
 
 if __name__ == "__main__": unittest.main()

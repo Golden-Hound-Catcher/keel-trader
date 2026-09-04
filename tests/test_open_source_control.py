@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import r20_backend.notifications as notifications
-import r20_backend.okx_trade_service as trade_service
 import scripts.okx_runtime as okx_runtime
 import scripts.prompt_library as prompts
 import scripts.backup_runtime as backup_runtime
@@ -43,37 +42,6 @@ class OKXEnvironmentTests(unittest.TestCase):
             with patch.dict(os.environ, {"R20_OKX_ENV":"live","OKX_LIVE_API_KEY":"L","OKX_LIVE_SECRET_KEY":"S","OKX_LIVE_PASSPHRASE":"P"}, clear=True):
                 self.assertTrue(okx_runtime.replace_cli_prefix("okx account positions").startswith("okx --demo "))
         finally: okx_runtime.unfreeze_environment()
-
-    def test_fast_close_rejects_environment_change_before_any_order(self):
-        snapshot_env = okx_runtime.OKXEnvironment("demo", "A", "B", "C")
-        changed_env = okx_runtime.OKXEnvironment("live", "L", "S", "P")
-        token, confirmation = trade_service._create_intent(snapshot_env, {"instId":"BTC-USDT-SWAP","posSide":"long","posId":"1","pos":"2"})
-        with patch.object(trade_service, "selected_environment", return_value=changed_env), patch.object(trade_service, "_request") as request:
-            with self.assertRaises(ValueError): trade_service.fast_close_confirmed(token, confirmation)
-            request.assert_not_called()
-
-    def test_cli_cancel_uses_positional_instrument_argument(self):
-        env = okx_runtime.OKXEnvironment("demo", "", "", "")
-        with patch.object(trade_service, "_run_cli", return_value=[]) as run:
-            trade_service._request("POST", "/api/v5/trade/cancel-order", {"instId":"SOL-USDT-SWAP","ordId":"123"}, env)
-        self.assertEqual(run.call_args.args[0], ["okx","--demo","swap","cancel","SOL-USDT-SWAP","--ordId","123","--json"])
-
-    def test_fast_close_cancels_all_same_position_orders_before_close(self):
-        env = okx_runtime.OKXEnvironment("demo", "A", "B", "C")
-        position={"instId":"SOL-USDT-SWAP","posSide":"long","posId":"1","pos":"4","mgnMode":"cross"}
-        token, confirmation = trade_service._create_intent(env, position)
-        responses=[
-            [position],
-            [{"instId":"SOL-USDT-SWAP","posSide":"long","ordId":"11","reduceOnly":"true","side":"sell"}],
-            [], [], [],
-        ]
-        with patch.object(trade_service,"selected_environment",return_value=env), patch.object(trade_service,"_request",side_effect=responses) as request, patch.object(trade_service.time,"sleep"):
-            result=trade_service.fast_close_confirmed(token,confirmation)
-        self.assertEqual(result["status"],"confirmed_closed")
-        self.assertEqual(result["canceled_entry_orders"],["11"])
-        calls=[(c.args[0],c.args[1],c.args[2]) for c in request.call_args_list]
-        self.assertIn(("POST","/api/v5/trade/cancel-order",{"instId":"SOL-USDT-SWAP","ordId":"11"}),calls)
-        self.assertTrue(any(path=="/api/v5/trade/close-position" for _,path,_ in calls))
 
 
 class NotificationChannelRemovalTests(unittest.TestCase):
@@ -146,6 +114,5 @@ class NetworkSecurityTests(unittest.TestCase):
         with patch("socket.getaddrinfo", return_value=[(2,1,6,"",("10.0.0.2",443))]):
             with self.assertRaises(ValueError): net_security.validate_outbound_url("https://nas.example")
             self.assertEqual(net_security.validate_outbound_url("https://nas.example", allow_private=True), "https://nas.example")
-
 
 if __name__ == "__main__": unittest.main()

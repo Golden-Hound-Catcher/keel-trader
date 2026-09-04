@@ -166,7 +166,7 @@ class TestAdminApiRemoved(unittest.TestCase):
         self.assertFalse((ROOT / "r20_backend" / "admin_auth.py").exists())
 
     def test_dead_helper_modules_gone(self):
-        for name in ("okx_client.py", "prompt_views.py"):
+        for name in ("okx_client.py", "prompt_views.py", "account_baseline.py", "okx_trade_service.py"):
             self.assertFalse((ROOT / "r20_backend" / name).exists(), msg=name)
 
     def test_stub_returns_410_for_former_admin_paths(self):
