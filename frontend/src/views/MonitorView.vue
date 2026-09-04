@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Shield,
   Ban,
+  AlertTriangle,
   TrendingUp,
   Clock,
   Settings2,
@@ -340,6 +341,16 @@ function formatCycleIntervalLabel(seconds: number): string {
   return `${seconds}s`
 }
 
+/** Overview banner copy when workerLagStale. */
+const workerStaleBannerText = computed(() => {
+  const lag =
+    workerLagSeconds.value == null
+      ? '上次周期未知'
+      : `上次周期 ${workerLagSeconds.value} 秒前`
+  const cycle = `周期约 ${formatCycleIntervalLabel(cycleIntervalSeconds.value)}`
+  return `Worker 可能停滞 · ${lag} · ${cycle}`
+})
+
 const configStrip = computed(() => {
   const c = store.config
   const env = c?.environment || store.status?.environment || store.health?.environment || '—'
@@ -467,6 +478,23 @@ const configStrip = computed(() => {
               </div>
               <div class="text-xs font-mono text-rose-200/80 mt-0.5">
                 交易已冻结 · risk gates deny all trading · env-only (KEEL_KILL_SWITCH) · no admin toggle
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="workerLagStale"
+            class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-start gap-3"
+            role="status"
+            aria-live="polite"
+          >
+            <AlertTriangle class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div class="min-w-0">
+              <div class="text-sm font-mono font-extrabold text-amber-300 tracking-wide">
+                WORKER STALE
+              </div>
+              <div class="text-xs font-mono text-amber-200/80 mt-0.5">
+                {{ workerStaleBannerText }}
               </div>
             </div>
           </div>
@@ -834,7 +862,7 @@ const configStrip = computed(() => {
           <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
             <h2 class="text-sm font-mono font-bold text-white">
               Decisions (ledger)
-              <span class="text-[#707E94] font-normal">({{ store.decisions.length }})</span>
+              <span class="text-[#707E94] font-normal">({{ store.decisionsTabRows.length }})</span>
             </h2>
             <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
               <span class="text-[#707E94]">Instrument</span>
@@ -851,7 +879,7 @@ const configStrip = computed(() => {
               </select>
             </label>
           </div>
-          <div v-if="!store.decisions.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
+          <div v-if="!store.decisionsTabRows.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
             Empty — {{ store.decisionInstFilter ? `no decisions for ${store.decisionInstFilter}` : 'worker has not written decisions yet' }}
           </div>
           <div v-else class="overflow-x-auto">
@@ -867,7 +895,7 @@ const configStrip = computed(() => {
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
-                <tr v-for="d in store.decisions" :key="String(d.id)">
+                <tr v-for="d in store.decisionsTabRows" :key="String(d.id)">
                   <td class="py-2 pr-3 text-[#707E94] whitespace-nowrap">{{ fmtTs(d.timestamp) }}</td>
                   <td class="py-2 pr-3 text-white">{{ d.inst_id }}</td>
                   <td class="py-2 pr-3 text-cyan-400">{{ d.action }}</td>
@@ -885,7 +913,7 @@ const configStrip = computed(() => {
           <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
             <h2 class="text-sm font-mono font-bold text-white">
               Trades (ledger)
-              <span class="text-[#707E94] font-normal">({{ store.trades.length }})</span>
+              <span class="text-[#707E94] font-normal">({{ store.tradesTabRows.length }})</span>
             </h2>
             <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
               <span class="text-[#707E94]">Instrument</span>
@@ -902,7 +930,7 @@ const configStrip = computed(() => {
               </select>
             </label>
           </div>
-          <div v-if="!store.trades.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
+          <div v-if="!store.tradesTabRows.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
             Empty — {{ store.tradeInstFilter ? `no trades for ${store.tradeInstFilter}` : 'no trades recorded' }}
           </div>
           <div v-else class="overflow-x-auto">
@@ -919,7 +947,7 @@ const configStrip = computed(() => {
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
-                <tr v-for="t in store.trades" :key="String(t.id)">
+                <tr v-for="t in store.tradesTabRows" :key="String(t.id)">
                   <td class="py-2 pr-3 text-[#707E94] whitespace-nowrap">{{ fmtTs(t.timestamp) }}</td>
                   <td class="py-2 pr-3 text-white">{{ t.inst_id }}</td>
                   <td class="py-2 pr-3 text-cyan-400">{{ t.action }}</td>
@@ -941,7 +969,7 @@ const configStrip = computed(() => {
           <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
             <h2 class="text-sm font-mono font-bold text-white">
               Ledger events
-              <span class="text-[#707E94] font-normal">({{ store.events.length }})</span>
+              <span class="text-[#707E94] font-normal">({{ store.eventsTabRows.length }})</span>
             </h2>
             <div class="flex flex-wrap items-center gap-3">
               <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
@@ -974,12 +1002,12 @@ const configStrip = computed(() => {
               </label>
             </div>
           </div>
-          <div v-if="!store.events.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
+          <div v-if="!store.eventsTabRows.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
             Empty — {{ eventsEmptyMessage }}
           </div>
           <ul v-else class="space-y-2 max-h-[32rem] overflow-y-auto">
             <li
-              v-for="(e, i) in store.events"
+              v-for="(e, i) in store.eventsTabRows"
               :key="i"
               class="text-xs font-mono bg-[#080B10] border border-[#1A2232] rounded-lg px-3 py-2 text-[#A8B3C7]"
             >

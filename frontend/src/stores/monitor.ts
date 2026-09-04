@@ -30,8 +30,14 @@ export const useMonitorStore = defineStore('monitor', () => {
   const positions = ref<KeelPosition[]>([])
   const positionsSource = ref<string>('')
   const decisions = ref<KeelDecision[]>([])
+  /** Decisions tab rows when inst filter is set; Overview always uses unfiltered `decisions`. */
+  const decisionsFiltered = ref<KeelDecision[]>([])
   const trades = ref<KeelTrade[]>([])
+  /** Trades tab rows when inst filter is set; Overview stays on unfiltered `trades` if shown. */
+  const tradesFiltered = ref<KeelTrade[]>([])
   const events = ref<Array<Record<string, unknown>>>([])
+  /** Events tab rows when filters are set; Overview «Recent events» uses unfiltered `events`. */
+  const eventsFiltered = ref<Array<Record<string, unknown>>>([])
   const factors = ref<Record<string, KeelFactors>>({})
   /** When true, factors fetch uses ?live=1 (OKX public candles); else ledger snapshots. */
   const factorsLive = ref(false)
@@ -66,6 +72,18 @@ export const useMonitorStore = defineStore('monitor', () => {
     if (!f) return positions.value
     return positions.value.filter((p) => p.inst_id === f)
   })
+  /** Decisions tab binding: filtered when inst filter set, else unfiltered. */
+  const decisionsTabRows = computed(() =>
+    decisionInstFilter.value ? decisionsFiltered.value : decisions.value,
+  )
+  /** Trades tab binding: filtered when inst filter set, else unfiltered. */
+  const tradesTabRows = computed(() =>
+    tradeInstFilter.value ? tradesFiltered.value : trades.value,
+  )
+  /** Events tab binding: filtered when any event filter set, else unfiltered. */
+  const eventsTabRows = computed(() =>
+    eventInstFilter.value || eventTypeFilter.value ? eventsFiltered.value : events.value,
+  )
   const uptimeLabel = computed(() => {
     const s = status.value?.uptime_seconds ?? 0
     if (s < 60) return `${s}s`
@@ -88,18 +106,10 @@ export const useMonitorStore = defineStore('monitor', () => {
         keelFetch<KeelDailyPnl>('/api/v1/pnl/daily'),
         keelFetch<KeelBalance>('/api/v1/balance'),
         keelFetch<{ count: number; positions: KeelPosition[]; source: string }>('/api/v1/positions'),
-        keelFetch<{ count: number; decisions: KeelDecision[] }>(
-          decisionInstFilter.value
-            ? `/api/v1/decisions?limit=50&inst_id=${encodeURIComponent(decisionInstFilter.value)}`
-            : '/api/v1/decisions?limit=50',
-        ),
-        keelFetch<{ count: number; trades: KeelTrade[] }>(
-          tradeInstFilter.value
-            ? `/api/v1/trades?limit=50&inst_id=${encodeURIComponent(tradeInstFilter.value)}`
-            : '/api/v1/trades?limit=50',
-        ),
+        keelFetch<{ count: number; decisions: KeelDecision[] }>('/api/v1/decisions?limit=50'),
+        keelFetch<{ count: number; trades: KeelTrade[] }>('/api/v1/trades?limit=50'),
         keelFetch<{ count: number; events: Array<Record<string, unknown>> }>(
-          buildEventsUrl(),
+          '/api/v1/events?limit=50',
         ),
       ])
 
@@ -141,6 +151,21 @@ export const useMonitorStore = defineStore('monitor', () => {
 
       if (ev.status === 'fulfilled') events.value = ev.value.events || []
       else errors.push(`events: ${ev.reason?.message || ev.reason}`)
+
+      // Refresh tab-only filtered lists without touching Overview unfiltered refs
+      const filteredRefresh = await Promise.allSettled([
+        decisionInstFilter.value ? refreshDecisionsFiltered() : Promise.resolve(),
+        tradeInstFilter.value ? refreshTradesFiltered() : Promise.resolve(),
+        (eventInstFilter.value || eventTypeFilter.value) ? refreshEventsFiltered() : Promise.resolve(),
+      ])
+      const filteredLabels = ['decisions(filter)', 'trades(filter)', 'events(filter)'] as const
+      for (let i = 0; i < filteredRefresh.length; i++) {
+        const r = filteredRefresh[i]
+        if (r.status === 'rejected') {
+          const msg = (r.reason as { message?: string })?.message || String(r.reason)
+          errors.push(`${filteredLabels[i]}: ${msg}`)
+        }
+      }
 
       // Factors per instrument (best-effort; per-inst loading/error; do not block poll)
       await fetchFactors()
@@ -200,35 +225,60 @@ export const useMonitorStore = defineStore('monitor', () => {
     factorLoading.value = nextLoading
   }
 
-  async function fetchDecisionsOnly() {
-    const url = decisionInstFilter.value
-      ? `/api/v1/decisions?limit=50&inst_id=${encodeURIComponent(decisionInstFilter.value)}`
-      : '/api/v1/decisions?limit=50'
-    const dec = await keelFetch<{ count: number; decisions: KeelDecision[] }>(url)
-    decisions.value = dec.decisions || []
-  }
-
-  async function fetchTradesOnly() {
-    const url = tradeInstFilter.value
-      ? `/api/v1/trades?limit=50&inst_id=${encodeURIComponent(tradeInstFilter.value)}`
-      : '/api/v1/trades?limit=50'
-    const tr = await keelFetch<{ count: number; trades: KeelTrade[] }>(url)
-    trades.value = tr.trades || []
-  }
-
-  function buildEventsUrl(): string {
+  function buildEventsUrl(filtered: boolean): string {
     const params = new URLSearchParams()
     params.set('limit', '50')
-    if (eventTypeFilter.value) params.set('event_type', eventTypeFilter.value)
-    if (eventInstFilter.value) params.set('inst_id', eventInstFilter.value)
+    if (filtered) {
+      if (eventTypeFilter.value) params.set('event_type', eventTypeFilter.value)
+      if (eventInstFilter.value) params.set('inst_id', eventInstFilter.value)
+    }
     return `/api/v1/events?${params.toString()}`
   }
 
-  async function fetchEventsOnly() {
+  async function refreshDecisionsFiltered() {
+    const url = `/api/v1/decisions?limit=50&inst_id=${encodeURIComponent(decisionInstFilter.value)}`
+    const dec = await keelFetch<{ count: number; decisions: KeelDecision[] }>(url)
+    decisionsFiltered.value = dec.decisions || []
+  }
+
+  async function refreshTradesFiltered() {
+    const url = `/api/v1/trades?limit=50&inst_id=${encodeURIComponent(tradeInstFilter.value)}`
+    const tr = await keelFetch<{ count: number; trades: KeelTrade[] }>(url)
+    tradesFiltered.value = tr.trades || []
+  }
+
+  async function refreshEventsFiltered() {
     const ev = await keelFetch<{ count: number; events: Array<Record<string, unknown>> }>(
-      buildEventsUrl(),
+      buildEventsUrl(true),
     )
-    events.value = ev.events || []
+    eventsFiltered.value = ev.events || []
+  }
+
+  /** Tab filter change: update filtered list only; never touch Overview `decisions`. */
+  async function fetchDecisionsOnly() {
+    if (!decisionInstFilter.value) {
+      decisionsFiltered.value = []
+      return
+    }
+    await refreshDecisionsFiltered()
+  }
+
+  /** Tab filter change: update filtered list only; never touch Overview `trades`. */
+  async function fetchTradesOnly() {
+    if (!tradeInstFilter.value) {
+      tradesFiltered.value = []
+      return
+    }
+    await refreshTradesFiltered()
+  }
+
+  /** Tab filter change: update filtered list only; never touch Overview `events`. */
+  async function fetchEventsOnly() {
+    if (!eventInstFilter.value && !eventTypeFilter.value) {
+      eventsFiltered.value = []
+      return
+    }
+    await refreshEventsFiltered()
   }
 
   function setEventInstFilter(instId: string) {
@@ -301,8 +351,14 @@ export const useMonitorStore = defineStore('monitor', () => {
     positionsSource,
     filteredPositions,
     decisions,
+    decisionsFiltered,
+    decisionsTabRows,
     trades,
+    tradesFiltered,
+    tradesTabRows,
     events,
+    eventsFiltered,
+    eventsTabRows,
     factors,
     factorsLive,
     factorLoading,
