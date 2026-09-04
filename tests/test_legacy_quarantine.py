@@ -1,183 +1,30 @@
-"""Stage 7: legacy quarantine guards."""
+"""Legacy package absence + supported entrypoints (O3 hard-delete)."""
 from __future__ import annotations
 
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
-import warnings
 from pathlib import Path
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class TestLegacySchedulerExits(unittest.TestCase):
-    def test_r20_backend_scheduler_exits_nonzero(self):
-        result = subprocess.run(
-            [sys.executable, "-m", "r20_backend.scheduler"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env={**os.environ, "PYTHONWARNINGS": "ignore"},
-        )
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("DISABLED", result.stderr)
+class TestR20PackagesRemoved(unittest.TestCase):
+    def test_r20_backend_package_absent(self):
+        self.assertFalse((ROOT / "r20_backend").exists())
 
-    def test_scheduler_main_raises_systemexit_2(self):
-        from r20_backend.scheduler import main
+    def test_r20_gateway_package_absent(self):
+        self.assertFalse((ROOT / "r20_gateway").exists())
+        self.assertFalse((ROOT / "deploy" / "r20-gateway.service").exists())
 
-        with self.assertRaises(SystemExit) as ctx:
-            main()
-        self.assertEqual(ctx.exception.code, 2)
+    def test_legacy_systemd_units_removed(self):
+        self.assertFalse((ROOT / "deploy" / "r20-quantum.service").exists())
+        self.assertFalse((ROOT / "deploy" / "r20-scheduler.service").exists())
 
-
-class TestLegacyWarnHelper(unittest.TestCase):
-    def test_warn_legacy_respects_opt_in(self):
-        import keel.legacy as legacy
-
-        legacy._EMITTED.clear()
-        with patch.dict(os.environ, {"KEEL_USE_LEGACY": "1"}):
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                legacy.warn_legacy("unit-test-opt-in", prefer="keel.worker", loud=False)
-            self.assertEqual(caught, [])
-
-    def test_warn_legacy_emits_without_opt_in(self):
-        import keel.legacy as legacy
-
-        legacy._EMITTED.clear()
-        with patch.dict(os.environ, {"KEEL_USE_LEGACY": ""}, clear=False):
-            os.environ.pop("KEEL_USE_LEGACY", None)
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                legacy.warn_legacy("unit-test-component", prefer="keel.api", loud=False)
-            self.assertTrue(any(issubclass(w.category, DeprecationWarning) for w in caught))
-            self.assertIn("unit-test-component", str(caught[0].message))
-
-
-class TestLegacyBackendSoftBlock(unittest.TestCase):
-    def test_require_legacy_backend_exits_without_flag(self):
-        from keel.legacy import require_legacy_backend
-
-        with patch.dict(os.environ, {"KEEL_ALLOW_LEGACY_BACKEND": ""}, clear=False):
-            os.environ.pop("KEEL_ALLOW_LEGACY_BACKEND", None)
-            # Simulate non-pytest import path for the guard itself.
-            with patch("keel.legacy.legacy_backend_allowed", return_value=False):
-                with self.assertRaises(SystemExit) as ctx:
-                    require_legacy_backend(component="r20_backend.app")
-                self.assertEqual(ctx.exception.code, 2)
-
-    def test_require_legacy_backend_allows_with_flag(self):
-        from keel.legacy import require_legacy_backend
-
-        with patch.dict(os.environ, {"KEEL_ALLOW_LEGACY_BACKEND": "1"}):
-            require_legacy_backend(component="r20_backend.app")  # no raise
-
-    def test_uvicorn_style_import_exits_without_allow(self):
-        """Accidental ``python -c 'import r20_backend.app'`` without flag fails."""
-        env = {**os.environ, "PYTHONWARNINGS": "ignore"}
-        env.pop("KEEL_ALLOW_LEGACY_BACKEND", None)
-        env.pop("PYTEST_CURRENT_TEST", None)
-        # Ensure subprocess does not inherit a pytest module via sitecustomize; fresh interp.
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import importlib; importlib.import_module('r20_backend.app')",
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
-        )
-        self.assertEqual(result.returncode, 2, msg=result.stderr)
-        self.assertIn("DISABLED", result.stderr)
-        self.assertIn("keel.api.app", result.stderr)
-
-    def test_uvicorn_style_import_ok_with_allow(self):
-        """With opt-in, soft-block must not fire (full app import may need extra deps)."""
-        env = {
-            **os.environ,
-            "PYTHONWARNINGS": "ignore",
-            "KEEL_ALLOW_LEGACY_BACKEND": "1",
-        }
-        code = (
-            "import importlib\n"
-            "try:\n"
-            "    importlib.import_module('r20_backend.app')\n"
-            "    print('imported')\n"
-            "except SystemExit as e:\n"
-            "    print('sysexit', e.code)\n"
-            "    raise\n"
-            "except Exception as e:\n"
-            "    print('past-guard', type(e).__name__)\n"
-        )
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=env,
-        )
-        self.assertNotEqual(result.returncode, 2, msg=result.stderr + result.stdout)
-        self.assertNotIn("DISABLED", result.stderr)
-        self.assertTrue(
-            "imported" in result.stdout or "past-guard" in result.stdout,
-            msg=result.stderr + result.stdout,
-        )
-
-
-class TestAdminApiRemoved(unittest.TestCase):
-    def test_admin_auth_module_gone(self):
-        self.assertFalse((ROOT / "r20_backend" / "admin_auth.py").exists())
-
-    def test_dead_helper_modules_gone(self):
-        for name in (
-            "okx_client.py",
-            "prompt_views.py",
-            "account_baseline.py",
-            "okx_trade_service.py",
-            "okx_setup.py",
-            "qq_bind.py",
-            "qq_gateway_daemon.py",
-            "audit.py",
-            "council_manager.py",
-            "config.py",
-            "backup_secrets.py",
-            "backup_store.py",
-            "llm_manager.py",
-            "settings_store.py",
-            "notifications.py",
-            "schedule_store.py",
-            "net_security.py",
-        ):
-            self.assertFalse((ROOT / "r20_backend" / name).exists(), msg=name)
-
-    def test_soft_block_stubs_remain(self):
-        self.assertTrue((ROOT / "r20_backend" / "__init__.py").exists())
-        self.assertTrue((ROOT / "r20_backend" / "app.py").exists())
-        self.assertTrue((ROOT / "r20_backend" / "scheduler.py").exists())
-
-    def test_stub_returns_410_for_former_admin_paths(self):
-        from fastapi.testclient import TestClient
-        import r20_backend.app as app_module
-
-        client = TestClient(app_module.app)
-        for path in (
-            "/api/v1/admin/overview",
-            "/api/v1/admin/auth/login",
-            "/admin",
-            "/health",
-        ):
-            response = client.get(path)
-            self.assertEqual(response.status_code, 410, msg=path)
-            body = response.json()
-            self.assertEqual(body.get("status"), "gone")
-            self.assertIn("keel.api", body.get("prefer", ""))
+    def test_keel_legacy_module_removed(self):
+        self.assertFalse((ROOT / "keel" / "legacy").exists())
 
 
 class TestDeletedLegacyScripts(unittest.TestCase):
@@ -210,9 +57,9 @@ class TestDeletedLegacyScripts(unittest.TestCase):
         for name in gone:
             self.assertFalse((ROOT / "scripts" / name).exists(), msg=name)
 
-    def test_r20_gateway_package_removed(self):
-        self.assertFalse((ROOT / "r20_gateway").exists())
-        self.assertFalse((ROOT / "deploy" / "r20-gateway.service").exists())
+    def test_retired_trader_scripts_gone(self):
+        self.assertFalse((ROOT / "scripts" / "ai_factor_trader.py").exists())
+        self.assertFalse((ROOT / "scripts" / "ai_brain_trader.py").exists())
 
     def test_qq_bind_test_removed(self):
         self.assertFalse((ROOT / "tests" / "test_qq_bind.py").exists())
@@ -239,9 +86,31 @@ class TestDeletedLegacyScripts(unittest.TestCase):
         ):
             self.assertFalse((ROOT / "tests" / name).exists(), msg=name)
 
-    def test_retired_trader_scripts_gone(self):
-        self.assertFalse((ROOT / "scripts" / "ai_factor_trader.py").exists())
-        self.assertFalse((ROOT / "scripts" / "ai_brain_trader.py").exists())
+    def test_ui_admin_artifacts_gone(self):
+        self.assertFalse((ROOT / "dashboard").exists())
+        self.assertFalse((ROOT / "frontend" / "src" / "views" / "admin").exists())
+
+
+class TestSupportedEntrypoints(unittest.TestCase):
+    def test_keel_api_app_importable(self):
+        from keel.api.app import app
+
+        self.assertIsNotNone(app)
+
+    def test_keel_worker_cycle_entrypoint(self):
+        env = os.environ.copy()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "cycle.db"
+            result = subprocess.run(
+                [sys.executable, "-m", "keel.worker.cycle", "--db", str(db)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+            self.assertIn("Keel Trader", result.stdout)
 
 
 if __name__ == "__main__":

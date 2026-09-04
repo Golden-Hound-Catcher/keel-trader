@@ -29,9 +29,8 @@ OKX: Keel uses keel.exchange REST (not the legacy okx CLI / r20_okx_setup helper
 
 Next:
   1. Edit $ROOT/.env (prefer KEEL_OKX_* ; keep KEEL_OKX_ENV=demo initially).
-  2. Start only Keel units / processes — do not enable r20-*.service.
+  2. Start only Keel units / processes — r20_* packages and r20-*.service units are removed.
   3. Verify: python -m keel.worker --once && curl -s localhost:8080/health
 
-Legacy r20_backend.app is soft-blocked unless KEEL_ALLOW_LEGACY_BACKEND=1.
 See LEGACY.md / STANDALONE.md / deploy/README.md.
 EOF

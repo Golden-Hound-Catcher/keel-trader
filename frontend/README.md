@@ -2,12 +2,12 @@
 
 Monitor-only Vue UI bound to Keel keel.api.app (/health + /api/v1/*).
 
-Jinja dashboard/, Vue /legacy, R20 Vue /admin/*, and r20_backend /api/v1/admin/* are removed. Admin features deferred to a future Keel admin API (SPEC addendum).
+Jinja dashboard/, Vue /legacy, R20 Vue /admin/*, and r20_* packages are removed. Admin features deferred to a future Keel admin API (SPEC addendum).
 
 ## Forbidden (U1 path)
 
 - Reading data/*.json
-- Calling legacy r20_backend non-public routes from the monitor store
+- Calling any removed r20_* routes from the monitor store
 - Attaching R20 session headers on Keel monitor reads (v1 local/demo has no auth)
 
 ## Run (dev)

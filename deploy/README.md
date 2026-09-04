@@ -10,6 +10,7 @@
 Optional UI: build/serve `frontend/` (Phase U1 monitor) against `keel-api`. See `frontend/README.md`.
 
 ```sh
+# Disable any leftover units from older installs (unit files no longer shipped)
 sudo systemctl disable --now r20-scheduler.service r20-quantum.service r20-gateway.service || true
 sudo cp deploy/keel-worker.service deploy/keel-api.service /etc/systemd/system/
 # Edit WorkingDirectory / User / EnvironmentFile paths to match your install
@@ -17,17 +18,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now keel-worker keel-api
 ```
 
-`deploy/install.sh` prepares the venv + `.env` for this Keel topology. It does **not** enable any `r20-*.service`.
+`deploy/install.sh` prepares the venv + `.env` for this Keel topology.
 
-## Legacy / deprecated (disabled by default — not install examples)
+## Removed legacy units
 
-| Unit | Status | Re-enable marker (opt-in) |
-|------|--------|---------------------------|
-| `r20-quantum.service` | **ConditionPathExists** gate + `KEEL_ALLOW_LEGACY_BACKEND=1` | `data/.enable_legacy_r20_quantum` |
-| `r20-scheduler.service` | **DISABLED** — `ConditionPathExists` + `/bin/false` | never (use keel-worker; aligns with soft-blocked `r20_backend.scheduler`) |
-| `r20-gateway.service` | **removed** (package `r20_gateway/` deleted) | n/a |
+`r20-quantum.service`, `r20-scheduler.service`, and `r20-gateway.service` are
+**removed** from the tree (packages `r20_backend/` and `r20_gateway/` deleted).
+Inventory: [`../LEGACY.md`](../LEGACY.md). Do not run two schedulers. See
+[`../STANDALONE.md`](../STANDALONE.md).
 
-New installs should **not** enable any `r20-*.service`. Inventory and rationale: [`../LEGACY.md`](../LEGACY.md).
-Do not run two schedulers. See [`../STANDALONE.md`](../STANDALONE.md).
-
-`uvicorn r20_backend.app:app` is soft-blocked unless `KEEL_ALLOW_LEGACY_BACKEND=1`; even then it is a 410 stub (admin API removed). Prefer `keel-api.service`.
+Supported entrypoints only: `uvicorn keel.api.app:app` + `python -m keel.worker`
+(+ optional Vite monitor).
