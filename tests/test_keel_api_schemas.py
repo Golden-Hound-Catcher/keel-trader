@@ -9,6 +9,7 @@ from keel.api.app import create_app
 from keel.api.schemas import (
     BalanceResponse,
     CycleError,
+    DailyPnlResponse,
     DecisionItem,
     DecisionsResponse,
     EventItem,
@@ -173,9 +174,15 @@ class TestApiSchemas(unittest.TestCase):
         status_props = comps["StatusResponse"]["properties"]
         self.assertIn("last_cycle", status_props)
         self.assertIn("kill_switch", status_props)
+        self.assertIn("seconds_since_last_cycle", status_props)
         self.assertIn("ConfigResponse", comps)
         config_props = comps["ConfigResponse"]["properties"]
         self.assertIn("kill_switch", config_props)
+        self.assertIn("instruments", config_props)
+        self.assertIn("notify_configured", config_props)
+        self.assertIn("exchange_mode", config_props)
+        self.assertIn("DailyPnlResponse", comps)
+        self.assertIn("/api/v1/pnl/daily", paths)
 
     def test_kill_switch_on_status_and_config(self):
         status = StatusResponse(
@@ -186,8 +193,10 @@ class TestApiSchemas(unittest.TestCase):
             credentials={"okx": False, "llm": False},
             ledger_db="/tmp/x.db",
             kill_switch=True,
+            seconds_since_last_cycle=12,
         )
         self.assertTrue(status.kill_switch)
+        self.assertEqual(status.seconds_since_last_cycle, 12)
         cfg = ConfigResponse(
             environment="demo",
             max_positions=6,
@@ -195,8 +204,29 @@ class TestApiSchemas(unittest.TestCase):
             max_asset_margin=600.0,
             llm_model="gpt-4o",
             kill_switch=False,
+            instruments=["BTC-USDT-SWAP"],
+            notify_configured=True,
+            exchange_mode="paper",
         )
         self.assertFalse(cfg.kill_switch)
+        self.assertEqual(cfg.instruments, ["BTC-USDT-SWAP"])
+        self.assertTrue(cfg.notify_configured)
+        self.assertEqual(cfg.exchange_mode, "paper")
+
+    def test_daily_pnl_response_model(self):
+        m = DailyPnlResponse(date="2026-09-04", realized_pnl=12.5)
+        self.assertEqual(m.source, "ledger")
+        self.assertEqual(m.realized_pnl, 12.5)
+        self.assertIsNone(
+            StatusResponse(
+                version="0.1.0",
+                mode="read_only_control_plane",
+                uptime_seconds=1,
+                environment="demo",
+                credentials={"okx": False, "llm": False},
+                ledger_db="/tmp/x.db",
+            ).seconds_since_last_cycle
+        )
 
 
 class TestDomainRecordsExports(unittest.TestCase):
@@ -205,6 +235,25 @@ class TestDomainRecordsExports(unittest.TestCase):
         self.assertEqual(t.action, "open")
         s = FactorSnapshot(inst_id="BTC-USDT-SWAP", price=100.0, rsi_14=50.0)
         self.assertEqual(s.trend_15m, "neutral")
+
+
+class TestSecondsSinceLastCycleHelper(unittest.TestCase):
+    def test_parse_unix_and_iso(self):
+        from keel.api.routers.status import _parse_cycle_timestamp, _seconds_since_last_cycle
+        import time
+
+        self.assertAlmostEqual(_parse_cycle_timestamp(1_700_000_000.0), 1_700_000_000.0)
+        self.assertIsNotNone(_parse_cycle_timestamp("2026-09-04T03:00:00+00:00"))
+        self.assertIsNone(_parse_cycle_timestamp("not-a-timestamp"))
+        self.assertIsNone(_parse_cycle_timestamp(None))
+        self.assertIsNone(_seconds_since_last_cycle(None))
+        self.assertIsNone(_seconds_since_last_cycle({"timestamp": "bogus"}))
+        now = time.time()
+        lag = _seconds_since_last_cycle({"timestamp": now - 30})
+        self.assertIsInstance(lag, int)
+        self.assertGreaterEqual(lag, 29)
+        self.assertLessEqual(lag, 35)
+
 
 
 if __name__ == "__main__":

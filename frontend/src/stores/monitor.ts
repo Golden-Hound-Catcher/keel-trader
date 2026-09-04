@@ -15,6 +15,8 @@ import {
   type KeelDecision,
   type KeelTrade,
   type KeelFactors,
+  type KeelConfig,
+  type KeelDailyPnl,
 } from '../types/keel'
 
 export const useMonitorStore = defineStore('monitor', () => {
@@ -22,6 +24,8 @@ export const useMonitorStore = defineStore('monitor', () => {
 
   const health = ref<KeelHealth | null>(null)
   const status = ref<KeelStatus | null>(null)
+  const config = ref<KeelConfig | null>(null)
+  const dailyPnl = ref<KeelDailyPnl | null>(null)
   const balance = ref<KeelBalance | null>(null)
   const positions = ref<KeelPosition[]>([])
   const positionsSource = ref<string>('')
@@ -58,6 +62,8 @@ export const useMonitorStore = defineStore('monitor', () => {
       const results = await Promise.allSettled([
         keelFetch<KeelHealth>('/health'),
         keelFetch<KeelStatus>('/api/v1/status'),
+        keelFetch<KeelConfig>('/api/v1/config'),
+        keelFetch<KeelDailyPnl>('/api/v1/pnl/daily'),
         keelFetch<KeelBalance>('/api/v1/balance'),
         keelFetch<{ count: number; positions: KeelPosition[]; source: string }>('/api/v1/positions'),
         keelFetch<{ count: number; decisions: KeelDecision[] }>('/api/v1/decisions?limit=50'),
@@ -65,13 +71,25 @@ export const useMonitorStore = defineStore('monitor', () => {
         keelFetch<{ count: number; events: Array<Record<string, unknown>> }>('/api/v1/events?limit=50'),
       ])
 
-      const [h, st, bal, pos, dec, tr, ev] = results
+      const [h, st, cfg, pnl, bal, pos, dec, tr, ev] = results
 
       if (h.status === 'fulfilled') health.value = h.value
       else errors.push(`health: ${h.reason?.message || h.reason}`)
 
       if (st.status === 'fulfilled') status.value = st.value
       else errors.push(`status: ${st.reason?.message || st.reason}`)
+
+      if (cfg.status === 'fulfilled') {
+        config.value = cfg.value
+        if (Array.isArray(cfg.value.instruments) && cfg.value.instruments.length) {
+          watchlist.value = [...cfg.value.instruments]
+        }
+      } else {
+        errors.push(`config: ${cfg.reason?.message || cfg.reason}`)
+      }
+
+      if (pnl.status === 'fulfilled') dailyPnl.value = pnl.value
+      else errors.push(`pnl/daily: ${pnl.reason?.message || pnl.reason}`)
 
       if (bal.status === 'fulfilled') balance.value = bal.value
       else errors.push(`balance: ${bal.reason?.message || bal.reason}`)
@@ -143,6 +161,8 @@ export const useMonitorStore = defineStore('monitor', () => {
   return {
     health,
     status,
+    config,
+    dailyPnl,
     balance,
     positions,
     positionsSource,

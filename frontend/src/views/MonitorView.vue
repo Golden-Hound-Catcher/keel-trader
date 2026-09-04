@@ -12,6 +12,9 @@ import {
   RefreshCw,
   Shield,
   Ban,
+  TrendingUp,
+  Clock,
+  Settings2,
 } from 'lucide-vue-next'
 
 const store = useMonitorStore()
@@ -150,6 +153,47 @@ const cycleErrorsTitle = computed(() => {
 
 /** Read-only: armed via KEEL_KILL_SWITCH (status API); no admin toggle. */
 const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
+
+const realizedPnl = computed(() => {
+  const n = Number(store.dailyPnl?.realized_pnl ?? NaN)
+  return Number.isFinite(n) ? n : null
+})
+const realizedPnlLabel = computed(() =>
+  realizedPnl.value == null ? '—' : fmt(realizedPnl.value),
+)
+
+/** Worker lag from status.seconds_since_last_cycle. */
+const workerLagSeconds = computed(() => {
+  const raw = store.status?.seconds_since_last_cycle
+  if (raw == null) return null
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null
+})
+const workerLagStale = computed(
+  () => workerLagSeconds.value != null && workerLagSeconds.value > 900,
+)
+const workerLagLabel = computed(() => {
+  if (workerLagSeconds.value == null) return '尚无周期'
+  return `${workerLagSeconds.value}秒前`
+})
+
+const configStrip = computed(() => {
+  const c = store.config
+  const env = c?.environment || store.status?.environment || store.health?.environment || '—'
+  const mode = c?.exchange_mode || '—'
+  const instCount = Array.isArray(c?.instruments) ? c!.instruments.length : store.watchlist.length
+  const maxPos = c?.max_positions ?? '—'
+  const kill = c?.kill_switch ?? store.status?.kill_switch ?? false
+  const notify = c?.notify_configured
+  return {
+    env,
+    mode,
+    instCount,
+    maxPos,
+    kill: kill ? 'ON' : 'off',
+    notify: notify == null ? '—' : notify ? 'yes' : 'no',
+  }
+})
 </script>
 
 <template>
@@ -259,7 +303,7 @@ const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
             </div>
           </div>
 
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
               <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
                 <Wallet class="w-4 h-4 text-cyan-400" />
@@ -285,6 +329,25 @@ const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
             </div>
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
               <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+                <TrendingUp class="w-4 h-4 text-amber-400" />
+                今日已实现盈亏
+              </div>
+              <div
+                class="text-2xl font-black font-mono"
+                :class="realizedPnl == null
+                  ? 'text-[#707E94]'
+                  : realizedPnl >= 0
+                    ? 'text-emerald-400'
+                    : 'text-rose-400'"
+              >
+                ${{ realizedPnlLabel }}
+              </div>
+              <div class="text-[11px] font-mono text-[#707E94] mt-1">
+                {{ store.dailyPnl?.date || '—' }} · {{ store.dailyPnl?.source || 'ledger' }}
+              </div>
+            </div>
+            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
                 <LayoutGrid class="w-4 h-4 text-blue-400" />
                 Positions
               </div>
@@ -306,6 +369,33 @@ const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
                 {{ store.status?.mode || '—' }}
               </div>
             </div>
+          </div>
+
+          <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] font-mono">
+            <div class="flex items-center gap-1.5 text-[#707E94]">
+              <Settings2 class="w-3.5 h-3.5 text-cyan-400" />
+              <span class="text-white font-bold">Config</span>
+            </div>
+            <span class="text-[#A8B3C7]">env <span class="text-white">{{ configStrip.env }}</span></span>
+            <span class="text-[#A8B3C7]">mode <span class="text-white">{{ configStrip.mode }}</span></span>
+            <span class="text-[#A8B3C7]">instruments <span class="text-white">{{ configStrip.instCount }}</span></span>
+            <span class="text-[#A8B3C7]">max_pos <span class="text-white">{{ configStrip.maxPos }}</span></span>
+            <span class="text-[#A8B3C7]">kill <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
+            <span class="text-[#A8B3C7]">notify <span class="text-white">{{ configStrip.notify }}</span></span>
+            <span
+              class="inline-flex items-center gap-1 ml-auto px-1.5 py-0.5 rounded text-[10px] font-bold border"
+              :class="workerLagSeconds == null
+                ? 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'
+                : workerLagStale
+                  ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
+                  : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'"
+              :title="workerLagStale ? 'Worker 可能停滞（>15m since last cycle）' : 'Seconds since last worker cycle'"
+            >
+              <Clock class="w-3 h-3" />
+              <template v-if="workerLagSeconds == null">尚无周期</template>
+              <template v-else-if="workerLagStale">Worker 可能停滞 · {{ workerLagLabel }}</template>
+              <template v-else>{{ workerLagLabel }}</template>
+            </span>
           </div>
 
           <div

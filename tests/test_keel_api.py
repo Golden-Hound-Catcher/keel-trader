@@ -13,6 +13,8 @@ from keel.api.deps import set_ledger_path_override
 from keel.config import refresh_settings
 from keel.exchange.paper import PaperAdapter
 from keel.ledger import KeelLedger
+from keel.domain import TradeRecord
+from keel.domain.instruments import DEFAULT_CRYPTO_INSTRUMENTS
 from keel.worker.cycle import run_paper_cycle
 
 
@@ -141,6 +143,95 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         finally:
             os.environ.pop("KEEL_KILL_SWITCH", None)
             refresh_settings()
+
+    def test_status_seconds_since_last_cycle_with_cycle(self):
+        r = self.client.get("/api/v1/status")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertIn("seconds_since_last_cycle", body)
+        lag = body["seconds_since_last_cycle"]
+        self.assertIsInstance(lag, int)
+        self.assertGreaterEqual(lag, 0)
+        self.assertLess(lag, 120)
+
+    def test_config_exposes_non_secret_extensions(self):
+        r = self.client.get("/api/v1/config")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        expected = [i.inst_id for i in DEFAULT_CRYPTO_INSTRUMENTS]
+        self.assertEqual(body["instruments"], expected)
+        self.assertIn("notify_configured", body)
+        self.assertIsInstance(body["notify_configured"], bool)
+        self.assertIn("exchange_mode", body)
+        self.assertIsInstance(body["exchange_mode"], str)
+        self.assertTrue(body["exchange_mode"])
+
+    def test_daily_pnl_endpoint(self):
+        import time
+        from datetime import datetime
+        from keel.domain.records import BJ_TZ
+
+        today = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
+        self.ledger.record_trade(
+            TradeRecord(
+                timestamp=time.time(),
+                inst_id="BTC-USDT-SWAP",
+                action="close",
+                direction="long",
+                size=1.0,
+                price=51000.0,
+                pnl=42.5,
+            )
+        )
+        r = self.client.get("/api/v1/pnl/daily")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["date"], today)
+        self.assertEqual(body["source"], "ledger")
+        self.assertGreaterEqual(body["realized_pnl"], 42.5)
+
+        r = self.client.get(f"/api/v1/pnl/daily?date={today}")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["date"], today)
+        self.assertGreaterEqual(r.json()["realized_pnl"], 42.5)
+
+
+class TestApiStatusWithoutCycle(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "empty_status.db"
+        set_ledger_path_override(self.db)
+        os.environ["KEEL_LEDGER_DB"] = str(self.db)
+        refresh_settings()
+        self.ledger = KeelLedger(self.db)
+        self.app = create_app()
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.ledger.close()
+        set_ledger_path_override(None)
+        os.environ.pop("KEEL_LEDGER_DB", None)
+        refresh_settings()
+        self.temp.cleanup()
+
+    def test_status_seconds_since_last_cycle_null_without_cycle(self):
+        r = self.client.get("/api/v1/status")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertIsNone(body.get("last_cycle"))
+        self.assertIsNone(body.get("seconds_since_last_cycle"))
+
+    def test_daily_pnl_zero_without_trades(self):
+        from datetime import datetime
+        from keel.domain.records import BJ_TZ
+
+        today = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
+        r = self.client.get("/api/v1/pnl/daily")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["date"], today)
+        self.assertEqual(body["realized_pnl"], 0.0)
+        self.assertEqual(body["source"], "ledger")
 
 
 if __name__ == "__main__":

@@ -69,6 +69,7 @@ class StatusResponse(BaseModel):
     ledger_db: str
     kill_switch: bool = False
     last_cycle: LastCycleSummary | None = None
+    seconds_since_last_cycle: int | None = None
 
 
 class ConfigResponse(BaseModel):
@@ -78,6 +79,15 @@ class ConfigResponse(BaseModel):
     max_asset_margin: float
     llm_model: str
     kill_switch: bool = False
+    instruments: list[str] = Field(default_factory=list)
+    notify_configured: bool = False
+    exchange_mode: str = "paper"
+
+
+class DailyPnlResponse(BaseModel):
+    date: str
+    realized_pnl: float
+    source: str = "ledger"
 
 
 class PositionItem(BaseModel):
