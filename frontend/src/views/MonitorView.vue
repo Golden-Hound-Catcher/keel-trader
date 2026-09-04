@@ -175,6 +175,34 @@ const lastCycleActions = computed(() => {
     .join(' · ')
 })
 
+const decisionStats = computed(() => store.decisionStats)
+const decisionStatsWaitPct = computed(() => {
+  const r = decisionStats.value?.wait_rate
+  if (typeof r !== 'number' || !Number.isFinite(r)) return '—'
+  return `${(r * 100).toFixed(0)}%`
+})
+const decisionStatsTopActions = computed(() => {
+  const by = decisionStats.value?.by_action || {}
+  return Object.entries(by)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([k, v]) => `${k}:${v}`)
+    .join(' · ')
+})
+const decisionStatsByPolicy = computed(() => {
+  const by = decisionStats.value?.by_policy || {}
+  return Object.entries(by)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k || '(none)'}:${v}`)
+    .join(' · ')
+})
+
+function modulesPreview(mods: string[] | null | undefined): string {
+  if (!mods || !mods.length) return ''
+  const s = mods.join(',')
+  return s.length > 28 ? `${s.slice(0, 28)}…` : s
+}
+
 /** last_cycle.risk_denies count + optional capped risk_deny_reasons. */
 const riskDeniesCount = computed(() => {
   const raw = lastCycle.value?.risk_denies
@@ -787,6 +815,41 @@ const configStrip = computed(() => {
             </div>
           </div>
 
+          <div
+            v-if="decisionStats"
+            class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
+          >
+            <h2 class="text-xs font-mono font-bold text-white uppercase mb-2">
+              Decision quality ({{ decisionStats.hours }}h)
+            </h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
+              <div>
+                <div class="text-[#707E94]">Decisions</div>
+                <div class="text-white tabular-nums">{{ decisionStats.decision_count }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">Wait rate</div>
+                <div class="text-cyan-400 tabular-nums">{{ decisionStatsWaitPct }}</div>
+              </div>
+              <div class="md:col-span-2">
+                <div class="text-[#707E94]">Top actions</div>
+                <div class="text-white truncate" :title="decisionStatsTopActions">{{ decisionStatsTopActions || '—' }}</div>
+              </div>
+              <div class="md:col-span-2">
+                <div class="text-[#707E94]">By policy</div>
+                <div class="text-white truncate" :title="decisionStatsByPolicy">{{ decisionStatsByPolicy || '—' }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">Cycles</div>
+                <div class="text-white tabular-nums">{{ decisionStats.cycle_count }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">Risk denies</div>
+                <div class="text-white tabular-nums">{{ decisionStats.risk_deny_events }}</div>
+              </div>
+            </div>
+          </div>
+
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
               <h2 class="text-xs font-mono font-bold text-white uppercase mb-3">Recent decisions</h2>
@@ -932,6 +995,7 @@ const configStrip = computed(() => {
                   <th class="pb-2 pr-3">Time</th>
                   <th class="pb-2 pr-3">Inst</th>
                   <th class="pb-2 pr-3">Action</th>
+                  <th class="pb-2 pr-3">Policy</th>
                   <th class="pb-2 pr-3">Conf</th>
                   <th class="pb-2 pr-3">Entry</th>
                   <th class="pb-2">Reason</th>
@@ -942,6 +1006,10 @@ const configStrip = computed(() => {
                   <td class="py-2 pr-3 text-[#707E94] whitespace-nowrap">{{ fmtTs(d.timestamp) }}</td>
                   <td class="py-2 pr-3 text-white">{{ d.inst_id }}</td>
                   <td class="py-2 pr-3 text-cyan-400">{{ d.action }}</td>
+                  <td
+                    class="py-2 pr-3 text-zinc-300 max-w-[9rem] truncate"
+                    :title="[d.policy_name || '', modulesPreview(d.prompt_modules)].filter(Boolean).join(' · ')"
+                  >{{ d.policy_name || '—' }}<span v-if="modulesPreview(d.prompt_modules)" class="text-[#707E94]"> · {{ modulesPreview(d.prompt_modules) }}</span></td>
                   <td class="py-2 pr-3">{{ fmt(d.confidence, 2) }}</td>
                   <td class="py-2 pr-3">{{ fmt(d.entry_price) }}</td>
                   <td class="py-2 text-zinc-400 max-w-md truncate" :title="d.reason">{{ d.reason || '—' }}</td>

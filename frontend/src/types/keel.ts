@@ -122,6 +122,19 @@ export interface KeelDecision {
   stop_loss?: number
   reason?: string
   calculus_data?: Record<string, unknown>
+  policy_name?: string
+  prompt_modules?: string[] | null
+}
+
+export interface KeelDecisionStats {
+  hours: number
+  decision_count: number
+  by_action: Record<string, number>
+  by_policy: Record<string, number>
+  wait_rate: number
+  risk_deny_events: number
+  cycle_count: number
+  avg_cycle_duration_ms: number | null
 }
 
 export interface KeelDecisionsResponse {

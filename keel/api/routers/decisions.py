@@ -29,6 +29,8 @@ def _decision_item(d) -> DecisionItem:
         stop_loss=d.stop_loss,
         reason=d.reason,
         calculus_data=d.calculus_data,
+        policy_name=getattr(d, "policy_name", "") or "",
+        prompt_modules=getattr(d, "prompt_modules", None),
     )
 
 

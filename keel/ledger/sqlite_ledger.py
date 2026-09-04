@@ -108,6 +108,8 @@ class KeelLedger:
                     reason TEXT DEFAULT '',
                     calculus_data TEXT,
                     raw_response TEXT,
+                    policy_name TEXT DEFAULT '',
+                    prompt_modules TEXT,
                     created_at REAL DEFAULT (strftime('%s', 'now'))
                 );
                 
@@ -145,8 +147,25 @@ class KeelLedger:
                 CREATE INDEX IF NOT EXISTS idx_factors_timestamp ON factor_snapshots(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_factors_inst_id ON factor_snapshots(inst_id);
             """)
+            # Backward-compatible ALTERs for DBs created before P2 audit columns.
+            self._ensure_column(conn, "decisions", "policy_name", "TEXT DEFAULT ''")
+            self._ensure_column(conn, "decisions", "prompt_modules", "TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_decisions_policy ON decisions(policy_name)"
+            )
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection, table: str, column: str, typedef: str
+    ) -> None:
+        """ADD COLUMN if missing (safe for existing SQLite ledgers)."""
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {str(r[1]) for r in rows}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {typedef}")
 
     def record_trade(self, trade: TradeRecord) -> int:
+
         """Append a trade record. Returns the new ID."""
         with self._transaction() as conn:
             cursor = conn.execute(
@@ -174,14 +193,17 @@ class KeelLedger:
 
     def record_decision(self, decision: DecisionRecord) -> int:
         """Append a decision record. Returns the new ID."""
+        modules = decision.prompt_modules
+        modules_json = json.dumps(list(modules)) if modules is not None else None
         with self._transaction() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO decisions (
                     timestamp, inst_id, action, confidence,
                     entry_price, take_profit, stop_loss,
-                    reason, calculus_data, raw_response
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reason, calculus_data, raw_response,
+                    policy_name, prompt_modules
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     decision.timestamp or time.time(),
@@ -194,6 +216,8 @@ class KeelLedger:
                     decision.reason,
                     json.dumps(decision.calculus_data) if decision.calculus_data else None,
                     decision.raw_response,
+                    decision.policy_name or "",
+                    modules_json,
                 ),
             )
             return cursor.lastrowid or 0
@@ -314,6 +338,86 @@ class KeelLedger:
         ).fetchone()
         return float(row["total"]) if row else 0.0
 
+    def get_decision_stats(self, hours: float = 24.0) -> dict[str, Any]:
+        """
+        Aggregate decision observability stats for the last ``hours`` window.
+
+        Uses SQL GROUP BY on decisions; cycle/risk counts come from events.
+        """
+        hours_f = max(0.0, float(hours))
+        since = time.time() - hours_f * 3600.0
+        conn = self._get_conn()
+
+        by_action: dict[str, int] = {}
+        for row in conn.execute(
+            "SELECT action, COUNT(*) AS n FROM decisions "
+            "WHERE timestamp >= ? GROUP BY action",
+            (since,),
+        ):
+            by_action[str(row["action"])] = int(row["n"])
+        decision_count = sum(by_action.values())
+
+        by_policy: dict[str, int] = {}
+        for row in conn.execute(
+            "SELECT COALESCE(policy_name, '') AS policy_name, COUNT(*) AS n "
+            "FROM decisions WHERE timestamp >= ? GROUP BY COALESCE(policy_name, '')",
+            (since,),
+        ):
+            by_policy[str(row["policy_name"] or "")] = int(row["n"])
+
+        wait_n = int(by_action.get("WAIT", 0))
+        wait_rate = (wait_n / decision_count) if decision_count else 0.0
+
+        risk_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM events "
+            "WHERE timestamp >= ? AND event_type = ?",
+            (since, "risk_gate_blocked"),
+        ).fetchone()
+        risk_deny_events = int(risk_row["n"]) if risk_row else 0
+
+        cycle_rows = conn.execute(
+            "SELECT data FROM events "
+            "WHERE timestamp >= ? AND event_type = ? "
+            "ORDER BY timestamp DESC",
+            (since, self.CYCLE_SUMMARY_EVENT),
+        ).fetchall()
+        cycle_count = len(cycle_rows)
+        if cycle_count == 0:
+            # Fallback for older ledgers that only wrote trader_cycle_complete.
+            alt = conn.execute(
+                "SELECT COUNT(*) AS n FROM events "
+                "WHERE timestamp >= ? AND event_type = ?",
+                (since, "trader_cycle_complete"),
+            ).fetchone()
+            cycle_count = int(alt["n"]) if alt else 0
+
+        durations: list[float] = []
+        for row in cycle_rows:
+            raw = row["data"]
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            ms = payload.get("duration_ms")
+            if isinstance(ms, (int, float)):
+                durations.append(float(ms))
+        avg_ms: float | None = (
+            (sum(durations) / len(durations)) if durations else None
+        )
+
+        return {
+            "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
+            "decision_count": decision_count,
+            "by_action": by_action,
+            "by_policy": by_policy,
+            "wait_rate": wait_rate,
+            "risk_deny_events": risk_deny_events,
+            "cycle_count": cycle_count,
+            "avg_cycle_duration_ms": avg_ms,
+        }
+
     def get_latest_decision(self, inst_id: str, max_age_seconds: int = 300) -> DecisionRecord | None:
         """Get the most recent decision for an instrument if it's still fresh."""
         cutoff = time.time() - max_age_seconds
@@ -341,6 +445,13 @@ class KeelLedger:
         )
 
     def _row_to_decision(self, row: sqlite3.Row) -> DecisionRecord:
+        keys = set(row.keys())
+        modules_raw = row["prompt_modules"] if "prompt_modules" in keys else None
+        modules: list[str] | None = None
+        if modules_raw:
+            parsed = json.loads(modules_raw)
+            if isinstance(parsed, list):
+                modules = [str(x) for x in parsed]
         return DecisionRecord(
             id=row["id"],
             timestamp=row["timestamp"],
@@ -353,6 +464,8 @@ class KeelLedger:
             reason=row["reason"],
             calculus_data=json.loads(row["calculus_data"]) if row["calculus_data"] else None,
             raw_response=row["raw_response"],
+            policy_name=(row["policy_name"] if "policy_name" in keys else "") or "",
+            prompt_modules=modules,
         )
 
 

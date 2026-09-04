@@ -144,6 +144,29 @@ Payload 含 `risk_denies` / `risk_deny_reasons`（capped）、`error_count` / `e
 
 ---
 
+
+## 7. Decision quality / P2 observability
+
+Read-only decision stats (no HTTP writes):
+
+```bash
+# After paper/demo cycles have written the ledger
+curl -s "http://127.0.0.1:8080/api/v1/stats/decisions?hours=24" | python -m json.tool
+```
+
+Response fields: `decision_count`, `by_action`, `by_policy`, `wait_rate` (0–1), `risk_deny_events` (`risk_gate_blocked` count), `cycle_count` (`worker_cycle_summary`), `avg_cycle_duration_ms`.
+
+Monitor Overview soft-fetches the same endpoint (card hidden if API missing). Decisions table shows `policy_name` (modules truncated in title).
+
+Offline policy compare (no OKX keys):
+
+```bash
+PYTHONPATH=. python scripts/compare_policies_paper.py
+# prints action histogram for stub and rule; exit 0
+```
+
+---
+
 ## 相关文档
 
 - [README.md](README.md) — 快速开始
