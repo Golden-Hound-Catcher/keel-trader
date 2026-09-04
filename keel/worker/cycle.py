@@ -335,6 +335,11 @@ def run_paper_cycle(
         )
     )
     decisions: dict[str, Decision] = dict(policy_result.decisions)
+    audit_policy = policy_result.policy_name or policy_label
+    modules_used = policy_result.prompt_meta.get("modules_used")
+    audit_modules: list[str] | None = None
+    if isinstance(modules_used, list):
+        audit_modules = [str(m) for m in modules_used]
 
     for inst_id, snap in snapshots.items():
         ledger.record_factor_snapshot(
@@ -415,6 +420,8 @@ def run_paper_cycle(
                 take_profit=decision.take_profit,
                 stop_loss=decision.stop_loss,
                 reason=decision.reason,
+                policy_name=audit_policy,
+                prompt_modules=audit_modules,
                 calculus_data={
                     "leverage": decision.leverage,
                     "margin_usdt": decision.margin_usdt,
@@ -422,6 +429,8 @@ def run_paper_cycle(
                     "validation_error": decision.validation_error or None,
                     "rsi_14": snap.rsi_14,
                     "trend_15m": snap.trend_15m,
+                    "policy_name": audit_policy,
+                    "prompt_modules": audit_modules,
                 },
             )
         )

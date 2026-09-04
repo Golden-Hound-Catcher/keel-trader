@@ -50,6 +50,8 @@ class DecisionRecord:
     reason: str = ""
     calculus_data: dict[str, Any] | None = None
     raw_response: str | None = None
+    policy_name: str = ""
+    prompt_modules: list[str] | None = None
 
 
 @dataclass

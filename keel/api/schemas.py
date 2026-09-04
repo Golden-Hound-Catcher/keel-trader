@@ -139,11 +139,26 @@ class DecisionItem(BaseModel):
     stop_loss: float | None = None
     reason: str = ""
     calculus_data: dict[str, Any] | None = None
+    policy_name: str = ""
+    prompt_modules: list[str] | None = None
 
 
 class DecisionsResponse(BaseModel):
     count: int
     decisions: list[DecisionItem]
+
+
+class DecisionStatsResponse(BaseModel):
+    """Aggregated decision quality / observability stats (read-only)."""
+
+    hours: int
+    decision_count: int
+    by_action: dict[str, int] = Field(default_factory=dict)
+    by_policy: dict[str, int] = Field(default_factory=dict)
+    wait_rate: float = 0.0
+    risk_deny_events: int = 0
+    cycle_count: int = 0
+    avg_cycle_duration_ms: float | None = None
 
 
 class LatestDecisionResponse(BaseModel):

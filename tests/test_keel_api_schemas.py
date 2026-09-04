@@ -11,6 +11,7 @@ from keel.api.schemas import (
     CycleError,
     DailyPnlResponse,
     DecisionItem,
+    DecisionStatsResponse,
     DecisionsResponse,
     EventItem,
     FactorsResponse,
@@ -115,8 +116,23 @@ class TestApiSchemas(unittest.TestCase):
             inst_id=rec.inst_id,
             action=rec.action,
             confidence=rec.confidence,
+            policy_name="rule",
+            prompt_modules=["system_role.v1"],
         )
         self.assertEqual(item.inst_id, "BTC-USDT-SWAP")
+        self.assertEqual(item.policy_name, "rule")
+        self.assertEqual(item.prompt_modules, ["system_role.v1"])
+        stats = DecisionStatsResponse(
+            hours=24,
+            decision_count=0,
+            by_action={},
+            by_policy={},
+            wait_rate=0.0,
+            risk_deny_events=0,
+            cycle_count=0,
+            avg_cycle_duration_ms=None,
+        )
+        self.assertEqual(stats.hours, 24)
 
     def test_domain_decision_shared(self):
         d = Decision(inst_id="ETH-USDT-SWAP", action="WAIT")
@@ -194,6 +210,11 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("decision_policy", status_props)
         self.assertIn("DailyPnlResponse", comps)
         self.assertIn("/api/v1/pnl/daily", paths)
+        self.assertIn("/api/v1/stats/decisions", paths)
+        self.assertIn("DecisionStatsResponse", comps)
+        di_props = comps["DecisionItem"]["properties"]
+        self.assertIn("policy_name", di_props)
+        self.assertIn("prompt_modules", di_props)
         self.assertIn("/ready", paths)
         self.assertIn("ReadyResponse", comps)
         ready_props = comps["ReadyResponse"]["properties"]

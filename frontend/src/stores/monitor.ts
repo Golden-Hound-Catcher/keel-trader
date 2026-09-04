@@ -17,6 +17,7 @@ import {
   type KeelFactors,
   type KeelConfig,
   type KeelDailyPnl,
+  type KeelDecisionStats,
 } from '../types/keel'
 
 export const useMonitorStore = defineStore('monitor', () => {
@@ -26,6 +27,8 @@ export const useMonitorStore = defineStore('monitor', () => {
   const status = ref<KeelStatus | null>(null)
   const config = ref<KeelConfig | null>(null)
   const dailyPnl = ref<KeelDailyPnl | null>(null)
+  /** Soft-fail Overview card; null when endpoint missing or fetch failed. */
+  const decisionStats = ref<KeelDecisionStats | null>(null)
   const balance = ref<KeelBalance | null>(null)
   const positions = ref<KeelPosition[]>([])
   const positionsSource = ref<string>('')
@@ -151,6 +154,14 @@ export const useMonitorStore = defineStore('monitor', () => {
 
       if (ev.status === 'fulfilled') events.value = ev.value.events || []
       else errors.push(`events: ${ev.reason?.message || ev.reason}`)
+
+      // Soft-fail: decision stats card (endpoint may be absent on older APIs)
+      try {
+        const stats = await keelFetch<KeelDecisionStats>('/api/v1/stats/decisions?hours=24')
+        decisionStats.value = stats
+      } catch {
+        decisionStats.value = null
+      }
 
       // Refresh tab-only filtered lists without touching Overview unfiltered refs
       const filteredRefresh = await Promise.allSettled([
@@ -346,6 +357,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     status,
     config,
     dailyPnl,
+    decisionStats,
     balance,
     positions,
     positionsSource,

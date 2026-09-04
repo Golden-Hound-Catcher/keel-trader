@@ -292,6 +292,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-04 | **P2 decision quality**: persist `policy_name` / `prompt_modules` on decisions (+ calculus_data); `GET /api/v1/stats/decisions?hours=`; monitor Overview stats card + Decisions policy column; `scripts/compare_policies_paper.py` offline stub↔rule compare |
 | 2026-09-04 | **P1 ops desk**: actionable notify (alert/severity/text, alerts-only, discord JSON shape); monitor duty narrative (日损剩余 + config limits/instruments); deploy one-path `install.sh` + `ops_smoke.sh`. P1 ops items **done**; demo keys still pending |
 | 2026-09-04 | P0 ops: RUNBOOK.md + `scripts/run_acceptance.sh` + paper pytest; SPEC §12/§13/§15 paper gate done / demo pending keys |
 | 2026-09-04 | Max notional/contracts gate (`KEEL_MAX_NOTIONAL_PER_INSTRUMENT` / `KEEL_MAX_CONTRACTS_PER_INSTRUMENT`); expose on `/config` |
