@@ -63,8 +63,38 @@ const factorRows = computed(() =>
   store.watchlist.map((id) => ({
     instId: id,
     f: store.factors[id],
+    loading: Boolean(store.factorLoading[id]),
+    error: store.factorErrors[id] || '',
   })),
 )
+
+function factorSourceLabel(source: string | undefined): string {
+  if (!source) return '—'
+  if (source === 'okx_public') return 'live'
+  if (source === 'ledger') return 'ledger'
+  return source
+}
+
+function factorSourceClass(source: string | undefined): string {
+  if (source === 'okx_public') return 'bg-cyan-500/15 text-cyan-400 border-cyan-500/40'
+  if (source === 'ledger') return 'bg-zinc-500/10 text-[#A8B3C7] border-zinc-500/30'
+  return 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'
+}
+
+const decisionFilterOptions = computed(() => [
+  { value: '', label: 'All' },
+  ...store.watchlist.map((id) => ({ value: id, label: id })),
+])
+
+function onDecisionFilterChange(ev: Event) {
+  const el = ev.target as HTMLSelectElement
+  store.setDecisionInstFilter(el.value)
+}
+
+function onFactorsLiveChange(ev: Event) {
+  const el = ev.target as HTMLInputElement
+  store.setFactorsLive(el.checked)
+}
 
 const lastCycle = computed(() => store.status?.last_cycle ?? null)
 const lastCycleActions = computed(() => {
@@ -672,9 +702,28 @@ const configStrip = computed(() => {
 
         <!-- DECISIONS -->
         <div v-show="store.activeTab === 'decisions'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-          <h2 class="text-sm font-mono font-bold text-white mb-3">Decisions (ledger)</h2>
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h2 class="text-sm font-mono font-bold text-white">
+              Decisions (ledger)
+              <span class="text-[#707E94] font-normal">({{ store.decisions.length }})</span>
+            </h2>
+            <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
+              <span class="text-[#707E94]">Instrument</span>
+              <select
+                class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
+                :value="store.decisionInstFilter"
+                @change="onDecisionFilterChange"
+              >
+                <option
+                  v-for="opt in decisionFilterOptions"
+                  :key="opt.value || 'all'"
+                  :value="opt.value"
+                >{{ opt.label }}</option>
+              </select>
+            </label>
+          </div>
           <div v-if="!store.decisions.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
-            Empty — worker has not written decisions yet
+            Empty — {{ store.decisionInstFilter ? `no decisions for ${store.decisionInstFilter}` : 'worker has not written decisions yet' }}
           </div>
           <div v-else class="overflow-x-auto">
             <table class="w-full text-left text-xs font-mono">
@@ -758,10 +807,22 @@ const configStrip = computed(() => {
 
         <!-- FACTORS -->
         <div v-show="store.activeTab === 'factors'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-          <h2 class="text-sm font-mono font-bold text-white mb-3">
-            Factors
-            <span class="text-[#707E94] font-normal">/api/v1/factors/&#123;inst_id&#125;</span>
-          </h2>
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h2 class="text-sm font-mono font-bold text-white">
+              Factors
+              <span class="text-[#707E94] font-normal">/api/v1/factors/&#123;inst_id&#125;</span>
+            </h2>
+            <label class="inline-flex items-center gap-2 text-xs font-mono text-[#A8B3C7] cursor-pointer select-none">
+              <input
+                type="checkbox"
+                class="rounded border-[#1A2232] bg-[#080B10] text-cyan-500 focus:ring-cyan-500/40 cursor-pointer"
+                :checked="store.factorsLive"
+                @change="onFactorsLiveChange"
+              />
+              <span>实时蜡烛</span>
+              <span class="text-[#707E94]">(live candles)</span>
+            </label>
+          </div>
           <div class="overflow-x-auto">
             <table class="w-full text-left text-xs font-mono">
               <thead>
@@ -773,19 +834,32 @@ const configStrip = computed(() => {
                   <th class="pb-2 pr-3">EMA9</th>
                   <th class="pb-2 pr-3">EMA21</th>
                   <th class="pb-2 pr-3">MACD hist</th>
-                  <th class="pb-2">Trend</th>
+                  <th class="pb-2">Trend / status</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
                 <tr v-for="row in factorRows" :key="row.instId">
                   <td class="py-2 pr-3 text-white font-bold">{{ row.instId }}</td>
-                  <td class="py-2 pr-3 text-[#707E94]">{{ row.f?.source || '—' }}</td>
+                  <td class="py-2 pr-3">
+                    <span
+                      class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                      :class="factorSourceClass(row.f?.source)"
+                    >{{ factorSourceLabel(row.f?.source) }}</span>
+                  </td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.price) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.rsi_14) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.ema_9) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.ema_21) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.macd?.histogram) }}</td>
-                  <td class="py-2">{{ row.f?.trend_15m || '—' }}</td>
+                  <td class="py-2">
+                    <span v-if="row.loading" class="text-cyan-400/80">loading…</span>
+                    <span
+                      v-else-if="row.error"
+                      class="text-amber-400/90 truncate max-w-[14rem] inline-block align-bottom"
+                      :title="row.error"
+                    >err: {{ row.error }}</span>
+                    <span v-else>{{ row.f?.trend_15m || '—' }}</span>
+                  </td>
                 </tr>
               </tbody>
             </table>

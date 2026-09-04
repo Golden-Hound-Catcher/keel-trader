@@ -142,7 +142,8 @@ export interface KeelEventsResponse {
 
 export interface KeelFactors {
   inst_id: string
-  source: string
+  /** ledger = worker snapshot; okx_public = live candles (?live=1) */
+  source: 'ledger' | 'okx_public' | string
   timestamp?: string | number
   price?: number
   ema_9?: number
