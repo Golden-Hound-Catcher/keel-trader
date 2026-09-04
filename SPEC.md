@@ -82,6 +82,7 @@ Legacy `r20_backend` / `r20_gateway` / `dashboard` are **not** supported entrypo
 | `keel.worker` | Single scheduler + cycle | Second scheduler |
 | `keel.api` | Read-only HTTP | Place/cancel orders (v1) |
 | `keel.config` | Env-based settings | Multiple secret stores |
+| `keel.notify` | Optional `Notifier` port (Null / Webhook) | QQ/WeCom/Telegram product expansion; r20_gateway |
 
 ---
 
@@ -95,6 +96,7 @@ worker tick
   → RiskGates.evaluate(Decision, portfolio) → allow/deny/resize
   → ExecutionOrchestrator → ExchangeProtocol
   → Ledger.append(events)
+  → optional Notifier.notify(cycle summary)  # Null if KEEL_NOTIFY_WEBHOOK_URL empty
 api
   → reads ledger (+ live exchange reads for positions/balance when configured)
 ```
@@ -279,6 +281,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-03 | Elegance: Pydantic API schemas; domain owns Decision/records; kinematics in keel.factors; calculus_engine shim |
 | 2026-09-04 | Inventory-gated delete: `r20_backend/okx_client.py`, `prompt_views.py` (0 refs); kept `qq_gateway_daemon`/`audit` (qq_bind) |
 | 2026-09-04 | Inventory-gated delete: `scripts/calculus_engine.py` (migrated to kinematics), `r20_gateway/agents.py`, `supervisor.py` (0 refs); trader shims kept |
+| 2026-09-04 | Optional `keel.notify` stub port (Null/Webhook); wire into worker cycle via `KEEL_NOTIFY_WEBHOOK_URL` |
 
 ---
 
@@ -352,3 +355,10 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 - Deleted `r20_gateway/agents.py` and `r20_gateway/supervisor.py` (zero importers).
 - **Kept** trader shims (`ai_factor_trader`, `ai_brain_trader`) and scripts still
   launched by `keel.worker` / gateway JOBS.
+
+## Addendum: Optional notify port (stub interface)
+
+- Added `keel.notify`: `Notifier` Protocol, `NullNotifier`, `WebhookNotifier` (POST JSON; injectable transport for tests).
+- Config: `KEEL_NOTIFY_WEBHOOK_URL` via `keel.config.settings` (empty → Null).
+- Worker cycle optionally notifies a compact summary after each tick; notify soft-fails and never blocks trading.
+- **Non-goal preserved**: no QQ / WeCom / Telegram product expansion; no dependency on `r20_gateway`.

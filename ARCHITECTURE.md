@@ -188,6 +188,24 @@ class MyPolicy:
 或设置 `KEEL_DECISION_POLICY=rule|stub|llm`。Worker 默认 `rule`（无需 LLM）。
 提示词模块见 `keel/llm/prompts/modules/*.v1.txt`，可用 `KEEL_PROMPT_MODULES_DIR` 覆盖。
 
+### 6. 可选通知端口（Notifier）
+
+实现 `keel.notify.Notifier`（与 Exchange / DecisionPolicy 同级的可选端口）:
+
+```python
+class MyNotifier:
+    @property
+    def name(self) -> str:
+        return "mine"
+
+    def notify(self, event: NotifyEvent) -> NotifyResult:
+        ...
+```
+
+或设置 `KEEL_NOTIFY_WEBHOOK_URL=https://...`（空 / 未设 → `NullNotifier`）。
+Worker cycle 在 tick 结束后调用一次；失败软降级，不影响交易路径。
+**不做** QQ / WeCom / Telegram 产品扩展；不依赖 `r20_gateway`。
+
 ## 调度器所有权
 
 **重要**：只有一个调度器可以运行。
@@ -321,3 +339,9 @@ MIT
 - **Single source**: `keel.domain.decision.Decision` + `validate_decision` (plus `DecisionAction`) is the in-memory decision type for policy → risk → execution → worker cycle.
 - **Imports**: `keel.policy`, `keel.risk` (`gate_action_for_decision`), `keel.execution.orchestrator`, and `keel.worker.cycle` import from `keel.domain.decision`. `keel.llm.client` may re-export for compatibility; JSON payload checks stay in `keel.llm.schema`.
 - **Types**: orchestrator `ExecutionResult.action` and cycle `force_action` use `DecisionAction`; risk maps Decision → `GateAction` via `gate_action_for_decision`.
+
+## Elegance pass: optional notify port
+
+- **Port**: `keel.notify.Notifier` with `NullNotifier` (default) and `WebhookNotifier` (simple POST JSON, injectable HTTP transport for CI).
+- **Wiring**: `keel.worker.cycle.run_paper_cycle` notifies `trader_cycle_complete` after ledger events; summary includes `notifier` / `notify_*` fields.
+- **Config**: `KEEL_NOTIFY_WEBHOOK_URL` in `keel.config.settings` (empty → Null). No multi-channel product expansion.
