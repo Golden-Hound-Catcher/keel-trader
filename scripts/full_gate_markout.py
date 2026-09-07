@@ -1,23 +1,19 @@
 #!/usr/bin/env python3
 """
-Phase R9: offline counterfactual near-entry markout on WAIT near-signals.
+Phase E1: offline fee-aware markout on full-gate rule fires.
 
-For WAIT decisions with signal_diag.nearest in {long,short} and 1–max_missing
-gates missing, simulate a shadow entry at decision timestamp/price and report
-gross / fee-aware net round-trip markout (reuses shadow_markout + OKX fee model).
+For BUY_LONG/SELL_SHORT decisions with signal_diag.missing==[] (rule policy),
+use shadow_fill entry when present else counterfactual decision price, then
+report gross / net round-trip markout at 60/300/900s (OKX fee model).
 
-Recommend-only — never writes .env, never changes probe settings, never places
-orders.
+Recommend-only — never writes .env, never enables near_probe, never places
+orders. E0 freeze: keep near_probe off; do not lower the 10bps fee hurdle.
 
-E1: pass ``--full-gate-only`` to mark out rule BUY_LONG/SELL_SHORT with
-``signal_diag.missing==[]`` instead of WAIT near-signals (same fee model).
-
-  PYTHONPATH=. python scripts/near_entry_markout.py \
+  PYTHONPATH=. python scripts/full_gate_markout.py \
     --db data/keel_ledger.db --hours 168 --market-source okx_public
 
-  PYTHONPATH=. python scripts/near_entry_markout.py \
-    --db data/keel_ledger.db --hours 168 --inst-id BTC-USDT-SWAP,ETH-USDT-SWAP \
-    --max-missing 2 --horizons 60,300,900
+  PYTHONPATH=. python scripts/near_entry_markout.py --full-gate-only \
+    --db data/keel_ledger.db --hours 168
 """
 from __future__ import annotations
 
@@ -27,7 +23,6 @@ import os
 import sys
 from pathlib import Path
 
-# Offline / no keys — strip OKX credentials like other recommend-only scripts.
 for key in (
     "KEEL_OKX_API_KEY",
     "KEEL_OKX_SECRET_KEY",
@@ -50,8 +45,6 @@ from keel.ledger import KeelLedger  # noqa: E402
 from keel.ledger.full_gate import compute_full_gate_markout  # noqa: E402
 from keel.ledger.near_entry_markout import (  # noqa: E402
     DEFAULT_CLEAR_HURDLE_BPS,
-    DEFAULT_MAX_MISSING,
-    compute_near_entry_markout,
 )
 from keel.ledger.shadow_markout import (  # noqa: E402
     DEFAULT_MARKOUT_HORIZONS_SECONDS,
@@ -83,18 +76,14 @@ def _fmt_bps(x: float | None) -> str:
 
 
 def _print_summary(result: dict) -> None:
-    if result.get("cohort") == "full_gate":
-        print("=== E1 full-gate markout via near_entry_markout --full-gate-only ===")
-    else:
-        print("=== R9 near-entry markout (recommend-only) ===")
+    print("=== E1 full-gate markout (recommend-only) ===")
     print(
         f"hours={result.get('hours')} count={result.get('count')} "
-        f"min_missing={result.get('min_missing')} max_missing={result.get('max_missing')} "
-        f"market_source={result.get('market_source')}"
+        f"cohort={result.get('cohort')} market_source={result.get('market_source')}"
     )
     print(
-        f"by_nearest={result.get('by_nearest')} by_missing_n={result.get('by_missing_n')} "
-        f"by_action={result.get('by_action')}"
+        f"by_action={result.get('by_action')} "
+        f"entry_sources={result.get('entry_sources')}"
     )
     skipped = result.get("skipped_no_price", 0)
     if skipped:
@@ -126,7 +115,7 @@ def _print_summary(result: dict) -> None:
         mk = info.get("markout_300s") or {}
         print(
             f"  {inst}: count={info.get('count')} "
-            f"nearest={info.get('by_nearest')} "
+            f"actions={info.get('by_action')} "
             f"300s n={mk.get('sample_count')} "
             f"netRT_avg={_fmt_bps(mk.get('avg_net_roundtrip_markout_bps'))} "
             f"netRT_win={_fmt_pct(mk.get('win_rate_net_roundtrip'))} "
@@ -138,8 +127,8 @@ def _print_summary(result: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description=(
-            "R9 offline near-entry markout on WAIT near-signals "
-            "(recommend-only; local SQLite)"
+            "E1 offline full-gate markout on BUY_LONG/SELL_SHORT with "
+            "signal_diag.missing==[] (recommend-only; local SQLite)"
         )
     )
     p.add_argument(
@@ -161,18 +150,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional instrument filter (comma-separated ok)",
     )
     p.add_argument(
-        "--max-missing",
-        type=int,
-        default=DEFAULT_MAX_MISSING,
-        help=f"Max missing gates for near cohort (default {DEFAULT_MAX_MISSING})",
-    )
-    p.add_argument(
-        "--min-missing",
-        type=int,
-        default=1,
-        help="Min missing gates (default 1; near = at least one gate short)",
-    )
-    p.add_argument(
         "--horizons",
         default="60,300,900",
         help="Comma-separated markout horizons in seconds",
@@ -192,20 +169,12 @@ def main(argv: list[str] | None = None) -> int:
         "--out",
         type=Path,
         default=None,
-        help="Optional JSON output path (default: print summary + JSON to stdout)",
+        help="Optional JSON output path",
     )
     p.add_argument(
         "--json-only",
         action="store_true",
         help="Print only JSON (no human summary)",
-    )
-    p.add_argument(
-        "--full-gate-only",
-        action="store_true",
-        help=(
-            "E1: mark out full-gate fires (BUY_LONG/SELL_SHORT, missing==[]) "
-            "instead of WAIT near-signals"
-        ),
     )
     args = p.parse_args(argv)
 
@@ -214,51 +183,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: ledger not found: {db}", file=sys.stderr)
         return 2
 
-    horizons = _parse_horizons(args.horizons)
-
     ledger = KeelLedger(db)
     try:
-        if args.full_gate_only:
-            result = compute_full_gate_markout(
-                ledger._get_conn(),
-                hours=float(args.hours),
-                horizons=horizons,
-                market_source=str(args.market_source),
-                inst_id=args.inst_id,
-                apply_funding=not bool(args.no_funding),
-                clear_hurdle_bps=float(args.clear_hurdle_bps),
-            )
-        else:
-            result = compute_near_entry_markout(
-                ledger._get_conn(),
-                hours=float(args.hours),
-                horizons=horizons,
-                max_missing=int(args.max_missing),
-                min_missing=int(args.min_missing),
-                market_source=str(args.market_source),
-                inst_id=args.inst_id,
-                apply_funding=not bool(args.no_funding),
-                clear_hurdle_bps=float(args.clear_hurdle_bps),
-            )
+        result = compute_full_gate_markout(
+            ledger._get_conn(),
+            hours=float(args.hours),
+            horizons=_parse_horizons(args.horizons),
+            market_source=args.market_source,
+            inst_id=args.inst_id,
+            apply_funding=not args.no_funding,
+            clear_hurdle_bps=float(args.clear_hurdle_bps),
+        )
     finally:
         ledger.close()
 
-    if args.out is not None:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    if args.out:
+        args.out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
         if not args.json_only:
-            _print_summary(result)
             print(f"wrote {args.out}")
-        else:
-            print(json.dumps(result, indent=2))
-        return 0
-
     if args.json_only:
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, sort_keys=True))
     else:
         _print_summary(result)
         print("--- json ---")
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 

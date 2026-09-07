@@ -338,6 +338,47 @@ PYTHONPATH=. python scripts/near_entry_markout.py \
 
 Helper: `keel.ledger.near_entry_markout.compute_near_entry_markout` (same fee_model shape as shadow markout).
 
+### Phase E0 — freeze (gen-2)
+
+After R9 measurement, **do not** chase near-signal probe enablement:
+
+- Keep `KEEL_SHADOW_NEAR_PROBE=0` (recommend stay **off**).
+- Do **not** lower the ~10 bps fee hurdle.
+- Do **not** clear kill-switch / go live from near-probe evidence.
+- Do **not** add near-signal probe tweaks that game the hurdle.
+
+E0 is a product lock: near cohort remains observational only.
+
+### Phase E1 — full-gate fire tracking + markout
+
+Track only **full-gate** rule fires — decisions where action ∈ `{BUY_LONG, SELL_SHORT}`, `signal_diag.missing == []` (all entry gates passed), and policy is `rule`. Distinct from WAIT / near (1–2 missing) and from forced paper fills (no `signal_diag`).
+
+**Success later (not this PR):** n ≥ 20 full-gate samples and 5m (300s) net-RT win rate ≥ 0.55. This phase builds the measurement.
+
+| Surface | What |
+|---------|------|
+| Detection | `keel.ledger.full_gate.is_full_gate_fire` / `aggregate_full_gate_fires` |
+| API | `GET /api/v1/stats/quality?hours=` → `full_gate_fires.{count,by_action,by_instrument}`, `economic_evidence` (`none`/`probe`/`full_gate`/`mixed`), per-inst `full_gate_fires` |
+| Markout | `scripts/full_gate_markout.py` or `scripts/near_entry_markout.py --full-gate-only` — shadow_fill entry when present, else counterfactual from decision ts; fee-aware 60/300/900 |
+| Monitor | Quality bar chips `full-gate N` + `econ <evidence>`; arming economic may show `economic_sample_source` / `full_gate_fires` (flag only — gates unchanged) |
+
+```bash
+# Full-gate count + evidence (API)
+curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" \
+  | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('full_gate_fires')); print(d.get('economic_evidence'))"
+
+# Offline full-gate markout (local SQLite; strips OKX keys; never writes .env)
+PYTHONPATH=. python scripts/full_gate_markout.py \
+  --db data/keel_ledger.db --hours 168 --market-source okx_public \
+  --horizons 60,300,900
+
+# Same via near-entry script flag
+PYTHONPATH=. python scripts/near_entry_markout.py --full-gate-only \
+  --db data/keel_ledger.db --hours 168 --market-source okx_public
+```
+
+**Recommend-only** — do **not** flip `KEEL_SHADOW_NEAR_PROBE` from this evidence yet. Prefer weighing full-gate markout for economic arming once n is large enough; until then keep near_probe off.
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.
