@@ -472,7 +472,7 @@ class KeelLedger:
 
         since = time.time() - hours_f * 3600.0
         rows = conn.execute(
-            "SELECT timestamp, data FROM events "
+            "SELECT timestamp, inst_id, data FROM events "
             "WHERE timestamp >= ? AND event_type = ? "
             "ORDER BY timestamp DESC",
             (since, "shadow_fill"),
@@ -481,10 +481,14 @@ class KeelLedger:
         by_policy: dict[str, int] = {}
         probe_count = 0
         last_ts: float | None = None
+        inst_fill: dict[str, int] = {}
+        inst_probe: dict[str, int] = {}
+        inst_by_action: dict[str, dict[str, int]] = {}
         for row in rows:
             ts = float(row["timestamp"])
             if last_ts is None or ts > last_ts:
                 last_ts = ts
+            inst_key = str(row["inst_id"] or "").strip() or "UNKNOWN"
             action = "UNKNOWN"
             policy = "manual"
             payload = None
@@ -494,6 +498,7 @@ class KeelLedger:
                     payload = json.loads(raw)
                 except (TypeError, json.JSONDecodeError):
                     payload = None
+            is_probe = False
             if isinstance(payload, dict):
                 if payload.get("action"):
                     action = str(payload["action"])
@@ -503,11 +508,26 @@ class KeelLedger:
                     policy = "shadow_near_probe"
                 if policy == "shadow_near_probe" or payload.get("probe") is True:
                     probe_count += 1
+                    is_probe = True
             by_action[action] = by_action.get(action, 0) + 1
             by_policy[policy] = by_policy.get(policy, 0) + 1
+            inst_fill[inst_key] = inst_fill.get(inst_key, 0) + 1
+            if is_probe:
+                inst_probe[inst_key] = inst_probe.get(inst_key, 0) + 1
+            iba = inst_by_action.setdefault(inst_key, {})
+            iba[action] = iba.get(action, 0) + 1
         from keel.ledger.shadow_markout import aggregate_probe_skips
 
         probe_skips = aggregate_probe_skips(conn, since=since)
+        skips_by_inst = dict(probe_skips.get("by_instrument") or {})
+        by_instrument: dict[str, dict[str, Any]] = {}
+        for ik in sorted(set(inst_fill) | set(skips_by_inst)):
+            by_instrument[ik] = {
+                "count": int(inst_fill.get(ik, 0)),
+                "probe_count": int(inst_probe.get(ik, 0)),
+                "by_action": dict(inst_by_action.get(ik) or {}),
+                "by_skip_reason": dict(skips_by_inst.get(ik) or {}),
+            }
         return {
             "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
             "count": len(rows),
@@ -517,6 +537,7 @@ class KeelLedger:
             "last_timestamp": last_ts,
             "probe_skips": probe_skips,
             "by_skip_reason": dict(probe_skips.get("by_skip_reason") or {}),
+            "by_instrument": by_instrument,
         }
 
     def get_shadow_markout(
@@ -539,7 +560,8 @@ class KeelLedger:
 
         Composes decision aggregates, market_source breakdown, near_signal_rate
         (WAIT rows whose signal_diag.nearest is long/short), shadow_fill stats,
-        and cheap cycle timing — read-only, no trading side effects.
+        cheap cycle timing, and optional ``by_instrument`` breakdown —
+        read-only, no trading side effects.
         """
         hours_f = max(0.0, float(hours))
         since = time.time() - hours_f * 3600.0
@@ -588,6 +610,86 @@ class KeelLedger:
         ).fetchone()
         near_n = int(near_row["n"]) if near_row else 0
         near_signal_rate = (near_n / wait_n) if wait_n else 0.0
+
+        # Per-instrument quality breakdown (diagnosis for multi-inst observe).
+        by_instrument: dict[str, dict[str, Any]] = {}
+        inst_action_rows = conn.execute(
+            "SELECT inst_id, action, COUNT(*) AS n FROM decisions "
+            "WHERE timestamp >= ? GROUP BY inst_id, action",
+            (since,),
+        ).fetchall()
+        for row in inst_action_rows:
+            ik = str(row["inst_id"] or "").strip() or "UNKNOWN"
+            act = str(row["action"])
+            entry = by_instrument.setdefault(
+                ik,
+                {
+                    "decision_count": 0,
+                    "wait_rate": 0.0,
+                    "near_signal_rate": 0.0,
+                    "by_action": {},
+                    "market_source": {
+                        "okx_public": 0,
+                        "synthetic": 0,
+                        "unknown": 0,
+                    },
+                },
+            )
+            n = int(row["n"])
+            entry["by_action"][act] = entry["by_action"].get(act, 0) + n
+            entry["decision_count"] += n
+        for row in conn.execute(
+            "SELECT inst_id, "
+            "json_extract(calculus_data, '$.market_source') AS ms, "
+            "COUNT(*) AS n FROM decisions WHERE timestamp >= ? "
+            "GROUP BY inst_id, ms",
+            (since,),
+        ):
+            ik = str(row["inst_id"] or "").strip() or "UNKNOWN"
+            entry = by_instrument.setdefault(
+                ik,
+                {
+                    "decision_count": 0,
+                    "wait_rate": 0.0,
+                    "near_signal_rate": 0.0,
+                    "by_action": {},
+                    "market_source": {
+                        "okx_public": 0,
+                        "synthetic": 0,
+                        "unknown": 0,
+                    },
+                },
+            )
+            raw = row["ms"]
+            key = str(raw).strip().lower() if raw is not None else ""
+            if key == "okx_public":
+                entry["market_source"]["okx_public"] += int(row["n"])
+            elif key == "synthetic":
+                entry["market_source"]["synthetic"] += int(row["n"])
+            else:
+                entry["market_source"]["unknown"] += int(row["n"])
+        for row in conn.execute(
+            "SELECT inst_id, COUNT(*) AS n FROM decisions "
+            "WHERE timestamp >= ? AND UPPER(action) = 'WAIT' "
+            "AND LOWER(COALESCE("
+            "json_extract(calculus_data, '$.signal_diag.nearest'), '')) "
+            "IN ('long', 'short') GROUP BY inst_id",
+            (since,),
+        ):
+            ik = str(row["inst_id"] or "").strip() or "UNKNOWN"
+            if ik not in by_instrument:
+                continue
+            wait_i = int(by_instrument[ik]["by_action"].get("WAIT", 0))
+            near_i = int(row["n"])
+            by_instrument[ik]["_near_n"] = near_i
+            by_instrument[ik]["_wait_n"] = wait_i
+        for ik, entry in by_instrument.items():
+            dc = int(entry["decision_count"])
+            wait_i = int(entry["by_action"].get("WAIT", 0))
+            near_i = int(entry.pop("_near_n", 0))
+            entry.pop("_wait_n", None)
+            entry["wait_rate"] = (wait_i / dc) if dc else 0.0
+            entry["near_signal_rate"] = (near_i / wait_i) if wait_i else 0.0
 
         # Cycle count + avg duration (reuse same event source as get_decision_stats).
         cycle_rows = conn.execute(
@@ -639,6 +741,7 @@ class KeelLedger:
             },
             "cycle_count": cycle_count,
             "avg_cycle_duration_ms": avg_ms,
+            "by_instrument": by_instrument,
         }
 
     def get_nearest_signals(

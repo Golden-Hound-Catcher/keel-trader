@@ -164,9 +164,11 @@ Response fields (`/stats/decisions`): `decision_count`, `by_action`, `by_policy`
 
 Shadow stats (`/stats/shadow`): `count`, `by_action`, `by_policy`, `probe_count`, `last_timestamp` for `shadow_fill` events, plus **`probe_skips`/`by_skip_reason`** (Q3.5), plus nested **`markout`** (Q3.2/Q3.3 offline outcome): per-horizon (`60`/`300`/`900`s) gross `avg`/`median` `markout_bps` + `win_rate` (markout>0), fee-aware `avg_net_open_markout_bps` / `avg_net_roundtrip_markout_bps` (+ median/probe/`win_rate_net_roundtrip`), optional `by_action`. Top-level **`fee_model`** (`source` live|fallback|override, `maker_bps`/`taker_bps`, `role`, `open_fee_bps`, `round_trip_fee_bps`, `funding_note`). Later price from `factor_snapshots` (fallback `decisions.entry_price`); fills without a later price are `skipped`. Sibling: `GET /api/v1/stats/shadow_markout?hours=` (same payload). Read-only; never places orders.
 
-Quality scorecard (`/stats/quality`): single glance for observe health — `market_source` breakdown (`okx_public` / `synthetic` / `unknown`), `decision_count`, `wait_rate`, `by_action`, `near_signal_rate` (fraction of WAIT with `signal_diag.nearest` in `{long,short}`), nested `shadow` (`count` / `by_action` / `last_timestamp`), `cycle_count`, `avg_cycle_duration_ms`. Read-only; does not enable trading.
+Quality scorecard (`/stats/quality`): single glance for observe health — `market_source` breakdown (`okx_public` / `synthetic` / `unknown`), `decision_count`, `wait_rate`, `by_action`, `near_signal_rate` (fraction of WAIT with `signal_diag.nearest` in `{long,short}`), nested `shadow` (`count` / `by_action` / `last_timestamp`), `cycle_count`, `avg_cycle_duration_ms`, optional **`by_instrument`** map (per `inst_id`: `decision_count` / `wait_rate` / `near_signal_rate` / `by_action` / `market_source`). Read-only; does not enable trading.
 
-Monitor Overview soft-fetches decisions + shadow stats + quality scorecard chips (wait / near / shadow / okx share; hidden if API missing). Decisions table shows `policy_name` and `calculus_data.market_source` chip when present.
+Shadow stats also expose optional **`by_instrument`** (`count` / `probe_count` / `by_action` / `by_skip_reason` / compact `markout_300s` net-RT avg+win when markout is computed). Arming `economic.by_instrument` (and `first_live.economic`) mirrors fill/probe/sample/net-RT per inst for diagnosis — **overall gate stays aggregate**.
+
+Monitor Overview soft-fetches decisions + shadow stats + quality scorecard chips (wait / near / shadow / okx share; **per-inst chips for BTC/ETH/SOL when `by_instrument` present**, soft-fail if absent). Decisions table shows `policy_name` and `calculus_data.market_source` chip when present.
 
 Offline policy / rule-param compare (no OKX keys):
 
@@ -333,7 +335,7 @@ See also §Live（无模拟盘 key） below.
 | `capability` | 同上 probe 结果 |
 | `blockers` | 未就绪原因（含 shadow 排练 / **经济门禁** id，见下） |
 | `warnings` | 非阻断提示（tiny equity、demo、worker_stale、market_source、默认的 shadow 排练缺失、below_hurdle 主导的 probe_skips） |
-| `economic` | S1 经济门禁摘要（fills/probe/sample、net-RT win_rate、avg net-RT bps、thresholds、`passed`） |
+| `economic` | S1 经济门禁摘要（fills/probe/sample、net-RT win_rate、avg net-RT bps、thresholds、`passed`、可选诊断用 `by_instrument`） |
 
 **Shadow 排练证据**：`evaluate_arming` 查 ledger 近 `KEEL_ARMING_SHADOW_HOURS`（默认 24）内是否有 `shadow_fill`。缺省 → warning `no recent shadow_fill rehearsal`；设 `KEEL_ARMING_REQUIRE_SHADOW=1` → blocker（`ready_to_arm=false`）。
 
@@ -352,7 +354,7 @@ See also §Live（无模拟盘 key） below.
 - Probe skips 以 `below_hurdle` 为主 **单独不阻断**（warning only）——说明近信号多在费率门槛下，属观察正常。
 - **Kill-switch 仍须人工清除**：`ready_to_arm=true` 也绝不自动写 `KEEL_KILL_SWITCH=0`。
 
-Monitor「实盘准入」卡展示 `economic` PASS/FAIL 与 fills/probe/mk300s/netRT 摘要；经济 blocker 与其它 blockers 一并列出。
+Monitor「实盘准入」卡展示 `economic` PASS/FAIL 与 fills/probe/mk300s/netRT 摘要（有 `by_instrument` 时附 BTC/ETH/SOL 诊断 chips）；经济 blocker 与其它 blockers 一并列出。整体门禁仍用聚合指标。
 
 **操作步骤（人工）**：
 

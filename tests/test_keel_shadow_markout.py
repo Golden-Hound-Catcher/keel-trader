@@ -358,5 +358,45 @@ class TestShadowMarkoutLedger(unittest.TestCase):
         self.assertIn("fee_model", b)
 
 
+    def test_by_instrument_counts_and_markout_300s(self):
+        # BTC long fill → profitable at 300s; ETH short fill → profitable at 300s
+        self._seed_fill(
+            ts=self.t0, action="BUY_LONG", price=100.0, probe=True, inst_id="BTC-USDT-SWAP"
+        )
+        self._seed_factor(ts=self.t0 + 310, price=101.0, inst_id="BTC-USDT-SWAP")
+        self._seed_fill(
+            ts=self.t0 + 20,
+            action="SELL_SHORT",
+            price=200.0,
+            probe=False,
+            inst_id="ETH-USDT-SWAP",
+        )
+        self._seed_factor(ts=self.t0 + 330, price=198.0, inst_id="ETH-USDT-SWAP")
+        self.ledger.record_event(
+            "shadow_near_probe_skip",
+            inst_id="SOL-USDT-SWAP",
+            data={"reason": "below_hurdle"},
+            timestamp=self.t0 + 50,
+        )
+
+        body = self.client.get("/api/v1/stats/shadow?hours=24").json()
+        by_inst = body.get("by_instrument") or {}
+        self.assertIn("BTC-USDT-SWAP", by_inst)
+        self.assertIn("ETH-USDT-SWAP", by_inst)
+        self.assertIn("SOL-USDT-SWAP", by_inst)
+        self.assertEqual(by_inst["BTC-USDT-SWAP"]["count"], 1)
+        self.assertEqual(by_inst["BTC-USDT-SWAP"]["probe_count"], 1)
+        self.assertEqual(by_inst["ETH-USDT-SWAP"]["count"], 1)
+        self.assertEqual(by_inst["ETH-USDT-SWAP"]["probe_count"], 0)
+        self.assertEqual(
+            by_inst["SOL-USDT-SWAP"]["by_skip_reason"].get("below_hurdle"), 1
+        )
+        btc_mk = by_inst["BTC-USDT-SWAP"].get("markout_300s") or {}
+        self.assertGreaterEqual(int(btc_mk.get("sample_count") or 0), 1)
+        self.assertIsNotNone(btc_mk.get("avg_net_roundtrip_markout_bps"))
+        eth_mk = by_inst["ETH-USDT-SWAP"].get("markout_300s") or {}
+        self.assertGreaterEqual(int(eth_mk.get("sample_count") or 0), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -201,20 +201,22 @@ def aggregate_probe_skips(conn: Any, *, since: float) -> dict[str, Any]:
     """
     Aggregate ``shadow_near_probe_skip`` ledger events since ``since``.
 
-    Returns ``{count, by_skip_reason, top_skip_reason, last_reason, last_timestamp}``.
-    Soft-empty when no events (older ledgers / probe never evaluated).
+    Returns ``{count, by_skip_reason, top_skip_reason, last_reason, last_timestamp,
+    by_instrument}``. Soft-empty when no events (older ledgers / probe never evaluated).
     """
     by_reason: dict[str, int] = {}
+    by_instrument: dict[str, dict[str, int]] = {}
     last_reason: str | None = None
     last_ts: float | None = None
     rows = conn.execute(
-        "SELECT timestamp, data FROM events "
+        "SELECT timestamp, inst_id, data FROM events "
         "WHERE timestamp >= ? AND event_type = ? "
         "ORDER BY timestamp DESC",
         (float(since), SKIP_EVENT_TYPE),
     ).fetchall()
     for row in rows:
         ts = float(row["timestamp"])
+        inst = str(row["inst_id"] or "").strip() or "UNKNOWN"
         reason = "unknown"
         raw = row["data"]
         payload = None
@@ -226,6 +228,8 @@ def aggregate_probe_skips(conn: Any, *, since: float) -> dict[str, Any]:
         if isinstance(payload, dict) and payload.get("reason"):
             reason = str(payload["reason"])
         by_reason[reason] = by_reason.get(reason, 0) + 1
+        inst_skips = by_instrument.setdefault(inst, {})
+        inst_skips[reason] = inst_skips.get(reason, 0) + 1
         if last_ts is None:
             last_ts = ts
             last_reason = reason
@@ -238,6 +242,7 @@ def aggregate_probe_skips(conn: Any, *, since: float) -> dict[str, Any]:
         "top_skip_reason": top,
         "last_reason": last_reason,
         "last_timestamp": last_ts,
+        "by_instrument": by_instrument,
     }
 
 
@@ -313,6 +318,13 @@ def compute_shadow_markout(
     by_action: dict[str, int] = {}
     by_policy: dict[str, int] = {}
     last_ts: float | None = None
+    # Per-instrument fill/probe/action + compact 300s markout nets.
+    inst_fill: dict[str, int] = {}
+    inst_probe: dict[str, int] = {}
+    inst_by_action: dict[str, dict[str, int]] = {}
+    inst_gross_300: dict[str, list[float]] = {}
+    inst_net_rt_300: dict[str, list[float]] = {}
+    inst_probe_net_rt_300: dict[str, list[float]] = {}
 
     funding_rates: dict[str, float | None] = {}
     funding_any_applied = False
@@ -339,6 +351,12 @@ def compute_shadow_markout(
         by_policy[policy] = by_policy.get(policy, 0) + 1
         if last_ts is None or fill_ts > last_ts:
             last_ts = fill_ts
+        inst_key = inst_id.strip() if inst_id else "UNKNOWN"
+        inst_fill[inst_key] = inst_fill.get(inst_key, 0) + 1
+        if is_probe:
+            inst_probe[inst_key] = inst_probe.get(inst_key, 0) + 1
+        iba = inst_by_action.setdefault(inst_key, {})
+        iba[action] = iba.get(action, 0) + 1
 
         for h in horizon_list:
             if fill_price_f <= 0 or not inst_id:
@@ -392,6 +410,11 @@ def compute_shadow_markout(
             by_action_gross[h].setdefault(action, []).append(gross)
             by_action_net_open[h].setdefault(action, []).append(net_open)
             by_action_net_rt[h].setdefault(action, []).append(net_rt)
+            if int(h) == 300:
+                inst_gross_300.setdefault(inst_key, []).append(gross)
+                inst_net_rt_300.setdefault(inst_key, []).append(net_rt)
+                if is_probe:
+                    inst_probe_net_rt_300.setdefault(inst_key, []).append(net_rt)
 
     # Refine funding_note for this response.
     if funding_any_applied:
@@ -455,6 +478,28 @@ def compute_shadow_markout(
         )
 
     probe_skips = aggregate_probe_skips(conn, since=since)
+    skips_by_inst = dict(probe_skips.get("by_instrument") or {})
+    by_instrument: dict[str, dict[str, Any]] = {}
+    all_inst_keys = set(inst_fill) | set(skips_by_inst)
+    for ik in sorted(all_inst_keys):
+        net_vals = inst_net_rt_300.get(ik) or []
+        probe_net_vals = inst_probe_net_rt_300.get(ik) or []
+        entry: dict[str, Any] = {
+            "count": int(inst_fill.get(ik, 0)),
+            "probe_count": int(inst_probe.get(ik, 0)),
+            "by_action": dict(inst_by_action.get(ik) or {}),
+            "by_skip_reason": dict(skips_by_inst.get(ik) or {}),
+        }
+        if 300 in horizon_list:
+            entry["markout_300s"] = {
+                "sample_count": len(net_vals),
+                "probe_sample_count": len(probe_net_vals),
+                "avg_net_roundtrip_markout_bps": _avg(net_vals),
+                "win_rate_net_roundtrip": _win_rate(net_vals),
+                "probe_avg_net_roundtrip_markout_bps": _avg(probe_net_vals),
+                "probe_win_rate_net_roundtrip": _win_rate(probe_net_vals),
+            }
+        by_instrument[ik] = entry
     return {
         "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
         "count": fill_count,
@@ -465,6 +510,7 @@ def compute_shadow_markout(
         "fee_model": fee_model,
         "probe_skips": probe_skips,
         "by_skip_reason": dict(probe_skips.get("by_skip_reason") or {}),
+        "by_instrument": by_instrument,
         "markout": {
             "price_source": (
                 ",".join(sorted(sources_used)) if sources_used else "factor_snapshots"

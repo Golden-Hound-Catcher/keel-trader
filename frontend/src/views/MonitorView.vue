@@ -316,6 +316,88 @@ const qualityProbeCount = computed(() => {
   const n = qualityStats.value?.shadow?.probe_count
   return typeof n === 'number' && Number.isFinite(n) ? n : null
 })
+/** Compact per-instrument quality chips (BTC/ETH/SOL); soft-fail if absent. */
+function shortInstLabel(instId: string): string {
+  const base = String(instId || '').split('-')[0] || instId
+  return base.length <= 6 ? base : base.slice(0, 6)
+}
+const qualityByInstrumentChips = computed(() => {
+  const map = qualityStats.value?.by_instrument
+  if (!map || typeof map !== 'object') return [] as Array<{
+    inst: string
+    label: string
+    wait: string
+    near: string
+    n: number
+    title: string
+  }>
+  const prefer = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP']
+  const keys = [
+    ...prefer.filter((k) => k in map),
+    ...Object.keys(map).filter((k) => !prefer.includes(k)).sort(),
+  ].slice(0, 6)
+  return keys.map((inst) => {
+    const row = map[inst]
+    const wait =
+      typeof row?.wait_rate === 'number' && Number.isFinite(row.wait_rate)
+        ? `${(row.wait_rate * 100).toFixed(0)}%`
+        : '—'
+    const near =
+      typeof row?.near_signal_rate === 'number' && Number.isFinite(row.near_signal_rate)
+        ? `${(row.near_signal_rate * 100).toFixed(0)}%`
+        : '—'
+    const n = typeof row?.decision_count === 'number' ? row.decision_count : 0
+    const ms = row?.market_source || {}
+    return {
+      inst,
+      label: shortInstLabel(inst),
+      wait,
+      near,
+      n,
+      title: `${inst} · n=${n} wait=${wait} near=${near} okx=${ms.okx_public ?? 0} synth=${ms.synthetic ?? 0}`,
+    }
+  })
+})
+const shadowByInstrumentChips = computed(() => {
+  const map = shadowStats.value?.by_instrument
+  if (!map || typeof map !== 'object') return [] as Array<{
+    inst: string
+    label: string
+    fill: number
+    probe: number
+    mk: string
+    title: string
+  }>
+  const prefer = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP']
+  const keys = [
+    ...prefer.filter((k) => k in map),
+    ...Object.keys(map).filter((k) => !prefer.includes(k)).sort(),
+  ].slice(0, 6)
+  return keys.map((inst) => {
+    const row = map[inst]
+    const fill = Number(row?.count || 0)
+    const probe = Number(row?.probe_count || 0)
+    const mk300 = row?.markout_300s
+    let mk = '—'
+    if (mk300 && typeof mk300.avg_net_roundtrip_markout_bps === 'number') {
+      const wr =
+        typeof mk300.win_rate_net_roundtrip === 'number'
+          ? `${(mk300.win_rate_net_roundtrip * 100).toFixed(0)}%`
+          : '—'
+      mk = `n${mk300.sample_count ?? 0} ${Number(mk300.avg_net_roundtrip_markout_bps).toFixed(1)}bps wr${wr}`
+    } else if (mk300 && (mk300.sample_count || 0) > 0) {
+      mk = `n${mk300.sample_count}`
+    }
+    return {
+      inst,
+      label: shortInstLabel(inst),
+      fill,
+      probe,
+      mk,
+      title: `${inst} fills=${fill} probe=${probe} mk300=${mk}`,
+    }
+  })
+})
 const shadowProbeCount = computed(() => {
   const n = shadowStats.value?.probe_count
   return typeof n === 'number' && Number.isFinite(n) ? n : 0
@@ -560,6 +642,40 @@ const armingReady = computed(() => Boolean(arming.value?.ready_to_arm))
 const armingBlockers = computed(() => arming.value?.blockers ?? [])
 const armingWarnings = computed(() => arming.value?.warnings ?? [])
 const armingEconomic = computed(() => arming.value?.economic ?? null)
+const economicByInstrumentChips = computed(() => {
+  const map = armingEconomic.value?.by_instrument
+  if (!map || typeof map !== 'object') return [] as Array<{
+    inst: string
+    label: string
+    text: string
+    title: string
+  }>
+  const prefer = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP']
+  const keys = [
+    ...prefer.filter((k) => k in map),
+    ...Object.keys(map).filter((k) => !prefer.includes(k)).sort(),
+  ].slice(0, 6)
+  return keys.map((inst) => {
+    const row = map[inst]
+    const fills = row?.fill_count ?? 0
+    const probe = row?.probe_count ?? 0
+    const sample = row?.sample_count ?? 0
+    const avg =
+      typeof row?.avg_net_roundtrip_markout_bps === 'number'
+        ? Number(row.avg_net_roundtrip_markout_bps).toFixed(1)
+        : '—'
+    const wrRaw =
+      row?.probe_win_rate_net_roundtrip ?? row?.win_rate_net_roundtrip ?? null
+    const wr =
+      typeof wrRaw === 'number' ? Number(wrRaw).toFixed(2) : '—'
+    return {
+      inst,
+      label: shortInstLabel(inst),
+      text: `f${fills}/p${probe}/s${sample} ${avg}bps wr${wr}`,
+      title: `${inst} fills=${fills} probe=${probe} sample=${sample} avgNetRT=${avg} wr=${wr}`,
+    }
+  })
+})
 const armingEconBlockers = computed(() =>
   (armingBlockers.value || []).filter((b) =>
     b === 'insufficient_shadow_markout_sample'
@@ -1156,6 +1272,19 @@ const configStrip = computed(() => {
                     : '—'
                 }}</span>bps</span>
               </div>
+              <div
+                v-if="economicByInstrumentChips.length"
+                class="flex flex-wrap items-center gap-1.5 pt-0.5"
+                title="Per-instrument economic snapshots (diagnostic; gate remains aggregate)"
+              >
+                <span class="text-[#707E94]">by inst</span>
+                <span
+                  v-for="chip in economicByInstrumentChips"
+                  :key="'ei-' + chip.inst"
+                  class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[#2A3548] text-[#A8B3C7]"
+                  :title="chip.title"
+                ><span class="text-white font-bold">{{ chip.label }}</span> {{ chip.text }}</span>
+              </div>
             </div>
             <div
               v-if="armingReady && !armingBlockers.length"
@@ -1412,6 +1541,15 @@ const configStrip = computed(() => {
               class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-sky-500/40 text-sky-300"
               :title="`okx_public ${qualityStats.market_source?.okx_public ?? 0} / synthetic ${qualityStats.market_source?.synthetic ?? 0} / unknown ${qualityStats.market_source?.unknown ?? 0}`"
             >okx {{ qualityOkxSharePct }}</span>
+            <template v-if="qualityByInstrumentChips.length">
+              <span class="text-[10px] font-mono text-[#707E94] ml-1">by inst</span>
+              <span
+                v-for="chip in qualityByInstrumentChips"
+                :key="'qi-' + chip.inst"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-[#2A3548] text-[#A8B3C7]"
+                :title="chip.title"
+              ><span class="text-white font-bold">{{ chip.label }}</span> w{{ chip.wait }} n{{ chip.near }}</span>
+            </template>
           </div>
 
           <div
@@ -1444,6 +1582,15 @@ const configStrip = computed(() => {
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/40 text-amber-300"
                 :title="`probe markout @ ${shadowProbeMarkoutChip.horizon}s · n=${shadowProbeMarkoutChip.samples} · ${shadowProbeMarkoutChip.feeHint} · offline`"
               >mk {{ shadowProbeMarkoutChip.netTag }} {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }}</span>
+              <template v-if="shadowByInstrumentChips.length">
+                <span class="text-[10px] font-mono text-[#707E94]">by inst</span>
+                <span
+                  v-for="chip in shadowByInstrumentChips"
+                  :key="'si-' + chip.inst"
+                  class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-violet-500/25 text-violet-200/90"
+                  :title="chip.title"
+                ><span class="text-white font-bold">{{ chip.label }}</span> f{{ chip.fill }}/p{{ chip.probe }} {{ chip.mk }}</span>
+              </template>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
               <div>

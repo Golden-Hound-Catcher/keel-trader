@@ -333,6 +333,56 @@ class TestEconomicArmingGates(unittest.TestCase):
         self.assertTrue(r.ready_to_arm)
         self.assertTrue(r.economic["passed"])
 
+    def test_economic_by_instrument_diagnostic(self):
+        mk = _markout(count=12, probe_count=8, sample_count=8, probe_wr=0.7, avg_net=2.0)
+        mk["by_instrument"] = {
+            "BTC-USDT-SWAP": {
+                "count": 8,
+                "probe_count": 5,
+                "by_action": {"BUY_LONG": 8},
+                "by_skip_reason": {"below_hurdle": 3},
+                "markout_300s": {
+                    "sample_count": 6,
+                    "probe_sample_count": 4,
+                    "avg_net_roundtrip_markout_bps": 3.0,
+                    "win_rate_net_roundtrip": 0.66,
+                    "probe_avg_net_roundtrip_markout_bps": 2.5,
+                    "probe_win_rate_net_roundtrip": 0.75,
+                },
+            },
+            "ETH-USDT-SWAP": {
+                "count": 4,
+                "probe_count": 3,
+                "by_action": {"SELL_SHORT": 4},
+                "by_skip_reason": {},
+                "markout_300s": {
+                    "sample_count": 2,
+                    "probe_sample_count": 1,
+                    "avg_net_roundtrip_markout_bps": -1.0,
+                    "win_rate_net_roundtrip": 0.0,
+                    "probe_avg_net_roundtrip_markout_bps": -1.0,
+                    "probe_win_rate_net_roundtrip": 0.0,
+                },
+            },
+        }
+        blockers, summary = evaluate_economic_gates(
+            _settings(arming_econ_enabled=True),
+            markout_stats=mk,
+        )
+        self.assertEqual(blockers, [])
+        self.assertTrue(summary["passed"])
+        by_inst = summary.get("by_instrument") or {}
+        self.assertIn("BTC-USDT-SWAP", by_inst)
+        self.assertEqual(by_inst["BTC-USDT-SWAP"]["fill_count"], 8)
+        self.assertEqual(by_inst["BTC-USDT-SWAP"]["probe_count"], 5)
+        self.assertEqual(by_inst["BTC-USDT-SWAP"]["sample_count"], 6)
+        self.assertAlmostEqual(
+            by_inst["BTC-USDT-SWAP"]["avg_net_roundtrip_markout_bps"], 3.0
+        )
+        self.assertEqual(by_inst["ETH-USDT-SWAP"]["fill_count"], 4)
+        # Aggregate gate still uses overall metrics, not per-inst.
+        self.assertEqual(summary["fill_count"], 12)
+
     def test_no_markout_method_insufficient(self):
         class Bare:
             def get_events(self, **kwargs):
