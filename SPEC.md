@@ -129,9 +129,9 @@ Base: `keel.api.app`
 | GET | `/api/v1/events` | Raw ledger events (`?event_type=` / `?inst_id=` optional) |
 | GET | `/api/v1/factors/{inst_id}` | Latest factor snapshot (`?live=1` → OKX public candles) |
 | GET | `/api/v1/stats/decisions` | Decision quality aggregates (`?hours=`, optional `market_source=okx_public|synthetic|any`) |
-| GET | `/api/v1/stats/shadow` | Shadow_fill counts + Q3.2/Q3.3 offline markout (`?hours=`; by_action/by_policy/probe_count + fee_model + gross/net markout horizons) |
+| GET | `/api/v1/stats/shadow` | Shadow fill / probe / skip / markout aggregates (`?hours=`); optional `by_instrument` (counts + compact 300s net-RT) |
 | GET | `/api/v1/stats/shadow_markout` | Sibling alias of `/stats/shadow` (same markout payload) |
-| GET | `/api/v1/stats/quality` | Observation quality scorecard (`?hours=`): market_source breakdown, wait/near_signal rates, shadow nest, cycle timing |
+| GET | `/api/v1/stats/quality` | Observation quality scorecard (`?hours=`): market_source breakdown, wait/near_signal rates, shadow nest, cycle timing, optional `by_instrument` |
 | GET | `/api/v1/signals/nearest` | Q0 near-signal radar: latest decision per watch instrument + `signal_diag` summary (`?hours=`) |
 
 **Stability**
@@ -310,6 +310,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Per-instrument quality/economic**: `/stats/quality` + `/stats/shadow` (+ arming/`first_live` economic) optional `by_instrument` maps for BTC/ETH/SOL diagnosis; Monitor soft-fail chips; aggregate gates unchanged; never clears kill |
 | 2026-09-07 | **S2 first-live checklist**: `status.first_live` aggregates kill/shadow/capability + arming/economic + suggested `KEEL_LIVE_MAX_*` + `allowed_now` (false while kill on or economic fail) + `human_steps`; Monitor「First live」card; RUNBOOK Stage T gate; never auto-clears kill |
 | 2026-09-07 | **Phase R Rule v3 edge pack**: audit volume_ratio (= last/mean20, correct); default min_vol 1.0→0.5 + percentile/soft volume paths; signal_diag edge hints (atr/expected_tp/edge_hint_bps); compare_rule_params missing-gate hist; near-probe 10bps fee hurdle unchanged |
 | 2026-09-07 | **Phase R RSI soft + edge_hint wire**: hard RSI defaults 42/58→45/55; soft RSI relax when other four gates pass (48/52); near-probe prefers signal_diag.edge_hint_bps; 10bps hurdle unchanged |
@@ -385,7 +386,7 @@ After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` 
 
 ## Addendum: shadow execution
 
-`KEEL_SHADOW_MODE` (default off) loads into `settings.shadow_mode`. When on, `ExecutionOrchestrator` still runs validation + risk gates. **Kill-switch means no real exchange orders**; with shadow on, gates allow the shadow path so operators can rehearse while `KEEL_KILL_SWITCH=1`. Decisions that would place an order instead record a ledger `shadow_fill` event (decision details) and an optional synthetic trade marked `metadata.shadow=true` / `strategy_tag=keel-shadow`, returning `success=true` without calling exchange `place_order` (no OKX POST). Non-secret `shadow_mode` is echoed on status/config; Monitor Overview shows a read-only badge/banner when on. Arming warns (or blocks when `KEEL_ARMING_REQUIRE_SHADOW=1`) if no recent `shadow_fill` (see RUNBOOK). **S1**: when `KEEL_ARMING_ECON_ENABLED` (default on), `ready_to_arm` also requires fee-aware shadow markout gates (min fills **or** probe fills, min 300s sample, `probe_win_rate_net_roundtrip` ≥ threshold, `avg_net_roundtrip_markout_bps` ≥ 0). Undersampled → blocker `insufficient_shadow_markout_sample` (not a pass). `below_hurdle`-dominated probe skips do not block alone. `status.arming.economic` exposes the summary; kill-switch remains manual.
+`KEEL_SHADOW_MODE` (default off) loads into `settings.shadow_mode`. When on, `ExecutionOrchestrator` still runs validation + risk gates. **Kill-switch means no real exchange orders**; with shadow on, gates allow the shadow path so operators can rehearse while `KEEL_KILL_SWITCH=1`. Decisions that would place an order instead record a ledger `shadow_fill` event (decision details) and an optional synthetic trade marked `metadata.shadow=true` / `strategy_tag=keel-shadow`, returning `success=true` without calling exchange `place_order` (no OKX POST). Non-secret `shadow_mode` is echoed on status/config; Monitor Overview shows a read-only badge/banner when on. Arming warns (or blocks when `KEEL_ARMING_REQUIRE_SHADOW=1`) if no recent `shadow_fill` (see RUNBOOK). **S1**: when `KEEL_ARMING_ECON_ENABLED` (default on), `ready_to_arm` also requires fee-aware shadow markout gates (min fills **or** probe fills, min 300s sample, `probe_win_rate_net_roundtrip` ≥ threshold, `avg_net_roundtrip_markout_bps` ≥ 0). Undersampled → blocker `insufficient_shadow_markout_sample` (not a pass). `below_hurdle`-dominated probe skips do not block alone. `status.arming.economic` exposes the summary (optional `by_instrument` snapshots for diagnosis; gate remains aggregate); kill-switch remains manual.
 
 ## Addendum: Q3 shadow near-signal probe
 

@@ -297,6 +297,10 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("near_signal_rate", q_props)
         self.assertIn("shadow", q_props)
         self.assertIn("wait_rate", q_props)
+        self.assertIn("by_instrument", q_props)
+        self.assertIn("by_instrument", sh_props)
+        self.assertIn("QualityInstrumentStats", comps)
+        self.assertIn("ShadowInstrumentStats", comps)
         self.assertIn("/api/v1/signals/nearest", paths)
         self.assertIn("NearestSignalsResponse", comps)
         ns_props = comps["NearestSignalsResponse"]["properties"]

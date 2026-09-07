@@ -524,6 +524,7 @@ class TestShadowStats(unittest.TestCase):
         self.assertEqual(body["count"], 0)
         self.assertEqual(body["by_action"], {})
         self.assertIsNone(body["last_timestamp"])
+        self.assertEqual(body.get("by_instrument") or {}, {})
 
     def test_shadow_stats_counts_by_action(self):
         t1 = time.time() - 10
@@ -568,6 +569,13 @@ class TestShadowStats(unittest.TestCase):
 
         direct = self.ledger.get_shadow_stats(hours=24.0)
         self.assertEqual(direct["count"], 3)
+        by_inst = body.get("by_instrument") or {}
+        self.assertEqual(by_inst.get("BTC-USDT-SWAP", {}).get("count"), 2)
+        self.assertEqual(by_inst.get("ETH-USDT-SWAP", {}).get("count"), 1)
+        self.assertEqual(
+            by_inst.get("BTC-USDT-SWAP", {}).get("by_action", {}).get("BUY_LONG"), 2
+        )
+        self.assertEqual(direct["by_instrument"]["BTC-USDT-SWAP"]["count"], 2)
 
 
 class TestCompareRuleParamsScript(unittest.TestCase):
@@ -649,6 +657,7 @@ class TestQualityStats(unittest.TestCase):
         self.assertIsNone(body["shadow"]["last_timestamp"])
         self.assertEqual(body["cycle_count"], 0)
         self.assertIsNone(body["avg_cycle_duration_ms"])
+        self.assertEqual(body.get("by_instrument") or {}, {})
 
     def test_quality_scorecard_fields(self):
         now = time.time()
@@ -743,3 +752,21 @@ class TestQualityStats(unittest.TestCase):
         direct = self.ledger.get_quality_stats(hours=24.0)
         self.assertEqual(direct["decision_count"], 4)
         self.assertAlmostEqual(direct["near_signal_rate"], 2.0 / 3.0, places=5)
+
+        by_inst = body.get("by_instrument") or {}
+        self.assertIn("BTC-USDT-SWAP", by_inst)
+        self.assertIn("ETH-USDT-SWAP", by_inst)
+        self.assertIn("SOL-USDT-SWAP", by_inst)
+        btc = by_inst["BTC-USDT-SWAP"]
+        self.assertEqual(btc["decision_count"], 1)
+        self.assertEqual(btc["by_action"].get("WAIT"), 1)
+        self.assertAlmostEqual(btc["wait_rate"], 1.0, places=5)
+        self.assertAlmostEqual(btc["near_signal_rate"], 1.0, places=5)
+        self.assertEqual(btc["market_source"].get("okx_public"), 1)
+        eth = by_inst["ETH-USDT-SWAP"]
+        self.assertEqual(eth["decision_count"], 1)
+        self.assertAlmostEqual(eth["near_signal_rate"], 0.0, places=5)
+        sol = by_inst["SOL-USDT-SWAP"]
+        self.assertEqual(sol["by_action"].get("BUY_LONG"), 1)
+        self.assertAlmostEqual(sol["wait_rate"], 0.0, places=5)
+        self.assertEqual(direct["by_instrument"]["BTC-USDT-SWAP"]["decision_count"], 1)

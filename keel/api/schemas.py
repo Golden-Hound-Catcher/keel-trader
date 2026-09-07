@@ -312,6 +312,27 @@ class ProbeSkipsBlock(BaseModel):
     last_timestamp: float | None = None
 
 
+class ShadowInstrumentMarkout300(BaseModel):
+    """Compact per-instrument 300s net-RT markout summary (optional)."""
+
+    sample_count: int = 0
+    probe_sample_count: int = 0
+    avg_net_roundtrip_markout_bps: float | None = None
+    win_rate_net_roundtrip: float | None = None
+    probe_avg_net_roundtrip_markout_bps: float | None = None
+    probe_win_rate_net_roundtrip: float | None = None
+
+
+class ShadowInstrumentStats(BaseModel):
+    """Per-instrument shadow fill / skip / compact markout breakdown."""
+
+    count: int = 0
+    probe_count: int = 0
+    by_action: dict[str, int] = Field(default_factory=dict)
+    by_skip_reason: dict[str, int] = Field(default_factory=dict)
+    markout_300s: ShadowInstrumentMarkout300 | None = None
+
+
 class ShadowStatsResponse(BaseModel):
     """Aggregated shadow_fill rehearsal stats (read-only)."""
 
@@ -328,6 +349,8 @@ class ShadowStatsResponse(BaseModel):
     fee_model: ShadowFeeModel | None = None
     # Q3.2: optional markout nest (absent on older builds / soft-fail clients).
     markout: ShadowMarkoutBlock | None = None
+    # Stage R/S: optional per-instrument breakdown (soft-fail if older clients ignore).
+    by_instrument: dict[str, ShadowInstrumentStats] = Field(default_factory=dict)
 
 
 class QualityShadowBlock(BaseModel):
@@ -338,6 +361,16 @@ class QualityShadowBlock(BaseModel):
     by_policy: dict[str, int] = Field(default_factory=dict)
     probe_count: int = 0
     last_timestamp: float | None = None
+
+
+class QualityInstrumentStats(BaseModel):
+    """Per-instrument observation quality breakdown."""
+
+    decision_count: int = 0
+    wait_rate: float = 0.0
+    near_signal_rate: float = 0.0
+    by_action: dict[str, int] = Field(default_factory=dict)
+    market_source: dict[str, int] = Field(default_factory=dict)
 
 
 class QualityStatsResponse(BaseModel):
@@ -352,6 +385,8 @@ class QualityStatsResponse(BaseModel):
     shadow: QualityShadowBlock = Field(default_factory=QualityShadowBlock)
     cycle_count: int = 0
     avg_cycle_duration_ms: float | None = None
+    # Stage R/S: optional per-instrument breakdown (soft-fail if older clients ignore).
+    by_instrument: dict[str, QualityInstrumentStats] = Field(default_factory=dict)
 
 
 class NearestSignalItem(BaseModel):

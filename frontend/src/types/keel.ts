@@ -45,6 +45,18 @@ export interface KeelLastCycle {
 }
 
 /** S1 economic arming gate summary (read-only; never clears kill-switch). */
+export interface KeelArmingEconomicInstrument {
+  fill_count?: number
+  probe_count?: number
+  sample_count?: number
+  probe_sample_count?: number
+  avg_net_roundtrip_markout_bps?: number | null
+  win_rate_net_roundtrip?: number | null
+  probe_win_rate_net_roundtrip?: number | null
+  probe_avg_net_roundtrip_markout_bps?: number | null
+  by_skip_reason?: Record<string, number>
+}
+
 export interface KeelArmingEconomic {
   enabled?: boolean
   hours?: number
@@ -65,6 +77,8 @@ export interface KeelArmingEconomic {
   sample_ok?: boolean
   passed?: boolean
   by_skip_reason?: Record<string, number>
+  /** Diagnostic per-instrument snapshots; overall gate stays aggregate. */
+  by_instrument?: Record<string, KeelArmingEconomicInstrument>
   note?: string
 }
 
@@ -341,6 +355,23 @@ export interface KeelProbeSkips {
   last_timestamp?: number | null
 }
 
+export interface KeelShadowInstrumentMarkout300 {
+  sample_count?: number
+  probe_sample_count?: number
+  avg_net_roundtrip_markout_bps?: number | null
+  win_rate_net_roundtrip?: number | null
+  probe_avg_net_roundtrip_markout_bps?: number | null
+  probe_win_rate_net_roundtrip?: number | null
+}
+
+export interface KeelShadowInstrumentStats {
+  count: number
+  probe_count?: number
+  by_action?: Record<string, number>
+  by_skip_reason?: Record<string, number>
+  markout_300s?: KeelShadowInstrumentMarkout300 | null
+}
+
 export interface KeelShadowStats {
   hours: number
   count: number
@@ -356,6 +387,8 @@ export interface KeelShadowStats {
   fee_model?: KeelShadowFeeModel | null
   /** Q3.2 offline markout nest (soft-fail if older API). */
   markout?: KeelShadowMarkout | null
+  /** Stage R/S: per-instrument breakdown (soft-fail if absent). */
+  by_instrument?: Record<string, KeelShadowInstrumentStats>
 }
 
 /** Soft-fail Overview quality scorecard from GET /api/v1/stats/quality. */
@@ -368,6 +401,14 @@ export interface KeelQualityShadow {
   last_timestamp?: number | null
 }
 
+export interface KeelQualityInstrumentStats {
+  decision_count: number
+  wait_rate: number
+  near_signal_rate: number
+  by_action?: Record<string, number>
+  market_source?: Record<string, number>
+}
+
 export interface KeelQualityStats {
   hours: number
   market_source: Record<string, number>
@@ -378,6 +419,8 @@ export interface KeelQualityStats {
   shadow: KeelQualityShadow
   cycle_count: number
   avg_cycle_duration_ms: number | null
+  /** Stage R/S: per-instrument breakdown (soft-fail if absent). */
+  by_instrument?: Record<string, KeelQualityInstrumentStats>
 }
 
 export interface KeelDecisionsResponse {

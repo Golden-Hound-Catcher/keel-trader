@@ -104,6 +104,52 @@ def _horizon_row(markout: dict[str, Any] | None, horizon_seconds: int) -> dict[s
     return {}
 
 
+
+def _economic_by_instrument(
+    raw: dict[str, Any] | None,
+    *,
+    horizon_seconds: int,
+) -> dict[str, dict[str, Any]]:
+    """Compact per-inst economic snapshots for diagnosis (gate stays aggregate)."""
+    out: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw, dict):
+        return out
+    by_inst = raw.get("by_instrument")
+    if not isinstance(by_inst, dict):
+        return out
+    for inst_id, payload in by_inst.items():
+        if not isinstance(payload, dict):
+            continue
+        mk = payload.get("markout_300s") if int(horizon_seconds) == 300 else None
+        if not isinstance(mk, dict):
+            # Fall back: if horizon != 300 or missing compact block, still surface counts.
+            mk = payload.get("markout_300s") if isinstance(payload.get("markout_300s"), dict) else {}
+        out[str(inst_id)] = {
+            "fill_count": int(payload.get("count") or 0),
+            "probe_count": int(payload.get("probe_count") or 0),
+            "sample_count": int(mk.get("sample_count") or 0) if isinstance(mk, dict) else 0,
+            "probe_sample_count": int(mk.get("probe_sample_count") or 0)
+            if isinstance(mk, dict)
+            else 0,
+            "avg_net_roundtrip_markout_bps": (
+                mk.get("avg_net_roundtrip_markout_bps") if isinstance(mk, dict) else None
+            ),
+            "win_rate_net_roundtrip": (
+                mk.get("win_rate_net_roundtrip") if isinstance(mk, dict) else None
+            ),
+            "probe_win_rate_net_roundtrip": (
+                mk.get("probe_win_rate_net_roundtrip") if isinstance(mk, dict) else None
+            ),
+            "probe_avg_net_roundtrip_markout_bps": (
+                mk.get("probe_avg_net_roundtrip_markout_bps")
+                if isinstance(mk, dict)
+                else None
+            ),
+            "by_skip_reason": dict(payload.get("by_skip_reason") or {}),
+        }
+    return out
+
+
 def _fetch_markout_stats(
     ledger: Any,
     *,
@@ -179,9 +225,11 @@ def evaluate_economic_gates(
         "sample_ok": False,
         "passed": False,
         "by_skip_reason": {},
+        "by_instrument": {},
         "note": (
             "Kill-switch is never auto-cleared; economic gates are read-only. "
-            "Probe skips dominated by below_hurdle do not block alone."
+            "Probe skips dominated by below_hurdle do not block alone. "
+            "by_instrument is diagnostic only; overall gate remains aggregate."
         ),
     }
 
@@ -229,6 +277,7 @@ def evaluate_economic_gates(
             "fills_ok": fills_ok,
             "sample_ok": sample_ok,
             "by_skip_reason": by_skip,
+            "by_instrument": _economic_by_instrument(raw, horizon_seconds=horizon),
         }
     )
 
