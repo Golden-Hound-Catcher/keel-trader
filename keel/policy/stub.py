@@ -1,22 +1,54 @@
 """
 Deterministic Stub / Rule decision policies for offline tests and paper cycles.
 
-No LLM calls. Uses the same RSI/MACD/trend heuristics previously inline in
-``keel.worker.cycle.rule_based_decision``.
+No LLM calls. Rule v2: RSI + trend + MACD + EMA stack + volume_ratio filters.
 """
 from __future__ import annotations
+
+import os
 
 from keel.factors.market_data import MarketSnapshot
 from keel.domain.decision import Decision, validate_decision
 from keel.policy.protocol import DecisionPolicy, PolicyContext, PolicyResult
 
 
+def _env_float(key: str, default: float) -> float:
+    raw = (os.environ.get(key) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _rule_thresholds() -> tuple[float, float, float]:
+    """RSI long max, RSI short min, min volume_ratio (env-overridable)."""
+    return (
+        _env_float("KEEL_RULE_RSI_LONG_MAX", 42.0),
+        _env_float("KEEL_RULE_RSI_SHORT_MIN", 58.0),
+        _env_float("KEEL_RULE_MIN_VOLUME_RATIO", 1.0),
+    )
+
+
+def _factor_reason(snapshot: MarketSnapshot, prefix: str) -> str:
+    return (
+        f"{prefix} rsi={snapshot.rsi_14:.1f} trend={snapshot.trend_15m} "
+        f"macd_h={snapshot.macd_histogram:.4f} "
+        f"ema9={snapshot.ema_9:.4f} ema21={snapshot.ema_21:.4f} "
+        f"vol={snapshot.volume_ratio:.2f}"
+    )
+
+
 def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     """
-    Deterministic paper decision (no LLM).
+    Deterministic rule policy v2 (no LLM).
+
+    Long: RSI ≤ long_max + bullish + MACD hist ≥ 0 + ema_9 ≥ ema_21 + vol ≥ min
+    Short: RSI ≥ short_min + bearish + MACD hist ≤ 0 + ema_9 ≤ ema_21 + vol ≥ min
 
     Produces valid RR >= 2 geometry when a signal fires so the risk/execution
-    path is exercised end-to-end.
+    path is exercised end-to-end. Offline-testable via crafted MarketSnapshot.
     """
     if not snapshot.data_valid or snapshot.price <= 0 or snapshot.atr_14 <= 0:
         return Decision(inst_id=snapshot.inst_id, action="WAIT", reason="invalid market data")
@@ -24,8 +56,16 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     price = snapshot.price
     atr = snapshot.atr_14
     margin = 50.0
+    rsi_long_max, rsi_short_min, min_vol = _rule_thresholds()
 
-    if snapshot.rsi_14 <= 42 and snapshot.trend_15m == "bullish" and snapshot.macd_histogram >= 0:
+    long_ok = (
+        snapshot.rsi_14 <= rsi_long_max
+        and snapshot.trend_15m == "bullish"
+        and snapshot.macd_histogram >= 0
+        and snapshot.ema_9 >= snapshot.ema_21
+        and snapshot.volume_ratio >= min_vol
+    )
+    if long_ok:
         entry = price
         sl = entry - 1.0 * atr
         tp = entry + 2.2 * atr
@@ -38,10 +78,17 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
             stop_loss=sl,
             leverage=3,
             margin_usdt=margin,
-            reason=f"paper long rsi={snapshot.rsi_14:.1f} trend={snapshot.trend_15m}",
+            reason=_factor_reason(snapshot, "rule long"),
         )
 
-    if snapshot.rsi_14 >= 58 and snapshot.trend_15m == "bearish" and snapshot.macd_histogram <= 0:
+    short_ok = (
+        snapshot.rsi_14 >= rsi_short_min
+        and snapshot.trend_15m == "bearish"
+        and snapshot.macd_histogram <= 0
+        and snapshot.ema_9 <= snapshot.ema_21
+        and snapshot.volume_ratio >= min_vol
+    )
+    if short_ok:
         entry = price
         sl = entry + 1.0 * atr
         tp = entry - 2.2 * atr
@@ -54,14 +101,14 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
             stop_loss=sl,
             leverage=3,
             margin_usdt=margin,
-            reason=f"paper short rsi={snapshot.rsi_14:.1f} trend={snapshot.trend_15m}",
+            reason=_factor_reason(snapshot, "rule short"),
         )
 
     return Decision(
         inst_id=snapshot.inst_id,
         action="WAIT",
         confidence=40.0,
-        reason=f"no paper signal rsi={snapshot.rsi_14:.1f}",
+        reason=_factor_reason(snapshot, "no rule signal"),
     )
 
 
@@ -85,7 +132,7 @@ class StubDecisionPolicy:
 
 
 class RuleDecisionPolicy:
-    """Deterministic RSI/trend/MACD rules — default for paper cycles without LLM."""
+    """Deterministic RSI/trend/MACD/EMA/vol rules — default without LLM."""
 
     @property
     def name(self) -> str:

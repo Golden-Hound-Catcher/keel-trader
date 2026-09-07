@@ -256,5 +256,76 @@ class TestCycleUsesPolicyPort(unittest.TestCase):
         self.assertTrue(summary["results"][0]["success"], msg=summary["results"][0])
 
 
+
+class TestRulePolicyV2(unittest.TestCase):
+    """Crafted MarketSnapshot unit tests for rule v2 (no network)."""
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=1.0,
+            price=65000.0,
+            atr_14=500.0,
+            rsi_14=35.0,
+            trend_15m="bullish",
+            macd_histogram=10.0,
+            ema_9=65100.0,
+            ema_21=64900.0,
+            volume_ratio=1.2,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def test_long_when_all_filters_pass(self):
+        d = rule_based_decision(self._snap())
+        self.assertEqual(d.action, "BUY_LONG")
+        self.assertIn("rsi=", d.reason)
+        self.assertIn("ema9=", d.reason)
+        self.assertIn("vol=", d.reason)
+        self.assertIn("macd_h=", d.reason)
+
+    def test_short_when_all_filters_pass(self):
+        d = rule_based_decision(
+            self._snap(
+                rsi_14=65.0,
+                trend_15m="bearish",
+                macd_histogram=-5.0,
+                ema_9=64800.0,
+                ema_21=65100.0,
+                volume_ratio=1.1,
+            )
+        )
+        self.assertEqual(d.action, "SELL_SHORT")
+        self.assertIn("rule short", d.reason)
+
+    def test_wait_when_ema_stack_fails(self):
+        d = rule_based_decision(self._snap(ema_9=64800.0, ema_21=65100.0))
+        self.assertEqual(d.action, "WAIT")
+        self.assertIn("no rule signal", d.reason)
+
+    def test_wait_when_volume_low(self):
+        d = rule_based_decision(self._snap(volume_ratio=0.5))
+        self.assertEqual(d.action, "WAIT")
+
+    def test_wait_when_macd_against_long(self):
+        d = rule_based_decision(self._snap(macd_histogram=-1.0))
+        self.assertEqual(d.action, "WAIT")
+
+    def test_env_rsi_threshold_override(self):
+        import os
+        snap = self._snap(rsi_14=45.0)  # above default 42 → WAIT
+        self.assertEqual(rule_based_decision(snap).action, "WAIT")
+        prev = os.environ.get("KEEL_RULE_RSI_LONG_MAX")
+        try:
+            os.environ["KEEL_RULE_RSI_LONG_MAX"] = "50"
+            self.assertEqual(rule_based_decision(snap).action, "BUY_LONG")
+        finally:
+            if prev is None:
+                os.environ.pop("KEEL_RULE_RSI_LONG_MAX", None)
+            else:
+                os.environ["KEEL_RULE_RSI_LONG_MAX"] = prev
+
 if __name__ == "__main__":
     unittest.main()
