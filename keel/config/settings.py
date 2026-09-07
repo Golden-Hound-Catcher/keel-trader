@@ -84,6 +84,9 @@ class Settings:
     shadow_near_probe_cooldown_seconds: int = 900
     shadow_near_probe_max_missing: int = 2
     shadow_near_probe_min_confidence: float = 0.0
+    # Q3.4: fee-aware min edge hurdle for near-probe (None → use RT/open fee bps).
+    shadow_near_probe_min_edge_bps: float | None = None
+    shadow_near_probe_edge_mode: str = "round_trip"  # round_trip|open
     # Q3.3 fee-aware shadow markout (OKX USDT-SWAP makerU/takerU).
     # Role default taker — shadow/near_probe assume immediate fill.
     shadow_fee_role: str = "taker"  # taker|maker
@@ -203,6 +206,12 @@ def _env_shadow_fee_role() -> str:
     """taker (default) | maker for shadow markout fee legs."""
     raw = (_env("KEEL_SHADOW_FEE_ROLE", "taker") or "taker").strip().lower()
     return "maker" if raw == "maker" else "taker"
+
+
+def _env_shadow_near_probe_edge_mode() -> str:
+    """round_trip (default) | open — which fee leg is the near-probe hurdle."""
+    raw = (_env("KEEL_SHADOW_NEAR_PROBE_EDGE_MODE", "round_trip") or "round_trip").strip().lower()
+    return "open" if raw == "open" else "round_trip"
 
 
 # Trader cycle interval bounds (seconds): min 1m, max 24h.
@@ -411,6 +420,8 @@ def get_settings() -> Settings:
         shadow_near_probe_cooldown_seconds=_env_int("KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS", 900),
         shadow_near_probe_max_missing=_env_int("KEEL_SHADOW_NEAR_PROBE_MAX_MISSING", 2),
         shadow_near_probe_min_confidence=_env_float("KEEL_SHADOW_NEAR_PROBE_MIN_CONFIDENCE", 0.0),
+        shadow_near_probe_min_edge_bps=_env_optional_float("KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS"),
+        shadow_near_probe_edge_mode=_env_shadow_near_probe_edge_mode(),
         shadow_fee_role=_env_shadow_fee_role(),
         shadow_maker_fee_bps=_env_optional_float("KEEL_SHADOW_MAKER_FEE_BPS"),
         shadow_taker_fee_bps=_env_optional_float("KEEL_SHADOW_TAKER_FEE_BPS"),

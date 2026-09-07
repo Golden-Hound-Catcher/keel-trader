@@ -64,6 +64,10 @@ export interface KeelStatus {
   shadow_near_probe?: boolean
   /** Q3.1: per-instrument probe cooldown seconds. */
   shadow_near_probe_cooldown_seconds?: number
+  /** Q3.4: fee-aware edge hurdle mode (round_trip|open). */
+  shadow_near_probe_edge_mode?: string
+  shadow_near_probe_min_edge_bps?: number | null
+  shadow_near_probe_hurdle_bps?: number | null
   /** Active decision policy name (rule|stub|llm) from build_decision_policy. */
   decision_policy: string
   last_cycle?: KeelLastCycle | null
@@ -99,6 +103,10 @@ export interface KeelConfig {
   shadow_near_probe?: boolean
   shadow_near_probe_cooldown_seconds?: number
   shadow_near_probe_max_missing?: number
+  /** Q3.4: fee-aware edge hurdle (same as status). */
+  shadow_near_probe_edge_mode?: string
+  shadow_near_probe_min_edge_bps?: number | null
+  shadow_near_probe_hurdle_bps?: number | null
   /** Active decision policy name (same as status.decision_policy). */
   decision_policy: string
   instruments: string[]

@@ -319,6 +319,7 @@ See also §Live（无模拟盘 key） below.
 |----|------|
 | 启用条件 | `KEEL_KILL_SWITCH=1` **且** `KEEL_SHADOW_MODE=1` **且** `KEEL_SHADOW_NEAR_PROBE=1`（缺一不可；默认 probe=off） |
 | 触发 | 策略决策仍为 `WAIT`，但 `signal_diag.nearest`∈{long,short} 且 `len(missing)≤KEEL_SHADOW_NEAR_PROBE_MAX_MISSING`（默认 2，与 notify near-signal 阈值一致） |
+| **Q3.4 费用门槛** | 估计 `edge_bps` 必须 ≥ hurdle；默认 hurdle = OKX `round_trip_fee_bps`（`KEEL_SHADOW_FEE_ROLE`；Regular taker→**10** / maker→**4**）。可选 `KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS` 覆盖；`KEEL_SHADOW_NEAR_PROBE_EDGE_MODE=round_trip\|open`（默认 round_trip）。无法估计 edge 时 **fail-closed**（跳过 probe）。审计字段：`edge_bps` / `hurdle_bps` / `fee_role` 写入 reason + shadow_fill / trade metadata |
 | 动作 | 合成 `BUY_LONG`/`SELL_SHORT` → 既有 `shadow_fill` 路径；ledger `policy=shadow_near_probe` / `probe=true`；`strategy_tag=keel-shadow-near-probe` |
 | Cooldown | 每 instrument `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS`（默认 900）内不重复 probe |
 | 安全 | 无 kill 或无 shadow → **不** probe、**不** live order；policy 决策仍记 WAIT |
@@ -335,11 +336,16 @@ KEEL_SHADOW_NEAR_PROBE=1
 # optional:
 # KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS=900
 # KEEL_SHADOW_NEAR_PROBE_MAX_MISSING=2
+# Q3.4 fee edge hurdle (unset → RT fee for KEEL_SHADOW_FEE_ROLE; 0 disables):
+# KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS=
+# KEEL_SHADOW_NEAR_PROBE_EDGE_MODE=round_trip
 ```
 
 重启 worker 后看 ledger `shadow_fill`（`data.policy=shadow_near_probe`）与 `GET /api/v1/stats/shadow` 的 `probe_count`。用完将 `KEEL_SHADOW_NEAR_PROBE=0`。
 
-Monitor / status：`GET /api/v1/status`（与 `/config`）暴露 `shadow_near_probe` + cooldown；Overview 显示 NEAR PROBE chip 与 quality/shadow 条的 `probe_count`。Q3.2/Q3.3：Overview soft-fail chip `mk netRT win% / ±bps`（优先 **net roundtrip**；旧 API 无 `markout`/net 字段时回退 gross 或隐藏）。
+Monitor / status：`GET /api/v1/status`（与 `/config`）暴露 `shadow_near_probe` + cooldown + Q3.4 `shadow_near_probe_edge_mode` / `shadow_near_probe_hurdle_bps`；Overview 显示 NEAR PROBE chip 与 quality/shadow 条的 `probe_count`。Q3.2/Q3.3：Overview soft-fail chip `mk netRT win% / ±bps`（优先 **net roundtrip**；旧 API 无 `markout`/net 字段时回退 gross 或隐藏）。
+
+**Edge 估计（Q3.4）**：用 ATR/price×1e4 与 probe 几何（TP=2.2 ATR / SL=1.0 ATR）的粗 EV；胜率 ≈ gate 完整度（5−missing）/5 × confidence/100。与 Q3.3 `keel/exchange/okx_fees.py` 同一费率模型（makerU/takerU 或 Regular 2/5 bps）。
 
 ### Q3.2 / Q3.3 Shadow markout（离线盈亏 + OKX 官方费率）
 
