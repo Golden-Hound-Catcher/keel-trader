@@ -53,6 +53,16 @@ def get_factors(
                     histogram=round(snap.macd_histogram, 4),
                 ),
                 trend_15m=snap.trend_15m,
+                trend_1h=(
+                    str(payload["trend_1h"])
+                    if payload.get("trend_1h") not in (None, "")
+                    else None
+                ),
+                trend_4h=(
+                    str(payload["trend_4h"])
+                    if payload.get("trend_4h") not in (None, "")
+                    else None
+                ),
                 volume_ratio=snap.volume_ratio,
                 data_quality_reason=quality,
             )

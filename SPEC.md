@@ -315,6 +315,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-07 | **Phase R Rule v3 edge pack**: audit volume_ratio (= last/mean20, correct); default min_vol 1.0→0.5 + percentile/soft volume paths; signal_diag edge hints (atr/expected_tp/edge_hint_bps); compare_rule_params missing-gate hist; near-probe 10bps fee hurdle unchanged |
 | 2026-09-07 | **Phase R RSI soft + edge_hint wire**: hard RSI defaults 42/58→45/55; soft RSI relax when other four gates pass (48/52); near-probe prefers signal_diag.edge_hint_bps; 10bps hurdle unchanged |
 | 2026-09-07 | **S1 economic arming gates**: `evaluate_arming` requires shadow markout evidence (min fills/probe, 300s sample, probe net-RT win_rate≥0.55, avg net-RT≥0); `insufficient_shadow_markout_sample` when undersampled; `arming.economic` on status + Monitor; kill still manual; RUNBOOK/SPEC |
+| 2026-09-07 | **Phase R6 1h edge_hint boost**: `KEEL_RULE_1H_EDGE_BOOST` (default 1.25x, clamp 1–2, +5 bps uplift cap) when `trend_1h_confirm`+nearest aligns; Monitor/Factors multi-TF; probe 10bps hurdle unchanged |
 | 2026-09-07 | **Phase R5 real multi-TF trends**: distinct `trend_15m/1h/4h` from OKX `15m/1H/4H` (or synthetic subsample); rule entry=15m; soft `KEEL_RULE_REQUIRE_1H_TREND` (default 0); signal_diag trend_gate |
 | 2026-09-07 | **Phase R4 fee-aware rule suggest**: `scripts/suggest_rule_params.py` + `keel.ledger.rule_suggest` grid-search RSI/vol/rsi_relax on okx_public cohort; rank by edge≥10bps fires under fire-rate cap; recommend-only (no .env write) |
 | 2026-09-07 | **Q3.4 near-probe fee edge hurdle**: gate `KEEL_SHADOW_NEAR_PROBE` on estimated `edge_bps` ≥ OKX RT/open fee (or `KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS`); fail-closed; audit + status hurdle fields; RUNBOOK/SPEC |
@@ -413,6 +414,10 @@ Rule policy v3+ keeps the five-gate stack (RSI / trend / MACD / EMA / volume) bu
 ## Addendum: Phase R5 real multi-timeframe trends
 
 `MarketSnapshot.trend_15m` / `trend_1h` / `trend_4h` are computed independently in `enrich_snapshot` from each TF’s closes (EMA stack + `classify_trend`). OKX public cycles fetch `15m` / `1H` / `4H` candles; paper/synthetic uses subsampled series. Rule entry gate = **15m**; `KEEL_RULE_REQUIRE_1H_TREND` (default **0**) optionally hard-requires 1h same direction. `signal_diag` documents `trend_gate`, `trend_1h_confirm`, and all three trend fields. Does not clear kill-switch or place live orders.
+
+## Addendum: Phase R6 1h-confirm edge_hint boost
+
+When `trend_1h_confirm` is true and `nearest` ∈ {long, short} aligns with `trend_15m`, `edge_hint_bps` is multiplied by `KEEL_RULE_1H_EDGE_BOOST` (default **1.25**, clamped **[1.0, 2.0]**). Absolute uplift is capped at **+5 bps** (`min(base*mult, base+5)`), and never exceeds `expected_tp_bps`. Audit fields: `edge_hint_1h_boosted`, `edge_hint_boost_mult`, `edge_hint_bps_raw`. Near-probe still prefers `edge_hint_bps` but the **~10 bps fee hurdle is unchanged**. Monitor Overview / Factors show multi-TF trends; `last_cycle.instrument_trends` is optional. Never clears kill-switch or places live orders.
 
 ## Addendum: Phase R4 fee-aware Rule param suggest
 

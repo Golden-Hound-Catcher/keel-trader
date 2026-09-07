@@ -237,6 +237,14 @@ Rule v3+ defaults (override via `.env`, do not commit secrets):
 |------|---------|------|
 | `KEEL_RULE_REQUIRE_1H_TREND` | **0** | `0` = soft confirm (audit); `1` = hard 15m+1h alignment |
 
+### Phase R6 — 1h-confirm edge_hint boost (fee hurdle unchanged)
+
+When `signal_diag.trend_1h_confirm` and nearest side aligns with 15m, multiply `edge_hint_bps` by `KEEL_RULE_1H_EDGE_BOOST` (**default 1.25x**, clamped **1.0–2.0**, absolute uplift capped **+5 bps**; never above `expected_tp_bps`). Helps fee-clearing near-probes only when multi-TF agrees — **does not lower the ~10 bps taker RT probe hurdle**. Monitor Overview / Factors strip show `trend_15m` / `trend_1h` / `trend_4h` (soft-fail); status `last_cycle.instrument_trends` optional.
+
+| Knob | Default | Role |
+|------|---------|------|
+| `KEEL_RULE_1H_EDGE_BOOST` | **1.25** | Multiplier on `edge_hint_bps` when 1h confirms nearest side |
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.

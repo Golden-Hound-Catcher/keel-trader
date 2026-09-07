@@ -804,6 +804,8 @@ class KeelLedger:
         metric_keys = (
             "rsi_14",
             "trend_15m",
+            "trend_1h",
+            "trend_4h",
             "volume_ratio",
             "ema_9",
             "ema_21",
@@ -835,6 +837,8 @@ class KeelLedger:
             }
             for k in metric_keys:
                 val = diag.get(k)
+                if val is None and isinstance(calc, dict):
+                    val = calc.get(k)
                 item[k] = val if val is not None else None
 
             action_u = (rec.action or "").upper()
