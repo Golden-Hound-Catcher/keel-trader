@@ -71,6 +71,8 @@ class Settings:
     max_contracts_per_instrument: int = 50
     # Emergency kill switch (KEEL_KILL_SWITCH=0|1 / true|false); default off
     kill_switch: bool = False
+    # Shadow execution (KEEL_SHADOW_MODE=0|1); when on, ledger shadow fills instead of place_order
+    shadow_mode: bool = False
 
     # Trader cycle interval (KEEL_CYCLE_INTERVAL_SECONDS / KEEL_OBSERVE_PRESET); default 900
     cycle_interval_seconds: int = 900
@@ -347,6 +349,7 @@ def get_settings() -> Settings:
         max_notional_per_instrument=_env_float("KEEL_MAX_NOTIONAL_PER_INSTRUMENT", 2000.0),
         max_contracts_per_instrument=_env_int("KEEL_MAX_CONTRACTS_PER_INSTRUMENT", 50),
         kill_switch=_env_bool("KEEL_KILL_SWITCH", False),
+        shadow_mode=_env_bool("KEEL_SHADOW_MODE", False),
         cycle_interval_seconds=cycle_interval_seconds,
         observe_preset=observe_preset,
         instruments=_env_instruments(),

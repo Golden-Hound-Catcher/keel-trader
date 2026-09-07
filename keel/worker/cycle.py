@@ -594,6 +594,7 @@ def run_paper_cycle(
             "size": exec_result.size,
             "filled": exec_result.filled,
             "resting": exec_result.resting,
+            "shadow": getattr(exec_result, "shadow", False),
             "rsi": round(snap.rsi_14, 2),
             "trend": snap.trend_15m,
         }

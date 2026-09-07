@@ -34,6 +34,7 @@ class ExecutionResult:
     size: float | None = None
     filled: bool = False
     resting: bool = False
+    shadow: bool = False
 
 
 class ExecutionOrchestrator:
@@ -43,10 +44,10 @@ class ExecutionOrchestrator:
     Flow:
     1. Receive decision (LLM or rule-based)
     2. Re-validate Decision schema / RR geometry
-    3. Check all risk gates
+    3. Check all risk gates (kill-switch still blocks)
     4. Calculate position size
-    5. Submit limit order with TP/SL
-    6. Record fill/trade or resting/failure events to ledger
+    5. If shadow_mode: ledger shadow_fill (+ optional synthetic trade); no place_order
+    6. Else submit limit order with TP/SL and record fill/resting/failure
     """
 
     def __init__(
@@ -65,6 +66,7 @@ class ExecutionOrchestrator:
         daily_pnl: float = 0.0,
         cooldown_until: float = 0.0,
         kill_switch: bool | None = None,
+        shadow_mode: bool | None = None,
     ) -> ExecutionResult:
         """
         Execute a trading decision.
@@ -74,12 +76,17 @@ class ExecutionOrchestrator:
             daily_pnl: Today's realized PnL
             cooldown_until: Timestamp when cooldown ends
             kill_switch: Emergency stop; None → ``settings.kill_switch`` (KEEL_KILL_SWITCH)
+            shadow_mode: When true, ledger shadow fill instead of exchange place_order;
+                None → ``settings.shadow_mode`` (KEEL_SHADOW_MODE). Kill-switch still blocks.
 
         Returns:
             ExecutionResult
         """
+        settings = get_settings()
         if kill_switch is None:
-            kill_switch = get_settings().kill_switch
+            kill_switch = settings.kill_switch
+        if shadow_mode is None:
+            shadow_mode = settings.shadow_mode
         decision = validate_decision(decision)
 
         if decision.action == "WAIT":
@@ -213,6 +220,14 @@ class ExecutionOrchestrator:
                 error="Calculated size is zero",
             )
 
+        if shadow_mode:
+            return self._shadow_fill(
+                decision=decision,
+                entry_price=entry_price,
+                size=size,
+                had_position=current_position is not None,
+            )
+
         order_result = self._exchange.place_order(
             OrderRequest(
                 inst_id=decision.inst_id,
@@ -232,6 +247,65 @@ class ExecutionOrchestrator:
             entry_price=entry_price,
             size=size,
             had_position=current_position is not None,
+        )
+
+    def _shadow_fill(
+        self,
+        *,
+        decision: Decision,
+        entry_price: float,
+        size: float,
+        had_position: bool,
+    ) -> ExecutionResult:
+        """Ledger a shadow fill without calling exchange place_order."""
+        order_id = f"shadow-{int(time.time() * 1000)}"
+        event_data = {
+            "order_id": order_id,
+            "action": decision.action,
+            "price": entry_price,
+            "size": size,
+            "leverage": decision.leverage,
+            "margin_usdt": decision.margin_usdt,
+            "take_profit": decision.take_profit,
+            "stop_loss": decision.stop_loss,
+            "confidence": decision.confidence,
+            "reason": decision.reason,
+            "shadow": True,
+        }
+        self._ledger.record_event(
+            "shadow_fill",
+            inst_id=decision.inst_id,
+            data=event_data,
+        )
+        self._ledger.record_trade(
+            TradeRecord(
+                timestamp=time.time(),
+                inst_id=decision.inst_id,
+                action="open" if not had_position else "scale_in",
+                direction="long" if decision.action == "BUY_LONG" else "short",
+                size=size,
+                price=entry_price,
+                strategy_tag="keel-shadow",
+                reason=decision.reason,
+                metadata={
+                    "order_id": order_id,
+                    "leverage": decision.leverage,
+                    "margin_usdt": decision.margin_usdt,
+                    "take_profit": decision.take_profit,
+                    "stop_loss": decision.stop_loss,
+                    "shadow": True,
+                },
+            )
+        )
+        return ExecutionResult(
+            inst_id=decision.inst_id,
+            action=decision.action,
+            success=True,
+            order_id=order_id,
+            price=entry_price,
+            size=size,
+            filled=True,
+            shadow=True,
         )
 
     def _finalize_order(

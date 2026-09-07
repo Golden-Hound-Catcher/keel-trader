@@ -212,6 +212,7 @@ class TestApiSchemas(unittest.TestCase):
         status_props = comps["StatusResponse"]["properties"]
         self.assertIn("last_cycle", status_props)
         self.assertIn("kill_switch", status_props)
+        self.assertIn("shadow_mode", status_props)
         self.assertIn("seconds_since_last_cycle", status_props)
         self.assertIn("worker_stale", status_props)
         self.assertIn("okx_capability", status_props)
@@ -227,6 +228,7 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("ConfigResponse", comps)
         config_props = comps["ConfigResponse"]["properties"]
         self.assertIn("kill_switch", config_props)
+        self.assertIn("shadow_mode", config_props)
         self.assertIn("max_notional_per_instrument", config_props)
         self.assertIn("max_contracts_per_instrument", config_props)
         self.assertIn("instruments", config_props)
@@ -274,6 +276,7 @@ class TestApiSchemas(unittest.TestCase):
             seconds_since_last_cycle=12,
         )
         self.assertTrue(status.kill_switch)
+        self.assertFalse(status.shadow_mode)
         self.assertEqual(status.decision_policy, "rule")
         self.assertEqual(status.seconds_since_last_cycle, 12)
         cfg = ConfigResponse(
@@ -296,6 +299,7 @@ class TestApiSchemas(unittest.TestCase):
             scheduler_jobs=["trader"],
         )
         self.assertFalse(cfg.kill_switch)
+        self.assertFalse(cfg.shadow_mode)
         self.assertEqual(cfg.max_notional_per_instrument, 2000.0)
         self.assertEqual(cfg.max_contracts_per_instrument, 50)
         self.assertEqual(cfg.decision_policy, "stub")

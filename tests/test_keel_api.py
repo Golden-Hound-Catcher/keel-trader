@@ -155,6 +155,9 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIn("kill_switch", r.json())
         self.assertIsInstance(r.json()["kill_switch"], bool)
         self.assertFalse(r.json()["kill_switch"])
+        self.assertIn("shadow_mode", r.json())
+        self.assertIsInstance(r.json()["shadow_mode"], bool)
+        self.assertFalse(r.json()["shadow_mode"])
         self.assertIn("decision_policy", r.json())
         self.assertIsInstance(r.json()["decision_policy"], str)
         self.assertIn("okx_capability", r.json())
@@ -173,9 +176,27 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("kill_switch", r.json())
         self.assertFalse(r.json()["kill_switch"])
+        self.assertIn("shadow_mode", r.json())
+        self.assertFalse(r.json()["shadow_mode"])
         self.assertIn("okx_capability", r.json())
         self.assertEqual(r.json()["okx_capability"], "none")
         self.assertEqual(r.json()["decision_policy"], self.client.get("/api/v1/status").json()["decision_policy"])
+
+    def test_status_shadow_mode_on_when_armed(self):
+        os.environ["KEEL_SHADOW_MODE"] = "1"
+        try:
+            refresh_settings()
+            app = create_app()
+            client = TestClient(app)
+            r = client.get("/api/v1/status")
+            self.assertEqual(r.status_code, 200)
+            self.assertTrue(r.json()["shadow_mode"])
+            r = client.get("/api/v1/config")
+            self.assertEqual(r.status_code, 200)
+            self.assertTrue(r.json()["shadow_mode"])
+        finally:
+            os.environ.pop("KEEL_SHADOW_MODE", None)
+            refresh_settings()
 
     def test_status_kill_switch_on_when_armed(self):
         os.environ["KEEL_KILL_SWITCH"] = "1"
