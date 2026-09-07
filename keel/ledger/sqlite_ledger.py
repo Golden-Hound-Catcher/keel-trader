@@ -338,9 +338,17 @@ class KeelLedger:
         ).fetchone()
         return float(row["total"]) if row else 0.0
 
-    def get_decision_stats(self, hours: float = 24.0) -> dict[str, Any]:
+    def get_decision_stats(
+        self,
+        hours: float = 24.0,
+        market_source: str | None = None,
+    ) -> dict[str, Any]:
         """
         Aggregate decision observability stats for the last ``hours`` window.
+
+        Optional ``market_source`` (okx_public|synthetic) filters decisions whose
+        ``calculus_data.market_source`` matches (stamped in worker cycle).
+        ``None`` / ``any`` / empty → no market_source filter.
 
         Uses SQL GROUP BY on decisions; cycle/risk counts come from events.
         """
@@ -348,11 +356,22 @@ class KeelLedger:
         since = time.time() - hours_f * 3600.0
         conn = self._get_conn()
 
+        ms_raw = (market_source or "any").strip().lower()
+        ms_filter = ms_raw if ms_raw in ("okx_public", "synthetic") else None
+        ms_clause = ""
+        ms_params: list[Any] = []
+        if ms_filter:
+            ms_clause = (
+                " AND calculus_data IS NOT NULL"
+                " AND json_extract(calculus_data, '$.market_source') = ?"
+            )
+            ms_params = [ms_filter]
+
         by_action: dict[str, int] = {}
         for row in conn.execute(
             "SELECT action, COUNT(*) AS n FROM decisions "
-            "WHERE timestamp >= ? GROUP BY action",
-            (since,),
+            f"WHERE timestamp >= ?{ms_clause} GROUP BY action",
+            (since, *ms_params),
         ):
             by_action[str(row["action"])] = int(row["n"])
         decision_count = sum(by_action.values())
@@ -360,8 +379,9 @@ class KeelLedger:
         by_policy: dict[str, int] = {}
         for row in conn.execute(
             "SELECT COALESCE(policy_name, '') AS policy_name, COUNT(*) AS n "
-            "FROM decisions WHERE timestamp >= ? GROUP BY COALESCE(policy_name, '')",
-            (since,),
+            f"FROM decisions WHERE timestamp >= ?{ms_clause} "
+            "GROUP BY COALESCE(policy_name, '')",
+            (since, *ms_params),
         ):
             by_policy[str(row["policy_name"] or "")] = int(row["n"])
 
@@ -416,8 +436,46 @@ class KeelLedger:
             "risk_deny_events": risk_deny_events,
             "cycle_count": cycle_count,
             "avg_cycle_duration_ms": avg_ms,
+            "market_source": ms_filter or "any",
         }
 
+    def get_shadow_stats(self, hours: float = 24.0) -> dict[str, Any]:
+        """
+        Aggregate shadow_fill rehearsal events for the last ``hours`` window.
+
+        Returns count, by_action (from event data.action), and last_timestamp.
+        """
+        hours_f = max(0.0, float(hours))
+        since = time.time() - hours_f * 3600.0
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT timestamp, data FROM events "
+            "WHERE timestamp >= ? AND event_type = ? "
+            "ORDER BY timestamp DESC",
+            (since, "shadow_fill"),
+        ).fetchall()
+        by_action: dict[str, int] = {}
+        last_ts: float | None = None
+        for row in rows:
+            ts = float(row["timestamp"])
+            if last_ts is None or ts > last_ts:
+                last_ts = ts
+            action = "UNKNOWN"
+            raw = row["data"]
+            if raw:
+                try:
+                    payload = json.loads(raw)
+                except (TypeError, json.JSONDecodeError):
+                    payload = None
+                if isinstance(payload, dict) and payload.get("action"):
+                    action = str(payload["action"])
+            by_action[action] = by_action.get(action, 0) + 1
+        return {
+            "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
+            "count": len(rows),
+            "by_action": by_action,
+            "last_timestamp": last_ts,
+        }
 
     def get_nearest_signals(
         self,

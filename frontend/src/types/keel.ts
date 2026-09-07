@@ -198,6 +198,16 @@ export interface KeelDecisionStats {
   risk_deny_events: number
   cycle_count: number
   avg_cycle_duration_ms: number | null
+  /** Filter echo: okx_public | synthetic | any */
+  market_source?: string
+}
+
+/** Soft-fail Overview shadow rehearsal stats from GET /api/v1/stats/shadow. */
+export interface KeelShadowStats {
+  hours: number
+  count: number
+  by_action: Record<string, number>
+  last_timestamp?: number | null
 }
 
 export interface KeelDecisionsResponse {

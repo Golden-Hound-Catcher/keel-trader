@@ -252,6 +252,14 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("/api/v1/pnl/daily", paths)
         self.assertIn("/api/v1/stats/decisions", paths)
         self.assertIn("DecisionStatsResponse", comps)
+        ds_props = comps["DecisionStatsResponse"]["properties"]
+        self.assertIn("market_source", ds_props)
+        self.assertIn("/api/v1/stats/shadow", paths)
+        self.assertIn("ShadowStatsResponse", comps)
+        sh_props = comps["ShadowStatsResponse"]["properties"]
+        self.assertIn("count", sh_props)
+        self.assertIn("by_action", sh_props)
+        self.assertIn("last_timestamp", sh_props)
         self.assertIn("/api/v1/signals/nearest", paths)
         self.assertIn("NearestSignalsResponse", comps)
         ns_props = comps["NearestSignalsResponse"]["properties"]

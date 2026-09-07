@@ -131,6 +131,13 @@ function factorSourceClass(
   return 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'
 }
 
+
+function decisionMarketSource(d: { calculus_data?: Record<string, unknown> }): string | null {
+  const ms = d.calculus_data?.market_source
+  if (typeof ms !== 'string' || !ms.trim()) return null
+  return ms.trim().toLowerCase()
+}
+
 function marketSourceLabel(src: string | null | undefined): string {
   if (!src) return '—'
   if (src === 'okx_public') return 'okx'
@@ -262,11 +269,19 @@ const decisionStatsByPolicy = computed(() => {
 })
 
 const nearestSignals = computed(() => store.nearestSignals)
+const shadowStats = computed(() => store.shadowStats)
 const nearestSummary = computed(() => nearestSignals.value?.summary ?? null)
 const nearestFiredTotal = computed(() => {
   const s = nearestSummary.value
   if (!s) return 0
   return (s.fired_long || 0) + (s.fired_short || 0)
+})
+const shadowStatsByAction = computed(() => {
+  const by = shadowStats.value?.by_action || {}
+  return Object.entries(by)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}:${v}`)
+    .join(' · ')
 })
 function radarNearestLabel(nearest: string | null | undefined, action: string): string {
   const a = (action || '').toUpperCase()
@@ -1094,9 +1109,18 @@ const configStrip = computed(() => {
             v-if="decisionStats"
             class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
           >
-            <h2 class="text-xs font-mono font-bold text-white uppercase mb-2">
-              Decision quality ({{ decisionStats.hours }}h)
-            </h2>
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <h2 class="text-xs font-mono font-bold text-white uppercase">
+                Decision quality ({{ decisionStats.hours }}h)
+              </h2>
+              <span
+                v-if="shadowStats"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-violet-500/40 text-violet-300"
+                :title="shadowStats.last_timestamp
+                  ? `last shadow_fill @ ${fmtTs(shadowStats.last_timestamp)}`
+                  : 'no shadow_fill in lookback'"
+              >shadow {{ shadowStats.count }}</span>
+            </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
               <div>
                 <div class="text-[#707E94]">Decisions</div>
@@ -1148,6 +1172,16 @@ const configStrip = computed(() => {
                   已触发 <span class="tabular-nums">{{ nearestFiredTotal }}</span>
                 </span>
               </div>
+            </div>
+            <div
+              v-if="shadowStats"
+              class="mb-3 text-[10px] font-mono text-[#A8B3C7] flex flex-wrap items-center gap-2"
+            >
+              <span class="text-violet-300">Shadow stats ({{ shadowStats.hours }}h)</span>
+              <span class="text-white tabular-nums">n={{ shadowStats.count }}</span>
+              <span v-if="shadowStatsByAction" class="truncate" :title="shadowStatsByAction">{{ shadowStatsByAction }}</span>
+              <span v-if="shadowStats.last_timestamp" class="text-[#707E94]">last {{ fmtTs(shadowStats.last_timestamp) }}</span>
+              <span v-else class="text-[#707E94]">no fills</span>
             </div>
             <div v-if="!nearestSignals.signals.length" class="text-xs font-mono text-[#707E94] py-4 text-center border border-dashed border-[#1A2232] rounded-lg">
               No recent signal_diag decisions in lookback
@@ -1341,10 +1375,17 @@ const configStrip = computed(() => {
                   <td class="py-2 text-zinc-400 max-w-lg whitespace-normal break-words" :title="d.reason">
                     <div class="line-clamp-2">{{ d.reason || '—' }}</div>
                     <div
-                      v-if="nearSignalNearest(d)"
+                      v-if="decisionMarketSource(d) || nearSignalNearest(d)"
                       class="mt-1 flex flex-wrap items-center gap-1"
                     >
                       <span
+                        v-if="decisionMarketSource(d)"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                        :class="marketSourceClass(decisionMarketSource(d))"
+                        :title="`market_source ${decisionMarketSource(d)}`"
+                      >{{ marketSourceLabel(decisionMarketSource(d)) }}</span>
+                      <span
+                        v-if="nearSignalNearest(d)"
                         class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
                         :class="nearSignalNearest(d) === 'long'
                           ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'

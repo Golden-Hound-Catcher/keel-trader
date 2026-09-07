@@ -154,6 +154,7 @@ class TestDecisionStatsEmptyAndAfterCycle(unittest.TestCase):
         self.assertEqual(body["risk_deny_events"], 0)
         self.assertEqual(body["cycle_count"], 0)
         self.assertIsNone(body["avg_cycle_duration_ms"])
+        self.assertEqual(body.get("market_source", "any"), "any")
 
     def test_stats_hours_validation(self):
         self.assertEqual(self.client.get("/api/v1/stats/decisions?hours=0").status_code, 422)
@@ -410,3 +411,204 @@ class TestNearestSignalsRadar(unittest.TestCase):
         self.assertEqual(len(raw["signals"]), 1)
         self.assertEqual(raw["summary"]["fired_short"], 1)
         self.assertEqual(raw["signals"][0]["nearest"], "short")
+
+
+class TestMarketSourceStampAndFilter(unittest.TestCase):
+    """Q2: cycle stamps calculus_data.market_source; stats filter by it."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "ms.db"
+        set_ledger_path_override(self.db)
+        os.environ["KEEL_LEDGER_DB"] = str(self.db)
+        refresh_settings()
+        self.ledger = KeelLedger(self.db)
+        self.client = TestClient(create_app())
+
+    def tearDown(self):
+        self.ledger.close()
+        set_ledger_path_override(None)
+        os.environ.pop("KEEL_LEDGER_DB", None)
+        refresh_settings()
+        self.temp.cleanup()
+
+    def test_cycle_stamps_market_source_synthetic(self):
+        summary = run_paper_cycle(
+            exchange=PaperAdapter(initial_balance=10_000.0),
+            ledger=self.ledger,
+            policy=StubDecisionPolicy(),
+            force_paper=True,
+            instrument_ids=["BTC-USDT-SWAP"],
+        )
+        self.assertTrue(summary["ok"])
+        rows = self.ledger.get_decisions(limit=5)
+        self.assertGreaterEqual(len(rows), 1)
+        calc = rows[0].calculus_data or {}
+        self.assertEqual(calc.get("market_source"), "synthetic")
+
+    def test_stats_market_source_filter(self):
+        now = time.time()
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now,
+                inst_id="BTC-USDT-SWAP",
+                action="WAIT",
+                calculus_data={"market_source": "synthetic", "policy_name": "rule"},
+                policy_name="rule",
+            )
+        )
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now,
+                inst_id="ETH-USDT-SWAP",
+                action="BUY_LONG",
+                calculus_data={"market_source": "okx_public", "policy_name": "rule"},
+                policy_name="rule",
+            )
+        )
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now,
+                inst_id="SOL-USDT-SWAP",
+                action="WAIT",
+                calculus_data={"policy_name": "rule"},
+                policy_name="rule",
+            )
+        )
+
+        any_r = self.client.get("/api/v1/stats/decisions?hours=24&market_source=any")
+        self.assertEqual(any_r.status_code, 200)
+        self.assertEqual(any_r.json()["decision_count"], 3)
+        self.assertEqual(any_r.json()["market_source"], "any")
+
+        syn = self.client.get("/api/v1/stats/decisions?hours=24&market_source=synthetic")
+        self.assertEqual(syn.status_code, 200)
+        body = syn.json()
+        self.assertEqual(body["market_source"], "synthetic")
+        self.assertEqual(body["decision_count"], 1)
+        self.assertEqual(body["by_action"].get("WAIT"), 1)
+
+        okx = self.client.get("/api/v1/stats/decisions?hours=24&market_source=okx_public")
+        self.assertEqual(okx.status_code, 200)
+        body = okx.json()
+        self.assertEqual(body["market_source"], "okx_public")
+        self.assertEqual(body["decision_count"], 1)
+        self.assertEqual(body["by_action"].get("BUY_LONG"), 1)
+
+        bad = self.client.get("/api/v1/stats/decisions?hours=24&market_source=nope")
+        self.assertEqual(bad.status_code, 422)
+
+
+class TestShadowStats(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "shadow.db"
+        set_ledger_path_override(self.db)
+        os.environ["KEEL_LEDGER_DB"] = str(self.db)
+        refresh_settings()
+        self.ledger = KeelLedger(self.db)
+        self.client = TestClient(create_app())
+
+    def tearDown(self):
+        self.ledger.close()
+        set_ledger_path_override(None)
+        os.environ.pop("KEEL_LEDGER_DB", None)
+        refresh_settings()
+        self.temp.cleanup()
+
+    def test_shadow_stats_empty(self):
+        r = self.client.get("/api/v1/stats/shadow?hours=24")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["hours"], 24)
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["by_action"], {})
+        self.assertIsNone(body["last_timestamp"])
+
+    def test_shadow_stats_counts_by_action(self):
+        t1 = time.time() - 10
+        t2 = time.time() - 5
+        self.ledger.record_event(
+            "shadow_fill",
+            inst_id="BTC-USDT-SWAP",
+            data={"action": "BUY_LONG", "shadow": True},
+            timestamp=t1,
+        )
+        self.ledger.record_event(
+            "shadow_fill",
+            inst_id="ETH-USDT-SWAP",
+            data={"action": "SELL_SHORT", "shadow": True},
+            timestamp=t2,
+        )
+        self.ledger.record_event(
+            "shadow_fill",
+            inst_id="BTC-USDT-SWAP",
+            data={"action": "BUY_LONG", "shadow": True},
+            timestamp=t2 + 1,
+        )
+        # Outside window
+        self.ledger.record_event(
+            "shadow_fill",
+            inst_id="SOL-USDT-SWAP",
+            data={"action": "BUY_LONG"},
+            timestamp=time.time() - 100_000,
+        )
+
+        r = self.client.get("/api/v1/stats/shadow?hours=24")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["count"], 3)
+        self.assertEqual(body["by_action"].get("BUY_LONG"), 2)
+        self.assertEqual(body["by_action"].get("SELL_SHORT"), 1)
+        self.assertIsNotNone(body["last_timestamp"])
+        self.assertGreaterEqual(body["last_timestamp"], t2)
+
+        self.assertEqual(self.client.get("/api/v1/stats/shadow?hours=0").status_code, 422)
+        self.assertEqual(self.client.get("/api/v1/stats/shadow?hours=169").status_code, 422)
+
+        direct = self.ledger.get_shadow_stats(hours=24.0)
+        self.assertEqual(direct["count"], 3)
+
+
+class TestCompareRuleParamsScript(unittest.TestCase):
+    def test_compare_rule_params_exits_zero(self):
+        script = REPO_ROOT / "scripts" / "compare_rule_params.py"
+        self.assertTrue(script.is_file())
+        env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+        for k in (
+            "KEEL_OKX_API_KEY",
+            "KEEL_OKX_SECRET_KEY",
+            "KEEL_OKX_PASSPHRASE",
+            "OKX_API_KEY",
+            "OKX_SECRET_KEY",
+            "OKX_PASSPHRASE",
+        ):
+            env[k] = ""
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--rsi-long-max-a",
+                "42",
+                "--rsi-short-min-a",
+                "58",
+                "--min-vol-a",
+                "1.0",
+                "--rsi-long-max-b",
+                "35",
+                "--rsi-short-min-b",
+                "65",
+                "--min-vol-b",
+                "1.2",
+            ],
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+        self.assertIn("set=A", proc.stdout)
+        self.assertIn("set=B", proc.stdout)
+        self.assertIn("actions=", proc.stdout)
+        self.assertIn("near_signal_rate=", proc.stdout)

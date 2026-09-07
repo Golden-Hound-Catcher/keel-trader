@@ -274,6 +274,19 @@ def _seed_paper_tickers(
 
 
 
+def market_source_from_quality_tag(tag: str) -> str:
+    """
+    Map one instrument candle quality tag → decision calculus market_source.
+
+    Returns okx_public | synthetic (fallback/unknown → synthetic).
+    """
+    t = str(tag or "").strip()
+    if t == "okx_public":
+        return "okx_public"
+    # synthetic, synthetic_fallback:*, unknown → synthetic for decision stamp
+    return "synthetic"
+
+
 def market_source_from_quality_tags(tags: list[str]) -> str:
     """
     Aggregate per-instrument candle quality tags for last_cycle.market_source.
@@ -421,6 +434,7 @@ def run_paper_cycle(
     use_okx_candles = _use_okx_public_candles(exchange, settings, force_paper=force_paper)
     snapshots: dict[str, MarketSnapshot] = {}
     quality_tags: list[str] = []
+    quality_by_inst: dict[str, str] = {}
     for inst_id in ids:
         inst = pool.get(inst_id)
         name = inst.name if inst else inst_id.split("-")[0]
@@ -453,6 +467,7 @@ def run_paper_cycle(
         elif quality_tag == "okx_public" and snap.data_valid:
             snap.data_quality_reason = "okx_public"
         quality_tags.append(quality_tag)
+        quality_by_inst[inst_id] = quality_tag
         snapshots[inst_id] = snap
 
     # Seed paper tickers only for PaperExchange; OKX REST serves tickers via API.
@@ -569,6 +584,9 @@ def run_paper_cycle(
                     "trend_15m": snap.trend_15m,
                     "policy_name": audit_policy,
                     "prompt_modules": audit_modules,
+                    "market_source": market_source_from_quality_tag(
+                        quality_by_inst.get(inst_id, "synthetic")
+                    ),
                     **(
                         {"signal_diag": decision.signal_diag}
                         if getattr(decision, "signal_diag", None)
