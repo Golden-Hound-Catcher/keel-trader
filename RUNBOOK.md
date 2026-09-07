@@ -220,6 +220,31 @@ Rule v3+ defaults (override via `.env`, do not commit secrets):
 
 `signal_diag` includes `volume_threshold`, `volume_path` (`hard|percentile|soft|fail`), `volume_soft_pass`, `rsi_path` / `rsi_soft_pass`, `near_ready`, plus `atr_bps` / `expected_tp_bps` / `edge_hint_bps`. Near-probe prefers `edge_hint_bps` when finite, else crude ATR EV; **fee hurdle (taker RT ≈ 10 bps) unchanged.** Kill-switch / no live orders unchanged.
 
+### Phase R4 — fee-aware Rule param suggest (offline)
+
+Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.
+
+```bash
+# Offline suggest (local SQLite; no OKX keys; never writes .env)
+PYTHONPATH=. python scripts/suggest_rule_params.py \
+  --db data/keel_ledger.db --hours 168 --market-source okx_public \
+  --hurdle-bps 10 --max-fire-rate 0.25 --top 5 \
+  --out /tmp/keel_rule_suggest.json
+```
+
+**Grid (default):** `rsi_long_max ∈ {40,42,45,48}`, `rsi_short_min ∈ {52,55,58,60}`, `min_vol ∈ {0.35,0.5,0.7}`, `rsi_relax` on/off. Each combo replays `rule_based_decision` on export rows (same helpers as `compare_rule_params --db`).
+
+**Ranking:** (1) maximize full fires with `edge_hint_bps ≥ hurdle` (default **10**), (2) keep fire rate ≤ **25%** of cohort, (3) prefer fewer `volume_ok`-only misses. Script prints top 5 + a one-line manual `.env` recommendation — **apply by hand** after review; the tool never auto-writes config.
+
+**Interpret vs 10 bps:** treat `fires_edge>=10bps` as the fee-aware signal count. If top rows show `fires=0` or only `OVER_CAP` floods, keep observing (or widen lookback) rather than forcing `short_min=40`. Optional `--from-ledger` JSONL works the same as compare. Cross-check a candidate with:
+
+```bash
+PYTHONPATH=. python scripts/compare_rule_params.py \
+  --db data/keel_ledger.db --hours 168 --market-source okx_public \
+  --rsi-long-max-a 45 --rsi-short-min-a 55 --min-vol-a 0.5 \
+  --rsi-long-max-b <cand_long> --rsi-short-min-b <cand_short> --min-vol-b <cand_vol>
+```
+
 ---
 
 ## 相关文档
