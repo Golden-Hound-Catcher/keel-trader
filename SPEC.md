@@ -168,7 +168,9 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS` | `900` | Per-instrument cooldown between probe shadow fills |
 | `KEEL_SHADOW_NEAR_PROBE_MAX_MISSING` | `2` | Max `signal_diag.missing` length (aligned with near-signal notify) |
 | `KEEL_SHADOW_NEAR_PROBE_MIN_CONFIDENCE` | `0` | Optional min decision confidence gate for probe |
-| `KEEL_SHADOW_FEE_ROLE` | `taker` | `taker` | `maker` — fee leg for net markout (shadow assumes immediate fill) |
+| `KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS` | _(unset)_ | Q3.4: optional explicit edge hurdle (bps); unset → RT/open fee for role |
+| `KEEL_SHADOW_NEAR_PROBE_EDGE_MODE` | `round_trip` | `round_trip` | `open` — which fee leg is the near-probe hurdle |
+| `KEEL_SHADOW_FEE_ROLE` | `taker` | `taker` | `maker` — fee leg for net markout + near-probe hurdle (shadow assumes immediate fill) |
 | `KEEL_SHADOW_MAKER_FEE_BPS` | _(unset)_ | Optional override maker bps (positive=cost, negative=rebate) → source=override |
 | `KEEL_SHADOW_TAKER_FEE_BPS` | _(unset)_ | Optional override taker bps → source=override |
 | `KEEL_MAX_NOTIONAL_PER_INSTRUMENT` | `2000` | USDT; existing + requested notional (margin×leverage); on `/config` |
@@ -308,6 +310,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q3.4 near-probe fee edge hurdle**: gate `KEEL_SHADOW_NEAR_PROBE` on estimated `edge_bps` ≥ OKX RT/open fee (or `KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS`); fail-closed; audit + status hurdle fields; RUNBOOK/SPEC |
 | 2026-09-07 | **Q3.3 fee-aware shadow markout**: OKX `makerU`/`takerU` (or Regular 2/5 bps fallback) nets on `/stats/shadow*`; `fee_model` + net open/RT fields; optional funding at 00/08/16 UTC; Monitor prefers netRT; RUNBOOK/SPEC cite OKX fee docs |
 | 2026-09-07 | **Q3.2 shadow markout**: offline markout vs later factor_snapshots on `/stats/shadow` (+ `/stats/shadow_markout`); avg/median bps + win_rate by horizon; Monitor probe mk chip; RUNBOOK/SPEC |
 | 2026-09-07 | **Q3 shadow near-probe**: `KEEL_SHADOW_NEAR_PROBE` converts strong WAIT near-signals → shadow_fill when kill+shadow on (never live); cooldown/max_missing gates; `policy=shadow_near_probe` audit; arming counts probe fills; RUNBOOK/SPEC |
@@ -382,6 +385,10 @@ After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` 
 ## Addendum: Q3 shadow near-signal probe
 
 `KEEL_SHADOW_NEAR_PROBE` (default **off**) optionally converts strong WAIT near-signals into shadow-only fills for arming rehearsal. Requires **all** of: kill-switch on, shadow mode on, probe on. Gate: `signal_diag.nearest` ∈ {long, short} and `len(missing) ≤ KEEL_SHADOW_NEAR_PROBE_MAX_MISSING` (default 2). Per-instrument cooldown via `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS`. Policy ledger rows stay WAIT; execution synthesizes BUY_LONG/SELL_SHORT through the existing shadow_fill path with `policy=shadow_near_probe` / `probe=true` / `strategy_tag=keel-shadow-near-probe`. **Never** calls exchange `place_order`. Probe fills count toward arming shadow rehearsal. `/stats/shadow` exposes `probe_count` + `by_policy`. See RUNBOOK.
+
+## Addendum: Q3.4 fee-aware near-probe edge hurdle
+
+Near-probe must clear a fee-aware minimum edge before emitting `shadow_fill` (live markout after OKX fees was net-negative on small samples). Reuses `keel/exchange/okx_fees.py` (same as Q3.3): role from `KEEL_SHADOW_FEE_ROLE`, live makerU/takerU or Regular fallback (taker 5 bps / maker 2 bps per leg). Default hurdle = `round_trip_fee_bps` (taker→10, maker→4 with Regular); `KEEL_SHADOW_NEAR_PROBE_EDGE_MODE=open` uses one leg; optional `KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS` overrides (0 disables). Crude `edge_bps` from ATR/price × EV of probe TP/SL (2.2/1.0 ATR) with p ≈ gate completeness × confidence/100; **fail closed** when edge cannot be estimated and hurdle > 0. Audit: `edge_bps` / `hurdle_bps` / `fee_role` on probe reason, `signal_diag`, and shadow_fill / trade metadata. Status/config expose `shadow_near_probe_edge_mode`, `shadow_near_probe_min_edge_bps`, `shadow_near_probe_hurdle_bps`.
 
 
 ## Addendum: Q3.2 shadow markout

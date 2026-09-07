@@ -12,13 +12,21 @@ from keel.config import refresh_settings
 from keel.domain.decision import Decision
 from keel.exchange.paper import PaperAdapter
 from keel.exchange.protocol import Ticker
+from keel.exchange.okx_fees import (
+    REGULAR_USDT_SWAP_MAKER_BPS,
+    REGULAR_USDT_SWAP_TAKER_BPS,
+    clear_fee_caches,
+)
 from keel.execution.near_probe import (
     PROBE_POLICY,
     PROBE_STRATEGY_TAG,
     build_near_probe_decision,
+    edge_clears_hurdle,
+    estimate_near_probe_edge_bps,
     maybe_near_probe_decision,
     near_signal_meets_gates,
     probe_fill_recent,
+    resolve_near_probe_hurdle_bps,
     should_attempt_near_probe,
 )
 from keel.execution.orchestrator import ExecutionOrchestrator
@@ -144,6 +152,7 @@ class TestMaybeNearProbe(unittest.TestCase):
             shadow_mode=True,
             probe_enabled=False,
             cooldown_seconds=0,
+            min_edge_bps=0,
         )
         self.assertIsNone(out)
 
@@ -155,6 +164,7 @@ class TestMaybeNearProbe(unittest.TestCase):
             shadow_mode=True,
             probe_enabled=True,
             cooldown_seconds=0,
+            min_edge_bps=0,
         )
         self.assertIsNotNone(out)
         assert out is not None
@@ -168,6 +178,7 @@ class TestMaybeNearProbe(unittest.TestCase):
             shadow_mode=True,
             probe_enabled=True,
             cooldown_seconds=0,
+            min_edge_bps=0,
         )
         self.assertIsNone(out)
 
@@ -179,6 +190,7 @@ class TestMaybeNearProbe(unittest.TestCase):
             shadow_mode=False,
             probe_enabled=True,
             cooldown_seconds=0,
+            min_edge_bps=0,
         )
         self.assertIsNone(out)
 
@@ -252,6 +264,7 @@ class TestProbeCooldownAndOrchestrator(unittest.TestCase):
             probe_enabled=True,
             cooldown_seconds=3600,
             ledger=self.ledger,
+            min_edge_bps=0,
         )
         self.assertIsNone(out)
         # cooldown_seconds=0 disables cooldown
@@ -263,6 +276,7 @@ class TestProbeCooldownAndOrchestrator(unittest.TestCase):
             probe_enabled=True,
             cooldown_seconds=0,
             ledger=self.ledger,
+            min_edge_bps=0,
         )
         self.assertIsNotNone(out2)
 
@@ -302,6 +316,9 @@ class TestNearProbeSettingsAndCycle(unittest.TestCase):
             "KEEL_SHADOW_NEAR_PROBE",
             "KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS",
             "KEEL_SHADOW_NEAR_PROBE_MAX_MISSING",
+            "KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS",
+            "KEEL_SHADOW_NEAR_PROBE_EDGE_MODE",
+            "KEEL_SHADOW_FEE_ROLE",
             "KEEL_FORCE_ACTION",
         ]
         self._prev = {k: os.environ.get(k) for k in self._env_keys}
@@ -317,10 +334,17 @@ class TestNearProbeSettingsAndCycle(unittest.TestCase):
     def test_settings_default_off(self):
         for k in self._env_keys:
             os.environ.pop(k, None)
+        clear_fee_caches()
         s = refresh_settings()
         self.assertFalse(s.shadow_near_probe)
         self.assertEqual(s.shadow_near_probe_cooldown_seconds, 900)
         self.assertEqual(s.shadow_near_probe_max_missing, 2)
+        self.assertIsNone(s.shadow_near_probe_min_edge_bps)
+        self.assertEqual(s.shadow_near_probe_edge_mode, "round_trip")
+        hurdle, role, mode = resolve_near_probe_hurdle_bps(s)
+        self.assertEqual(role, "taker")
+        self.assertEqual(mode, "round_trip")
+        self.assertEqual(hurdle, 2.0 * REGULAR_USDT_SWAP_TAKER_BPS)
 
     def test_settings_env_on(self):
         os.environ["KEEL_SHADOW_NEAR_PROBE"] = "1"
@@ -383,6 +407,7 @@ class TestNearProbeSettingsAndCycle(unittest.TestCase):
         os.environ["KEEL_SHADOW_MODE"] = "1"
         os.environ["KEEL_SHADOW_NEAR_PROBE"] = "1"
         os.environ["KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS"] = "0"
+        os.environ["KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS"] = "0"
         refresh_settings()
 
         from keel.policy.protocol import PolicyResult
@@ -443,6 +468,165 @@ class TestNearProbeSettingsAndCycle(unittest.TestCase):
             self.assertEqual(row.get("exec_action"), "BUY_LONG")
             self.assertTrue(row.get("shadow"))
             ledger.close()
+
+
+
+class TestNearProbeEdgeHurdle(unittest.TestCase):
+    """Q3.4: fee-aware min edge gate."""
+
+    def setUp(self):
+        clear_fee_caches()
+        self._env_keys = [
+            "KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS",
+            "KEEL_SHADOW_NEAR_PROBE_EDGE_MODE",
+            "KEEL_SHADOW_FEE_ROLE",
+            "KEEL_SHADOW_MAKER_FEE_BPS",
+            "KEEL_SHADOW_TAKER_FEE_BPS",
+        ]
+        self._prev = {k: os.environ.get(k) for k in self._env_keys}
+        for k in self._env_keys:
+            os.environ.pop(k, None)
+        refresh_settings()
+
+    def tearDown(self):
+        for k, v in self._prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        clear_fee_caches()
+        refresh_settings()
+
+    def test_default_hurdle_equals_rt_fee_taker(self):
+        s = refresh_settings()
+        hurdle, role, mode = resolve_near_probe_hurdle_bps(s)
+        self.assertEqual(role, "taker")
+        self.assertEqual(mode, "round_trip")
+        self.assertEqual(hurdle, 2.0 * REGULAR_USDT_SWAP_TAKER_BPS)  # 10
+
+    def test_default_hurdle_maker_rt(self):
+        os.environ["KEEL_SHADOW_FEE_ROLE"] = "maker"
+        s = refresh_settings()
+        hurdle, role, mode = resolve_near_probe_hurdle_bps(s)
+        self.assertEqual(role, "maker")
+        self.assertEqual(hurdle, 2.0 * REGULAR_USDT_SWAP_MAKER_BPS)  # 4
+
+    def test_edge_mode_open_uses_one_leg(self):
+        os.environ["KEEL_SHADOW_NEAR_PROBE_EDGE_MODE"] = "open"
+        s = refresh_settings()
+        hurdle, role, mode = resolve_near_probe_hurdle_bps(s)
+        self.assertEqual(mode, "open")
+        self.assertEqual(hurdle, REGULAR_USDT_SWAP_TAKER_BPS)  # 5
+
+    def test_override_env_min_edge(self):
+        os.environ["KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS"] = "3.5"
+        s = refresh_settings()
+        self.assertEqual(s.shadow_near_probe_min_edge_bps, 3.5)
+        hurdle, _, _ = resolve_near_probe_hurdle_bps(s)
+        self.assertEqual(hurdle, 3.5)
+
+    def test_estimate_fail_closed_no_atr(self):
+        edge = estimate_near_probe_edge_bps(
+            {"nearest": "long", "missing": []},
+            _snap(atr_14=0.0),
+            decision_confidence=80.0,
+        )
+        self.assertIsNone(edge)
+        self.assertFalse(edge_clears_hurdle(None, 10.0))
+        self.assertTrue(edge_clears_hurdle(None, 0.0))  # hurdle 0 disables
+
+    def test_below_hurdle_no_shadow_fill(self):
+        # Weak near: atr_bps=200, missing=1 → completeness=0.8, conf=0.4
+        # p=0.32, EV_atr=3.2*0.32-1=0.024 → edge≈4.8 < default RT 10
+        out = maybe_near_probe_decision(
+            _wait_near("long", missing=["volume_ok"], confidence=40.0),
+            _snap(price=100.0, atr_14=2.0),
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=True,
+            cooldown_seconds=0,
+            # default hurdle via settings (RT taker 10)
+            settings=refresh_settings(),
+        )
+        self.assertIsNone(out)
+
+    def test_above_hurdle_emits_probe(self):
+        # Stronger: high ATR + high confidence + few missing → edge >> 10
+        # atr_bps=500, missing=0, conf=80 → p=0.8, EV=1.56 → edge=780
+        out = maybe_near_probe_decision(
+            _wait_near("long", missing=[], confidence=80.0),
+            _snap(price=100.0, atr_14=5.0),
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=True,
+            cooldown_seconds=0,
+            settings=refresh_settings(),
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out.action, "BUY_LONG")
+        self.assertIn("edge_bps=", out.reason)
+        self.assertIn("hurdle_bps=", out.reason)
+        self.assertIn("fee_role=taker", out.reason)
+        self.assertIsNotNone(out.signal_diag)
+        self.assertIn("edge_bps", out.signal_diag)
+        self.assertIn("hurdle_bps", out.signal_diag)
+        self.assertGreaterEqual(out.signal_diag["edge_bps"], out.signal_diag["hurdle_bps"])
+
+    def test_override_low_hurdle_allows_weak(self):
+        out = maybe_near_probe_decision(
+            _wait_near("long", missing=["volume_ok"], confidence=40.0),
+            _snap(price=100.0, atr_14=2.0),
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=True,
+            cooldown_seconds=0,
+            min_edge_bps=1.0,  # weak edge ~4.8 clears 1
+        )
+        self.assertIsNotNone(out)
+
+    def test_orchestrator_shadow_fill_carries_audit(self):
+        with tempfile.TemporaryDirectory() as td:
+            ledger = KeelLedger(Path(td) / "t.db")
+            exchange = PaperAdapter()
+            exchange.set_ticker(
+                Ticker(
+                    inst_id="BTC-USDT-SWAP",
+                    last=100.0,
+                    bid=99.9,
+                    ask=100.1,
+                    open_24h=100.0,
+                    high_24h=101.0,
+                    low_24h=99.0,
+                    vol_24h=1_000_000.0,
+                    timestamp=time.time(),
+                )
+            )
+            orch = ExecutionOrchestrator(exchange=exchange, ledger=ledger)
+            decision = maybe_near_probe_decision(
+                _wait_near("long", missing=[], confidence=80.0),
+                _snap(price=100.0, atr_14=5.0),
+                kill_switch=True,
+                shadow_mode=True,
+                probe_enabled=True,
+                cooldown_seconds=0,
+                settings=refresh_settings(),
+            )
+            self.assertIsNotNone(decision)
+            assert decision is not None
+            result = orch.execute_decision(decision, kill_switch=True, shadow_mode=True)
+            self.assertTrue(result.shadow)
+            events = ledger.get_events(event_type="shadow_fill")
+            self.assertEqual(len(events), 1)
+            data = events[0].data
+            self.assertTrue(data.get("probe"))
+            self.assertIn("edge_bps", data)
+            self.assertIn("hurdle_bps", data)
+            self.assertEqual(data.get("fee_role"), "taker")
+            trades = ledger.get_trades()
+            self.assertIn("edge_bps", trades[0].metadata)
+            ledger.close()
+
 
 
 if __name__ == "__main__":

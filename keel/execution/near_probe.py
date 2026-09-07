@@ -5,13 +5,16 @@ When kill-switch + shadow mode + KEEL_SHADOW_NEAR_PROBE are all on, optionally
 convert a strong WAIT near-signal into a shadow-only BUY_LONG / SELL_SHORT that
 goes through ExecutionOrchestrator._shadow_fill — never exchange place_order.
 
+Q3.4: fee-aware minimum edge hurdle (OKX role fee / optional override) so weak
+near-signals that cannot clear trading fees do not emit shadow_fill.
+
 Safety: without kill OR without shadow OR with probe off, this module returns
 None (no conversion). Callers must still execute under shadow_mode.
 """
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Literal
 
 from keel.domain.decision import Decision, DecisionAction, validate_decision
 from keel.factors.market_data import MarketSnapshot
@@ -22,6 +25,15 @@ PROBE_STRATEGY_TAG = "keel-shadow-near-probe"
 
 # Align with notify near-signal alert: nearest in {long,short} and len(missing)<=2.
 DEFAULT_MAX_MISSING = 2
+
+# Rule policy gate counts (long/short each have 5 gates) — used for completeness.
+RULE_GATE_COUNT = 5
+
+# Probe geometry mirrors rule_based_decision: TP = 2.2 ATR, SL = 1.0 ATR.
+_PROBE_TP_ATR = 2.2
+_PROBE_SL_ATR = 1.0
+
+EdgeMode = Literal["round_trip", "open"]
 
 
 def near_signal_meets_gates(
@@ -109,15 +121,140 @@ def probe_fill_recent(
     return False
 
 
+def normalize_edge_mode(raw: str | None) -> EdgeMode:
+    """round_trip (default) | open."""
+    s = str(raw or "round_trip").strip().lower()
+    return "open" if s == "open" else "round_trip"
+
+
+def resolve_near_probe_hurdle_bps(
+    settings: Any | None = None,
+    *,
+    min_edge_override: float | None = None,
+    edge_mode: str | None = None,
+    fee_role: str | None = None,
+) -> tuple[float, str, str]:
+    """
+    Resolve fee-aware edge hurdle in bps.
+
+    Returns ``(hurdle_bps, fee_role, edge_mode)``.
+    Explicit ``min_edge_override`` (or settings.shadow_near_probe_min_edge_bps)
+    wins; else open_fee_bps or round_trip_fee_bps from OKX fee model for role.
+    """
+    if settings is None:
+        try:
+            from keel.config import get_settings
+
+            settings = get_settings()
+        except Exception:
+            settings = None
+
+    override = min_edge_override
+    if override is None and settings is not None:
+        override = getattr(settings, "shadow_near_probe_min_edge_bps", None)
+
+    mode_raw = edge_mode
+    if mode_raw is None and settings is not None:
+        mode_raw = getattr(settings, "shadow_near_probe_edge_mode", None)
+    mode = normalize_edge_mode(mode_raw)
+
+    role_raw = fee_role
+    if role_raw is None and settings is not None:
+        role_raw = getattr(settings, "shadow_fee_role", None)
+    role = "maker" if str(role_raw or "taker").strip().lower() == "maker" else "taker"
+
+    if override is not None:
+        return float(override), role, mode
+
+    from keel.exchange.okx_fees import build_fee_model
+
+    fee_model = build_fee_model(settings)
+    # Prefer role from fee_model (normalized).
+    role = str(fee_model.get("role") or role)
+    if mode == "open":
+        hurdle = float(fee_model.get("open_fee_bps") or 0.0)
+    else:
+        hurdle = float(fee_model.get("round_trip_fee_bps") or 0.0)
+    return hurdle, role, mode
+
+
+def estimate_near_probe_edge_bps(
+    diag: dict[str, Any] | None,
+    snapshot: MarketSnapshot | None,
+    *,
+    decision_confidence: float = 0.0,
+) -> float | None:
+    """
+    Conservative expected-edge estimate in bps from near-signal geometry.
+
+    Uses ATR/price as move scale and an EV vs probe TP/SL (2.2 / 1.0 ATR)
+    with win probability ≈ gate_completeness × confidence/100.
+
+    Returns ``None`` when not estimable (caller should fail closed when hurdle > 0).
+    """
+    if snapshot is None:
+        return None
+    try:
+        price = float(snapshot.price or 0.0)
+        atr = float(snapshot.atr_14 or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if price <= 0 or atr <= 0:
+        return None
+
+    missing: list[Any] = []
+    if isinstance(diag, dict):
+        raw = diag.get("missing")
+        if isinstance(raw, list):
+            missing = raw
+    n_missing = len(missing)
+    completeness = max(0.0, min(1.0, (RULE_GATE_COUNT - n_missing) / float(RULE_GATE_COUNT)))
+
+    try:
+        conf = float(decision_confidence)
+    except (TypeError, ValueError):
+        conf = 0.0
+    conf_factor = max(0.0, min(1.0, conf / 100.0))
+
+    # Crude win probability from how complete + confident the near-signal is.
+    p = completeness * conf_factor
+    # EV in ATR units for probe geometry (reward 2.2 ATR, risk 1.0 ATR).
+    ev_atr = (_PROBE_TP_ATR * p) - (_PROBE_SL_ATR * (1.0 - p))
+    atr_bps = (atr / price) * 10_000.0
+    edge = atr_bps * ev_atr
+    # Negative EV → treat as 0 edge (will not clear a positive fee hurdle).
+    return float(max(0.0, edge))
+
+
+def edge_clears_hurdle(edge_bps: float | None, hurdle_bps: float) -> bool:
+    """
+    True when estimated edge clears the fee hurdle.
+
+    ``hurdle_bps <= 0`` disables the gate (explicit override 0).
+    When hurdle > 0 and edge is None → fail closed.
+    """
+    if float(hurdle_bps) <= 0.0:
+        return True
+    if edge_bps is None:
+        return False
+    return float(edge_bps) >= float(hurdle_bps)
+
+
 def build_near_probe_decision(
     wait_decision: Decision,
     snapshot: MarketSnapshot,
+    *,
+    edge_bps: float | None = None,
+    hurdle_bps: float | None = None,
+    fee_role: str | None = None,
+    edge_mode: str | None = None,
 ) -> Decision | None:
     """
     Build a fillable shadow Decision from a WAIT near-signal + market snapshot.
 
     Returns None when geometry cannot be built. Does not check kill/shadow/probe
     flags — callers must gate with ``should_attempt_near_probe`` first.
+    Optional edge/hurdle/fee_role are stamped into reason + signal_diag for audit.
     """
     if wait_decision.action != "WAIT":
         return None
@@ -136,10 +273,30 @@ def build_near_probe_decision(
 
     missing = diag.get("missing") if isinstance(diag.get("missing"), list) else []
     margin = 50.0
-    reason = (
-        f"{PROBE_POLICY}: nearest={nearest} missing={len(missing)} "
-        f"(rehearsal only; never live)"
-    )
+    reason_parts = [
+        f"{PROBE_POLICY}: nearest={nearest} missing={len(missing)}",
+    ]
+    if edge_bps is not None:
+        reason_parts.append(f"edge_bps={edge_bps:.4g}")
+    if hurdle_bps is not None:
+        reason_parts.append(f"hurdle_bps={hurdle_bps:.4g}")
+    if fee_role:
+        reason_parts.append(f"fee_role={fee_role}")
+    if edge_mode:
+        reason_parts.append(f"edge_mode={edge_mode}")
+    reason_parts.append("(rehearsal only; never live)")
+    reason = " ".join(reason_parts)
+
+    # Copy diag and stamp probe audit fields for ledger / Monitor.
+    audit_diag = dict(diag)
+    if edge_bps is not None:
+        audit_diag["edge_bps"] = float(edge_bps)
+    if hurdle_bps is not None:
+        audit_diag["hurdle_bps"] = float(hurdle_bps)
+    if fee_role:
+        audit_diag["fee_role"] = str(fee_role)
+    if edge_mode:
+        audit_diag["edge_mode"] = str(edge_mode)
 
     if action == "BUY_LONG":
         entry = price
@@ -161,7 +318,7 @@ def build_near_probe_decision(
             leverage=3,
             margin_usdt=margin,
             reason=reason,
-            signal_diag=diag,
+            signal_diag=audit_diag,
         )
     )
 
@@ -178,11 +335,16 @@ def maybe_near_probe_decision(
     cooldown_seconds: float = 900.0,
     ledger: Any | None = None,
     now: float | None = None,
+    min_edge_bps: float | None = None,
+    edge_mode: str | None = None,
+    fee_role: str | None = None,
+    settings: Any | None = None,
 ) -> Decision | None:
     """
     Optionally convert WAIT + strong near-signal → shadow probe Decision.
 
-    Returns the probe Decision when all gates pass, else None (caller keeps WAIT).
+    Returns the probe Decision when all gates pass (incl. fee edge hurdle),
+    else None (caller keeps WAIT).
     """
     if not should_attempt_near_probe(
         kill_switch=kill_switch,
@@ -206,7 +368,29 @@ def maybe_near_probe_decision(
         now=now,
     ):
         return None
-    probed = build_near_probe_decision(decision, snapshot)
+
+    hurdle, role, mode = resolve_near_probe_hurdle_bps(
+        settings,
+        min_edge_override=min_edge_bps,
+        edge_mode=edge_mode,
+        fee_role=fee_role,
+    )
+    edge = estimate_near_probe_edge_bps(
+        decision.signal_diag if isinstance(decision.signal_diag, dict) else None,
+        snapshot,
+        decision_confidence=decision.confidence,
+    )
+    if not edge_clears_hurdle(edge, hurdle):
+        return None
+
+    probed = build_near_probe_decision(
+        decision,
+        snapshot,
+        edge_bps=edge,
+        hurdle_bps=hurdle,
+        fee_role=role,
+        edge_mode=mode,
+    )
     if probed is None or not probed.valid or probed.action == "WAIT":
         return None
     return probed
@@ -216,3 +400,13 @@ def is_probe_decision(decision: Decision) -> bool:
     """True when decision was synthesized by the near-signal probe."""
     reason = str(decision.reason or "")
     return reason.startswith(PROBE_POLICY)
+
+
+def probe_audit_fields(decision: Decision) -> dict[str, Any]:
+    """Extract edge/hurdle/fee_role audit fields from a probe Decision."""
+    out: dict[str, Any] = {}
+    diag = decision.signal_diag if isinstance(decision.signal_diag, dict) else {}
+    for key in ("edge_bps", "hurdle_bps", "fee_role", "edge_mode"):
+        if key in diag and diag[key] is not None:
+            out[key] = diag[key]
+    return out

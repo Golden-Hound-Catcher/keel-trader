@@ -86,6 +86,10 @@ class StatusResponse(BaseModel):
     # Q3.1: near-signal shadow probe flag + cooldown (same as /config; never live orders).
     shadow_near_probe: bool = False
     shadow_near_probe_cooldown_seconds: int = 900
+    # Q3.4: fee-aware near-probe edge hurdle (resolved + mode).
+    shadow_near_probe_edge_mode: str = "round_trip"
+    shadow_near_probe_min_edge_bps: float | None = None
+    shadow_near_probe_hurdle_bps: float | None = None
     decision_policy: str = "rule"
     last_cycle: LastCycleSummary | None = None
     seconds_since_last_cycle: int | None = None
@@ -117,6 +121,10 @@ class ConfigResponse(BaseModel):
     shadow_near_probe: bool = False
     shadow_near_probe_cooldown_seconds: int = 900
     shadow_near_probe_max_missing: int = 2
+    # Q3.4 fee-aware edge hurdle.
+    shadow_near_probe_edge_mode: str = "round_trip"
+    shadow_near_probe_min_edge_bps: float | None = None
+    shadow_near_probe_hurdle_bps: float | None = None
     decision_policy: str = "rule"
     instruments: list[str] = Field(default_factory=list)
     notify_configured: bool = False

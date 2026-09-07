@@ -11,6 +11,7 @@ from keel.api.deps import get_ledger
 from keel.api.schemas import ArmingStatus, ConfigResponse, CredentialsStatus, LastCycleSummary, StatusResponse
 from keel.config import get_settings
 from keel.exchange.capability import probe_okx_capability
+from keel.execution.near_probe import resolve_near_probe_hurdle_bps
 from keel.risk.arming import evaluate_arming
 from keel.domain.instruments import InstrumentPool
 from keel.policy import build_decision_policy, describe_policy
@@ -23,6 +24,16 @@ _START_TIME = time.time()
 def _active_decision_policy_name(settings) -> str:
     """Cheap policy label via factory (no trader cycle)."""
     return describe_policy(build_decision_policy(settings))
+
+
+def _near_probe_hurdle_fields(settings) -> dict:
+    """Resolved Q3.4 edge hurdle for status/config (fee model, cached/fallback)."""
+    hurdle, _role, mode = resolve_near_probe_hurdle_bps(settings)
+    return {
+        "shadow_near_probe_edge_mode": mode,
+        "shadow_near_probe_min_edge_bps": settings.shadow_near_probe_min_edge_bps,
+        "shadow_near_probe_hurdle_bps": float(hurdle),
+    }
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -56,6 +67,7 @@ def status() -> StatusResponse:
         shadow_mode=settings.shadow_mode,
         shadow_near_probe=settings.shadow_near_probe,
         shadow_near_probe_cooldown_seconds=settings.shadow_near_probe_cooldown_seconds,
+        **_near_probe_hurdle_fields(settings),
         decision_policy=_active_decision_policy_name(settings),
         last_cycle=last_cycle,
         seconds_since_last_cycle=lag,
@@ -96,6 +108,7 @@ def config() -> ConfigResponse:
         shadow_near_probe=settings.shadow_near_probe,
         shadow_near_probe_cooldown_seconds=settings.shadow_near_probe_cooldown_seconds,
         shadow_near_probe_max_missing=settings.shadow_near_probe_max_missing,
+        **_near_probe_hurdle_fields(settings),
         decision_policy=_active_decision_policy_name(settings),
         instruments=instruments,
         notify_configured=settings.notify_configured,

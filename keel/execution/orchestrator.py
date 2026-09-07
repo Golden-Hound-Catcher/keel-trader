@@ -23,6 +23,7 @@ from keel.execution.near_probe import (
     PROBE_POLICY,
     PROBE_STRATEGY_TAG,
     is_probe_decision,
+    probe_audit_fields,
 )
 
 
@@ -286,6 +287,7 @@ class ExecutionOrchestrator:
         if probe:
             event_data["policy"] = PROBE_POLICY
             event_data["probe"] = True
+            event_data.update(probe_audit_fields(decision))
         self._ledger.record_event(
             "shadow_fill",
             inst_id=decision.inst_id,
@@ -303,6 +305,7 @@ class ExecutionOrchestrator:
         if probe:
             meta["policy"] = PROBE_POLICY
             meta["probe"] = True
+            meta.update(probe_audit_fields(decision))
             strategy_tag = PROBE_STRATEGY_TAG
         self._ledger.record_trade(
             TradeRecord(

@@ -611,6 +611,10 @@ def run_paper_cycle(
             cooldown_seconds=float(settings.shadow_near_probe_cooldown_seconds),
             ledger=ledger,
             now=now,
+            min_edge_bps=settings.shadow_near_probe_min_edge_bps,
+            edge_mode=settings.shadow_near_probe_edge_mode,
+            fee_role=settings.shadow_fee_role,
+            settings=settings,
         )
         if probed is not None:
             exec_decision = probed
