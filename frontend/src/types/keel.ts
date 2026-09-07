@@ -44,12 +44,38 @@ export interface KeelLastCycle {
   last_probe_skip_reason?: string | null
 }
 
+/** S1 economic arming gate summary (read-only; never clears kill-switch). */
+export interface KeelArmingEconomic {
+  enabled?: boolean
+  hours?: number
+  horizon_seconds?: number
+  fill_count?: number
+  probe_count?: number
+  sample_count?: number
+  probe_sample_count?: number
+  probe_win_rate_net_roundtrip?: number | null
+  win_rate_net_roundtrip?: number | null
+  avg_net_roundtrip_markout_bps?: number | null
+  min_fills?: number
+  min_probe_fills?: number
+  min_markout_sample?: number
+  min_probe_win_rate_net_rt?: number
+  min_avg_net_rt_bps?: number
+  fills_ok?: boolean
+  sample_ok?: boolean
+  passed?: boolean
+  by_skip_reason?: Record<string, number>
+  note?: string
+}
+
 export interface KeelArmingStatus {
   ready_to_arm: boolean
   kill_switch: boolean
   capability: string
   blockers: string[]
   warnings: string[]
+  /** S1: economic acceptance gates summary when evaluated. */
+  economic?: KeelArmingEconomic | null
 }
 
 export interface KeelStatus {

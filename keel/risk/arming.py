@@ -1,9 +1,12 @@
 """
-Read-only arming checklist (Q1).
+Read-only arming checklist (Q1) + economic acceptance gates (S1).
 
 Reports whether it is *safe for the operator to clear* KEEL_KILL_SWITCH —
 without ever writing env or placing orders. ready_to_arm does not flip the
 kill-switch; the operator must still set KEEL_KILL_SWITCH=0 manually.
+
+S1 adds read-only economic gates on shadow markout evidence so ready_to_arm
+cannot go green without sufficient fee-aware sample quality.
 """
 from __future__ import annotations
 
@@ -17,6 +20,11 @@ _TINY_EQUITY_USDT = 50.0
 
 _SHADOW_REHEARSAL_MSG = "no recent shadow_fill rehearsal"
 
+# S1 economic blockers (stable ids for Monitor / ops).
+INSUFFICIENT_SHADOW_MARKOUT_SAMPLE = "insufficient_shadow_markout_sample"
+PROBE_WIN_RATE_BELOW = "probe_win_rate_net_roundtrip_below_threshold"
+AVG_NET_RT_BELOW = "avg_net_roundtrip_markout_bps_below_threshold"
+
 
 @dataclass(frozen=True)
 class ArmingReport:
@@ -27,6 +35,7 @@ class ArmingReport:
     capability: str
     blockers: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    economic: dict[str, Any] | None = None
 
 
 def _resolve_ledger(
@@ -78,6 +87,193 @@ def _has_recent_shadow_fill(ledger: Any, hours: float) -> bool:
     return False
 
 
+def _horizon_row(markout: dict[str, Any] | None, horizon_seconds: int) -> dict[str, Any]:
+    """Pick markout horizon row matching ``horizon_seconds`` (empty dict if missing)."""
+    if not markout:
+        return {}
+    for row in markout.get("horizons") or []:
+        try:
+            if int(row.get("horizon_seconds", -1)) == int(horizon_seconds):
+                return dict(row)
+        except (TypeError, ValueError):
+            continue
+    return {}
+
+
+def _fetch_markout_stats(
+    ledger: Any,
+    *,
+    hours: float,
+    horizon_seconds: int,
+    markout_stats: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return shadow markout aggregate dict, or None when unavailable."""
+    if markout_stats is not None:
+        return markout_stats
+    if ledger is None:
+        return None
+    getter = getattr(ledger, "get_shadow_markout", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter(hours=float(hours), horizons=(int(horizon_seconds),))
+    except TypeError:
+        # Older fakes / stubs may only accept hours=.
+        try:
+            return getter(hours=float(hours))
+        except Exception:
+            return None
+    except Exception:
+        return None
+
+
+def evaluate_economic_gates(
+    settings: Any,
+    *,
+    ledger: Any | None = None,
+    markout_stats: dict[str, Any] | None = None,
+) -> tuple[list[str], dict[str, Any]]:
+    """
+    Read-only economic acceptance gates for arming (Stage S1).
+
+    Insufficient shadow/probe markout sample is always a **blocker** (never a
+    pass). Probe skips dominated by ``below_hurdle`` are informational only
+    and do not block by themselves.
+
+    Returns ``(blockers, economic_summary)``.
+    """
+    enabled = bool(getattr(settings, "arming_econ_enabled", True))
+    hours = float(
+        getattr(settings, "arming_econ_hours", None)
+        or getattr(settings, "arming_shadow_hours", 24.0)
+        or 24.0
+    )
+    min_fills = int(getattr(settings, "arming_econ_min_fills", 10) or 10)
+    min_probe_fills = int(getattr(settings, "arming_econ_min_probe_fills", 5) or 5)
+    min_sample = int(getattr(settings, "arming_econ_min_markout_sample", 5) or 5)
+    horizon = int(getattr(settings, "arming_econ_markout_horizon_seconds", 300) or 300)
+    min_win = float(getattr(settings, "arming_econ_min_probe_win_rate_net_rt", 0.55) or 0.55)
+    min_avg_net = float(getattr(settings, "arming_econ_min_avg_net_rt_bps", 0.0) or 0.0)
+
+    summary: dict[str, Any] = {
+        "enabled": enabled,
+        "hours": hours,
+        "horizon_seconds": horizon,
+        "min_fills": min_fills,
+        "min_probe_fills": min_probe_fills,
+        "min_markout_sample": min_sample,
+        "min_probe_win_rate_net_rt": min_win,
+        "min_avg_net_rt_bps": min_avg_net,
+        "fill_count": 0,
+        "probe_count": 0,
+        "sample_count": 0,
+        "probe_sample_count": 0,
+        "probe_win_rate_net_roundtrip": None,
+        "win_rate_net_roundtrip": None,
+        "avg_net_roundtrip_markout_bps": None,
+        "fills_ok": False,
+        "sample_ok": False,
+        "passed": False,
+        "by_skip_reason": {},
+        "note": (
+            "Kill-switch is never auto-cleared; economic gates are read-only. "
+            "Probe skips dominated by below_hurdle do not block alone."
+        ),
+    }
+
+    if not enabled:
+        summary["passed"] = True
+        summary["note"] = "Economic gates disabled (KEEL_ARMING_ECON_ENABLED=0)."
+        return [], summary
+
+    raw = _fetch_markout_stats(
+        ledger,
+        hours=hours,
+        horizon_seconds=horizon,
+        markout_stats=markout_stats,
+    )
+    blockers: list[str] = []
+
+    if raw is None:
+        blockers.append(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE)
+        summary["fills_ok"] = False
+        summary["sample_ok"] = False
+        return blockers, summary
+
+    fill_count = int(raw.get("count") or 0)
+    probe_count = int(raw.get("probe_count") or 0)
+    by_skip = dict(raw.get("by_skip_reason") or {})
+    hrow = _horizon_row(raw.get("markout") if isinstance(raw.get("markout"), dict) else None, horizon)
+    sample_count = int(hrow.get("sample_count") or 0)
+    probe_sample = int(hrow.get("probe_sample_count") or 0)
+    probe_wr = hrow.get("probe_win_rate_net_roundtrip")
+    overall_wr = hrow.get("win_rate_net_roundtrip")
+    avg_net = hrow.get("avg_net_roundtrip_markout_bps")
+
+    fills_ok = fill_count >= min_fills or probe_count >= min_probe_fills
+    sample_ok = sample_count >= min_sample
+
+    summary.update(
+        {
+            "fill_count": fill_count,
+            "probe_count": probe_count,
+            "sample_count": sample_count,
+            "probe_sample_count": probe_sample,
+            "probe_win_rate_net_roundtrip": probe_wr,
+            "win_rate_net_roundtrip": overall_wr,
+            "avg_net_roundtrip_markout_bps": avg_net,
+            "fills_ok": fills_ok,
+            "sample_ok": sample_ok,
+            "by_skip_reason": by_skip,
+        }
+    )
+
+    if not fills_ok or not sample_ok:
+        blockers.append(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE)
+        return blockers, summary
+
+    # Prefer probe net-RT win rate when probe sample is large enough; else overall.
+    wr: float | None
+    if probe_sample >= min_sample and probe_wr is not None:
+        try:
+            wr = float(probe_wr)
+        except (TypeError, ValueError):
+            wr = None
+    elif overall_wr is not None:
+        try:
+            wr = float(overall_wr)
+        except (TypeError, ValueError):
+            wr = None
+    else:
+        wr = None
+
+    if wr is None:
+        blockers.append(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE)
+        summary["sample_ok"] = False
+        return blockers, summary
+
+    if wr < min_win:
+        blockers.append(PROBE_WIN_RATE_BELOW)
+
+    if avg_net is None:
+        blockers.append(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE)
+        summary["sample_ok"] = False
+        return blockers, summary
+
+    try:
+        avg_net_f = float(avg_net)
+    except (TypeError, ValueError):
+        blockers.append(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE)
+        summary["sample_ok"] = False
+        return blockers, summary
+
+    if avg_net_f < min_avg_net:
+        blockers.append(AVG_NET_RT_BELOW)
+
+    summary["passed"] = len(blockers) == 0
+    return blockers, summary
+
+
 def evaluate_arming(
     settings: Any,
     capability: str,
@@ -88,6 +284,7 @@ def evaluate_arming(
     ledger: Any | None = None,
     ledger_path: str | Path | None = None,
     shadow_hours: float | None = None,
+    markout_stats: dict[str, Any] | None = None,
 ) -> ArmingReport:
     """
     Evaluate whether live/demo arming prerequisites are met.
@@ -97,16 +294,21 @@ def evaluate_arming(
       - okx_environment is live or demo
       - capability == \"trade\"
       - risk limits (max_notional, max_daily_loss) are sane (> 0)
+      - (S1) economic shadow-markout gates pass when enabled and a ledger
+        (or injected markout_stats) is available
 
     Kill-switch state is reported but never auto-cleared. Even when
     ready_to_arm is True, the operator must still set KEEL_KILL_SWITCH=0
     manually (and accept capital risk).
 
     Optional kwargs (equity / market_source / worker_stale / ledger) only feed
-    warnings or optional shadow-rehearsal blockers — unit tests can omit them.
+    warnings or optional shadow-rehearsal / economic blockers — unit tests can
+    omit them. Economic gates are skipped when no ledger and no markout_stats
+    (checklist-only unit path); production status always supplies a ledger.
     """
     blockers: list[str] = []
     warnings: list[str] = []
+    economic: dict[str, Any] | None = None
 
     cap = (capability or "").strip().lower() or "none"
     kill = bool(getattr(settings, "kill_switch", False))
@@ -186,6 +388,35 @@ def evaluate_arming(
                     blockers.append(_SHADOW_REHEARSAL_MSG)
                 else:
                     warnings.append(_SHADOW_REHEARSAL_MSG)
+
+        # S1 economic gates — additional; only when ledger or injected stats present.
+        econ_enabled = bool(getattr(settings, "arming_econ_enabled", True))
+        if econ_enabled and (led is not None or markout_stats is not None):
+            econ_blockers, economic = evaluate_economic_gates(
+                settings,
+                ledger=led,
+                markout_stats=markout_stats,
+            )
+            for b in econ_blockers:
+                if b not in blockers:
+                    blockers.append(b)
+            # Informational: below_hurdle-dominated skips are OK (not a blocker).
+            by_skip = (economic or {}).get("by_skip_reason") or {}
+            if by_skip:
+                top = max(by_skip.items(), key=lambda kv: kv[1])
+                if top[0] == "below_hurdle" and top[1] > 0:
+                    warnings.append(
+                        "probe_skips dominated by below_hurdle (OK — not an arming blocker)"
+                    )
+        elif econ_enabled:
+            economic = {
+                "enabled": True,
+                "passed": False,
+                "note": (
+                    "Economic gates enabled but no ledger/markout_stats in this "
+                    "evaluation — skipped (production status always supplies ledger)."
+                ),
+            }
     finally:
         if owned and led is not None:
             close = getattr(led, "close", None)
@@ -202,4 +433,5 @@ def evaluate_arming(
         capability=cap,
         blockers=blockers,
         warnings=warnings,
+        economic=economic,
     )

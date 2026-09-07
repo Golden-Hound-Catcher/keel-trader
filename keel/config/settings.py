@@ -79,6 +79,15 @@ class Settings:
     # Arming: require recent shadow_fill rehearsal (hours / hard require).
     arming_shadow_hours: float = 24.0
     arming_require_shadow: bool = False
+    # S1 economic arming gates (read-only; kill still cleared manually).
+    arming_econ_enabled: bool = True
+    arming_econ_hours: float = 24.0
+    arming_econ_min_fills: int = 10
+    arming_econ_min_probe_fills: int = 5
+    arming_econ_min_markout_sample: int = 5
+    arming_econ_markout_horizon_seconds: int = 300
+    arming_econ_min_probe_win_rate_net_rt: float = 0.55
+    arming_econ_min_avg_net_rt_bps: float = 0.0
     # Q3: convert strong WAIT near-signals into shadow fills (kill+shadow only).
     shadow_near_probe: bool = False
     shadow_near_probe_cooldown_seconds: int = 900
@@ -416,6 +425,16 @@ def get_settings() -> Settings:
         shadow_mode=_env_bool("KEEL_SHADOW_MODE", False),
         arming_shadow_hours=_env_float("KEEL_ARMING_SHADOW_HOURS", 24.0),
         arming_require_shadow=_env_bool("KEEL_ARMING_REQUIRE_SHADOW", False),
+        arming_econ_enabled=_env_bool("KEEL_ARMING_ECON_ENABLED", True),
+        arming_econ_hours=_env_float("KEEL_ARMING_ECON_HOURS", 24.0),
+        arming_econ_min_fills=_env_int("KEEL_ARMING_ECON_MIN_FILLS", 10),
+        arming_econ_min_probe_fills=_env_int("KEEL_ARMING_ECON_MIN_PROBE_FILLS", 5),
+        arming_econ_min_markout_sample=_env_int("KEEL_ARMING_ECON_MIN_MARKOUT_SAMPLE", 5),
+        arming_econ_markout_horizon_seconds=_env_int("KEEL_ARMING_ECON_MARKOUT_HORIZON_SECONDS", 300),
+        arming_econ_min_probe_win_rate_net_rt=_env_float(
+            "KEEL_ARMING_ECON_MIN_PROBE_WIN_RATE_NET_RT", 0.55
+        ),
+        arming_econ_min_avg_net_rt_bps=_env_float("KEEL_ARMING_ECON_MIN_AVG_NET_RT_BPS", 0.0),
         shadow_near_probe=_env_bool("KEEL_SHADOW_NEAR_PROBE", False),
         shadow_near_probe_cooldown_seconds=_env_int("KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS", 900),
         shadow_near_probe_max_missing=_env_int("KEEL_SHADOW_NEAR_PROBE_MAX_MISSING", 2),

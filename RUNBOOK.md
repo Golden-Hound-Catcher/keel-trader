@@ -328,22 +328,40 @@ See also §Live（无模拟盘 key） below.
 
 | 字段 | 含义 |
 |------|------|
-| `ready_to_arm` | `true` 仅当：keys 已配 + `okx_capability=trade` + 风险限额健全（`max_notional` / `max_daily_loss` > 0；live 另检 `KEEL_LIVE_MAX_*`）+ env 为 live/demo +（可选）近期有 shadow 排练 |
+| `ready_to_arm` | `true` 仅当：keys 已配 + `okx_capability=trade` + 风险限额健全（`max_notional` / `max_daily_loss` > 0；live 另检 `KEEL_LIVE_MAX_*`）+ env 为 live/demo +（可选）近期有 shadow 排练 + **S1 经济门禁通过** |
 | `kill_switch` | 当前 env 状态（echo） |
 | `capability` | 同上 probe 结果 |
-| `blockers` | 未就绪的人类可读原因（含 `KEEL_ARMING_REQUIRE_SHADOW=1` 时的 `no recent shadow_fill rehearsal`） |
-| `warnings` | 非阻断提示（tiny equity、demo、worker_stale、market_source、默认的 shadow 排练缺失） |
+| `blockers` | 未就绪原因（含 shadow 排练 / **经济门禁** id，见下） |
+| `warnings` | 非阻断提示（tiny equity、demo、worker_stale、market_source、默认的 shadow 排练缺失、below_hurdle 主导的 probe_skips） |
+| `economic` | S1 经济门禁摘要（fills/probe/sample、net-RT win_rate、avg net-RT bps、thresholds、`passed`） |
 
 **Shadow 排练证据**：`evaluate_arming` 查 ledger 近 `KEEL_ARMING_SHADOW_HOURS`（默认 24）内是否有 `shadow_fill`。缺省 → warning `no recent shadow_fill rehearsal`；设 `KEEL_ARMING_REQUIRE_SHADOW=1` → blocker（`ready_to_arm=false`）。
 
+### S1 经济准入门禁（read-only；默认开启）
+
+在 checklist 之外，`ready_to_arm` 还要求近期 shadow markout **样本与质量**达标（不放宽 Rule 参数、不清 kill）：
+
+| 门禁 | 默认 | blocker id |
+|------|------|------------|
+| 近 `KEEL_ARMING_ECON_HOURS`（默认 24）shadow fills ≥ `KEEL_ARMING_ECON_MIN_FILLS`（10）**或** probe fills ≥ `KEEL_ARMING_ECON_MIN_PROBE_FILLS`（5） | 见左 | `insufficient_shadow_markout_sample` |
+| 300s（`KEEL_ARMING_ECON_MARKOUT_HORIZON_SECONDS`）markout `sample_count` ≥ `KEEL_ARMING_ECON_MIN_MARKOUT_SAMPLE`（5） | 见左 | 同上（**样本不足 = 未就绪，不是 pass**） |
+| `probe_win_rate_net_roundtrip`（样本够时；否则 overall `win_rate_net_roundtrip`）≥ `KEEL_ARMING_ECON_MIN_PROBE_WIN_RATE_NET_RT`（0.55） | 0.55 | `probe_win_rate_net_roundtrip_below_threshold` |
+| `avg_net_roundtrip_markout_bps` ≥ `KEEL_ARMING_ECON_MIN_AVG_NET_RT_BPS`（0） | 0 | `avg_net_roundtrip_markout_bps_below_threshold` |
+
+- `KEEL_ARMING_ECON_ENABLED=0` 可关闭经济门禁（仅调试；生产保持默认 on）。
+- Probe skips 以 `below_hurdle` 为主 **单独不阻断**（warning only）——说明近信号多在费率门槛下，属观察正常。
+- **Kill-switch 仍须人工清除**：`ready_to_arm=true` 也绝不自动写 `KEEL_KILL_SWITCH=0`。
+
+Monitor「实盘准入」卡展示 `economic` PASS/FAIL 与 fills/probe/mk300s/netRT 摘要；经济 blocker 与其它 blockers 一并列出。
+
 **操作步骤（人工）**：
 
-1. 保持 `KEEL_KILL_SWITCH=1`，确认 Monitor「实盘准入」或 `arming.ready_to_arm` / `blockers`。
+1. 保持 `KEEL_KILL_SWITCH=1`，确认 Monitor「实盘准入」或 `arming.ready_to_arm` / `blockers` / `economic`。
 2. 确认 `okx_capability=trade`（带交易权限的 live/demo key）；只读 key 停在此步。
 3. 确认风险限额：`KEEL_MAX_NOTIONAL_PER_INSTRUMENT`、`KEEL_MAX_DAILY_LOSS` 已设且 > 0；live 首单另看 `KEEL_LIVE_MAX_NOTIONAL_PER_INSTRUMENT`（默认 200）与 `KEEL_LIVE_MAX_CONTRACTS_PER_INSTRUMENT`（默认 5）。
-4. 阅读 `arming.warnings`（小余额、demo、行情源、worker stale、无近期 shadow_fill）。
-5. **必做影子排练（kill 可保持 ON）**：设 `KEEL_SHADOW_MODE=1` + `KEEL_KILL_SWITCH=1`，跑短暂 cycle。**kill-switch = 禁止真实下单；shadow 仍记录 `shadow_fill`**。确认 Monitor「SHADOW MODE」、`shadow_mode=true`、ledger 有 `shadow_fill` 且无 OKX `place_order`，直至 arming 不再警告/阻断 shadow 排练。
-6. **仅当** checklist 绿灯、影子路径已验收、且接受资金风险时，手动设 `KEEL_KILL_SWITCH=0` 并关 `KEEL_SHADOW_MODE`（先关 shadow 再清 kill，或短暂 shadow+unkill 再关 shadow），重启相关进程——API/Monitor **无** toggle。真 live 路径自动套用更紧的 `KEEL_LIVE_MAX_*`。
+4. 阅读 `arming.warnings`（小余额、demo、行情源、worker stale、无近期 shadow_fill、below_hurdle skips）。
+5. **必做影子排练（kill 可保持 ON）**：设 `KEEL_SHADOW_MODE=1` + `KEEL_KILL_SWITCH=1`（可选 `KEEL_SHADOW_NEAR_PROBE=1`），跑短暂 cycle。**kill-switch = 禁止真实下单；shadow 仍记录 `shadow_fill`**。确认 Monitor「SHADOW MODE」、ledger 有足够 shadow/probe fills，并用 `/stats/shadow_markout` 看 300s net-RT 样本，直至 `economic.passed` 且无经济 blocker。
+6. **仅当** checklist + **经济门禁**绿灯、影子路径已验收、且接受资金风险时，手动设 `KEEL_KILL_SWITCH=0` 并关 `KEEL_SHADOW_MODE`（先关 shadow 再清 kill，或短暂 shadow+unkill 再关 shadow），重启相关进程——API/Monitor **无** toggle。真 live 路径自动套用更紧的 `KEEL_LIVE_MAX_*`。
 
 ### Shadow execution（`KEEL_SHADOW_MODE`）
 

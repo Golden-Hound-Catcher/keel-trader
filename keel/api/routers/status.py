@@ -80,6 +80,7 @@ def status() -> StatusResponse:
             capability=arming_report.capability,
             blockers=list(arming_report.blockers),
             warnings=list(arming_report.warnings),
+            economic=arming_report.economic,
         ),
     )
 

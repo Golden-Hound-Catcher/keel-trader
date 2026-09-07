@@ -70,13 +70,15 @@ class LastCycleSummary(BaseModel):
 
 
 class ArmingStatus(BaseModel):
-    """Q1 read-only arming checklist (never writes KEEL_KILL_SWITCH)."""
+    """Q1/S1 read-only arming checklist + economic gates (never writes KEEL_KILL_SWITCH)."""
 
     ready_to_arm: bool = False
     kill_switch: bool = False
     capability: str = "none"
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # S1: economic gate summary (sample counts, thresholds, pass/fail). Optional.
+    economic: dict | None = None
 
 
 class StatusResponse(BaseModel):
