@@ -64,6 +64,16 @@ class LastCycleSummary(BaseModel):
     market_source: str | None = None
 
 
+class ArmingStatus(BaseModel):
+    """Q1 read-only arming checklist (never writes KEEL_KILL_SWITCH)."""
+
+    ready_to_arm: bool = False
+    kill_switch: bool = False
+    capability: str = "none"
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class StatusResponse(BaseModel):
     version: str
     mode: str
@@ -79,6 +89,8 @@ class StatusResponse(BaseModel):
     # Q1: OKX key capability (none|paper|read|trade|error); never places orders.
     okx_capability: str = "none"
     okx_capability_detail: str | None = None
+    # Q1: read-only arming checklist (operator still flips KEEL_KILL_SWITCH manually).
+    arming: ArmingStatus | None = None
 
 
 class ConfigResponse(BaseModel):

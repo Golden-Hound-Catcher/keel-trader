@@ -159,6 +159,15 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIsInstance(r.json()["decision_policy"], str)
         self.assertIn("okx_capability", r.json())
         self.assertEqual(r.json()["okx_capability"], "none")
+        self.assertIn("arming", r.json())
+        arming = r.json()["arming"]
+        self.assertIsInstance(arming, dict)
+        self.assertIn("ready_to_arm", arming)
+        self.assertFalse(arming["ready_to_arm"])
+        self.assertEqual(arming.get("capability"), "none")
+        self.assertIsInstance(arming.get("blockers"), list)
+        self.assertTrue(len(arming["blockers"]) >= 1)
+        self.assertIsInstance(arming.get("warnings"), list)
 
         r = self.client.get("/api/v1/config")
         self.assertEqual(r.status_code, 200)

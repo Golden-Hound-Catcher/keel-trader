@@ -216,6 +216,14 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("worker_stale", status_props)
         self.assertIn("okx_capability", status_props)
         self.assertIn("okx_capability_detail", status_props)
+        self.assertIn("arming", status_props)
+        self.assertIn("ArmingStatus", comps)
+        arming_props = comps["ArmingStatus"]["properties"]
+        self.assertIn("ready_to_arm", arming_props)
+        self.assertIn("kill_switch", arming_props)
+        self.assertIn("capability", arming_props)
+        self.assertIn("blockers", arming_props)
+        self.assertIn("warnings", arming_props)
         self.assertIn("ConfigResponse", comps)
         config_props = comps["ConfigResponse"]["properties"]
         self.assertIn("kill_switch", config_props)

@@ -242,3 +242,23 @@ See also §Live（无模拟盘 key） below.
 
 **武装前提**：清 kill-switch（`KEEL_KILL_SWITCH=0`）前，先确认 `okx_capability=trade`。只读 key（`read`）不足以下单；kill-switch 行为本身不变（仍由 env 控制、门禁拒绝交易）。
 
+### Arming checklist（只读；不自动清 kill-switch）
+
+`GET /api/v1/status` 的 `arming` 字段汇总是否**可以**清 kill-switch（**不会**自动写 `KEEL_KILL_SWITCH=0`，也无下单）：
+
+| 字段 | 含义 |
+|------|------|
+| `ready_to_arm` | `true` 仅当：keys 已配 + `okx_capability=trade` + 风险限额健全（`max_notional` / `max_daily_loss` > 0）+ env 为 live/demo |
+| `kill_switch` | 当前 env 状态（echo） |
+| `capability` | 同上 probe 结果 |
+| `blockers` | 未就绪的人类可读原因 |
+| `warnings` | 非阻断提示（如 tiny equity、demo、worker_stale、market_source≠okx_public） |
+
+**操作步骤（人工）**：
+
+1. 保持 `KEEL_KILL_SWITCH=1`，确认 Monitor「实盘准入」或 `arming.ready_to_arm` / `blockers`。
+2. 确认 `okx_capability=trade`（带交易权限的 live/demo key）；只读 key 停在此步。
+3. 确认风险限额：`KEEL_MAX_NOTIONAL_PER_INSTRUMENT`、`KEEL_MAX_DAILY_LOSS` 已设且 > 0。
+4. 阅读 `arming.warnings`（小余额、demo、行情源、worker 是否 stale）。
+5. **仅当** checklist 绿灯且接受资金风险时，手动设 `KEEL_KILL_SWITCH=0` 并重启相关进程——API/Monitor **无** toggle。
+
