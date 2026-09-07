@@ -173,3 +173,14 @@ PYTHONPATH=. python scripts/compare_policies_paper.py
 - [SPEC.md](SPEC.md) §12 测试 / §13 demo 验收 / §15 实现顺序
 - [env.example](env.example) — 环境变量模板
 - `./scripts/run_acceptance.sh` — paper 自动验收（无 key）
+
+## Live（无模拟盘 key）
+
+若没有 OKX **模拟盘** API，可用 **live** 只读/观测（需你确认）：
+
+1. `.env` 设 `KEEL_OKX_ENV=live` + 三件套 key（**勿提交**、勿贴聊天）。
+2. 建议默认 `KEEL_KILL_SWITCH=1`（禁止开仓）；只读 key 本身也不能下单。
+3. `python -m keel.worker --once` 应出现 `mode=okx_rest adapter=okx_rest:live:signed`。
+4. CLI 会自动加载仓库根目录 `.env`（已在环境中的变量优先，不被覆盖）。
+5. 真要实盘下单：另建**带交易权限**的 live key，明确关掉 kill-switch，并接受资金风险——超出当前只读验收范围。
+
