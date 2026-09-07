@@ -245,6 +245,29 @@ When `signal_diag.trend_1h_confirm` and nearest side aligns with 15m, multiply `
 |------|---------|------|
 | `KEEL_RULE_1H_EDGE_BOOST` | **1.25** | Multiplier on `edge_hint_bps` when 1h confirms nearest side |
 
+### Phase R7 — near-signal edge_hint geometry (fee hurdle unchanged)
+
+After R6, BTC often showed `trend_1h_confirm=true` / `edge_hint_1h_boosted=true` with `edge_hint_bps=0` — the old completeness×0.40 EV went ≤0 for ≥2 missing gates and ~0.7 bps for 1 missing, so the 1h boost could not help clear the ~10 bps probe hurdle.
+
+R7 keeps the **full-gate** EV path when `missing` is empty, and for **1–2 missing** gates with `nearest∈{long,short}` estimates a conservative residual:
+
+```
+atr_bps = (atr_14 / price) * 10_000
+expected_tp_bps = atr_bps * 2.2
+# near (1–2 missing):
+p = {1: 0.45, 2: 0.38}[n_missing]
+sized_EV = 2.2*p - 1.0*(1-p)
+distance_penalty_bps = Σ gate residuals:
+  RSI: pts past hard band × (atr_bps / 14)
+  volume: atr_bps × 0.40 × gap_frac  (gap vs hard floor; ×0.5 if ratio ≥ soft floor)
+  trend/macd/ema: atr_bps × 0.30 each
+edge_hint_bps = max(0, atr_bps * sized_EV - distance_penalty_bps)
+cap: min(expected_tp_bps, 1.5 × atr_bps)
+# ≥3 missing or no ATR → mode=none, hint=0 (fail-closed)
+```
+
+`signal_diag` adds `edge_hint_mode` (`full`|`near`|`none`), `edge_hint_sized_ev`, `edge_hint_distance_penalty_bps`, `edge_hint_distance_components`. **R6 1h boost still applies after the base hint** (and is skipped when base is already 0). **Probe fee hurdle (taker RT ≈ 10 bps) is not lowered.**
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.

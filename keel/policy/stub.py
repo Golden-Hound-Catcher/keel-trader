@@ -8,6 +8,9 @@ R5: real multi-TF trends (trend_15m/1h/4h); entry gate is 15m; optional hard
 1h alignment via KEEL_RULE_REQUIRE_1H_TREND (default 0 = soft confirm only).
 R6: when trend_1h_confirm and nearest side aligns, multiply edge_hint_bps by
 KEEL_RULE_1H_EDGE_BOOST (default 1.25x, clamped 1.0–2.0; uplift capped +5 bps).
+R7: near-signal (1–2 missing gates) edge_hint uses distance-to-threshold geometry
++ ATR so base hint is non-zero when close; full-gate EV path unchanged; 1h boost
+still applied after base; probe fee hurdle (~10 bps) unchanged.
 Q0: diagnose_rule_signal attaches structured near-signal gate diagnostics.
 """
 from __future__ import annotations
@@ -28,6 +31,23 @@ _1H_EDGE_BOOST_DEFAULT = 1.25
 _1H_EDGE_BOOST_MIN = 1.0
 _1H_EDGE_BOOST_MAX = 2.0
 _1H_EDGE_BOOST_CAP_BPS = 5.0
+# R7: near-signal edge_hint geometry (distance-to-threshold + ATR).
+# Sized win-prob for 1 / 2 missing gates (conservative vs full-fire 0.70).
+_NEAR_P_BY_MISSING = {1: 0.45, 2: 0.38}
+_RSI_ATR_SCALE = 14.0  # RSI period → pts map to ATR bps
+_VOL_PENALTY_FRAC = 0.40  # volume gap weight vs atr_bps
+_BINARY_GATE_PENALTY_FRAC = 0.30  # trend/macd/ema miss → fraction of atr_bps
+_EDGE_HINT_ATR_CAP = 1.5  # never claim more than 1.5× atr_bps
+_BINARY_MISSING_GATES = frozenset(
+    {
+        "trend_bullish",
+        "trend_bearish",
+        "macd_long_ok",
+        "macd_short_ok",
+        "ema_long_ok",
+        "ema_short_ok",
+    }
+)
 
 
 def _env_float(key: str, default: float) -> float:
@@ -118,29 +138,171 @@ _SHORT_GATES = (
 )
 
 
-def _edge_hints(snapshot: MarketSnapshot, n_missing: int) -> dict[str, float | None]:
-    """ATR-based expected move / edge hint for probe observability (does not change fee hurdle)."""
+def _distance_penalty_bps(
+    snapshot: MarketSnapshot,
+    missing: list[str],
+    *,
+    atr_bps: float,
+    th: dict[str, float | bool],
+) -> tuple[float, dict[str, float]]:
+    """
+    Residual distance-to-threshold in bps for near-signal edge hints (R7).
+
+    - RSI: pts past hard band × (atr_bps / 14)
+    - volume: atr_bps × 0.40 × gap_frac (gap vs hard floor; halved if ≥ soft floor)
+    - binary trend/macd/ema: atr_bps × 0.30 each
+    """
+    components: dict[str, float] = {}
+    total = 0.0
+    rsi_long_max = float(th["rsi_long_max"])
+    rsi_short_min = float(th["rsi_short_min"])
+    min_vol = float(th["min_vol"])
+    soft_floor = float(th["vol_soft_floor"])
+    try:
+        rsi = float(snapshot.rsi_14)
+    except (TypeError, ValueError):
+        rsi = float("nan")
+    try:
+        ratio = float(snapshot.volume_ratio or 0.0)
+    except (TypeError, ValueError):
+        ratio = 0.0
+
+    for gate in missing:
+        pen = 0.0
+        if gate == "rsi_long_ok":
+            if rsi == rsi:  # not NaN
+                pts = max(0.0, rsi - rsi_long_max)
+                pen = pts * (atr_bps / _RSI_ATR_SCALE)
+        elif gate == "rsi_short_ok":
+            if rsi == rsi:
+                pts = max(0.0, rsi_short_min - rsi)
+                pen = pts * (atr_bps / _RSI_ATR_SCALE)
+        elif gate == "volume_ok":
+            if min_vol > 0 and ratio < min_vol:
+                gap = (min_vol - ratio) / min_vol
+                if ratio >= soft_floor:
+                    gap *= 0.5
+                pen = atr_bps * _VOL_PENALTY_FRAC * min(gap, 1.5)
+            else:
+                # Failed via percentile/soft context with ratio ≥ hard — mild penalty.
+                pen = atr_bps * _VOL_PENALTY_FRAC * 0.15
+        elif gate in _BINARY_MISSING_GATES:
+            pen = atr_bps * _BINARY_GATE_PENALTY_FRAC
+        else:
+            pen = atr_bps * _BINARY_GATE_PENALTY_FRAC
+        components[gate] = float(pen)
+        total += pen
+    return float(total), components
+
+
+def _edge_hints(
+    snapshot: MarketSnapshot,
+    missing: list[str] | int,
+    *,
+    nearest: str = "none",
+    th: dict[str, float | bool] | None = None,
+) -> dict[str, Any]:
+    """
+    ATR-based expected move / edge hint for probe observability (does not change fee hurdle).
+
+    R7 formula (documented):
+      atr_bps = (atr_14 / price) * 10_000
+      expected_tp_bps = atr_bps * 2.2
+      if missing empty (full fire):
+          p = 0.70; sized_EV = 2.2*p - 1.0*(1-p)
+          edge_hint_bps = max(0, atr_bps * sized_EV)   # mode=full
+      elif 1–2 missing and nearest ∈ {long, short}:
+          p = {1: 0.45, 2: 0.38}[n]
+          sized_EV = 2.2*p - 1.0*(1-p)
+          distance_penalty = Σ gate residuals (RSI pts→bps, vol gap, binary)
+          edge_hint_bps = max(0, atr_bps * sized_EV - distance_penalty)  # mode=near
+      else:
+          edge_hint_bps = 0; mode=none
+      cap: min(expected_tp_bps, 1.5 * atr_bps)
+
+    R6 1h boost is applied **after** this base hint by ``apply_1h_edge_boost``.
+    """
+    empty: dict[str, Any] = {
+        "atr_bps": None,
+        "expected_tp_bps": None,
+        "edge_hint_bps": None,
+        "edge_hint_mode": "none",
+        "edge_hint_sized_ev": None,
+        "edge_hint_distance_penalty_bps": None,
+        "edge_hint_distance_components": {},
+    }
     try:
         price = float(snapshot.price or 0.0)
         atr = float(snapshot.atr_14 or 0.0)
     except (TypeError, ValueError):
-        return {"atr_bps": None, "expected_tp_bps": None, "edge_hint_bps": None}
+        return empty
     if price <= 0 or atr <= 0:
-        return {"atr_bps": None, "expected_tp_bps": None, "edge_hint_bps": None}
+        return empty
+
+    # Backward-compat: callers may still pass n_missing as int.
+    if isinstance(missing, int):
+        n_missing = max(0, int(missing))
+        missing_list: list[str] = [f"gate_{i}" for i in range(n_missing)]
+        # Int path has no gate identity — use synthetic binary penalties for near,
+        # or full/none by count only.
+        use_synthetic = True
+    else:
+        missing_list = list(missing or [])
+        n_missing = len(missing_list)
+        use_synthetic = False
+
     atr_bps = (atr / price) * 10_000.0
     expected_tp_bps = atr_bps * _TP_ATR
-    completeness = max(
-        0.0, min(1.0, (_RULE_GATE_COUNT - max(0, n_missing)) / float(_RULE_GATE_COUNT))
-    )
-    # Full fire → rule confidence 70; near-signal WAIT uses 40 — mirror for hint.
-    conf_factor = 0.70 if n_missing == 0 else 0.40
-    p = completeness * conf_factor
-    ev_atr = (_TP_ATR * p) - (_SL_ATR * (1.0 - p))
-    edge_hint = max(0.0, atr_bps * ev_atr)
+    thr = th if th is not None else _rule_thresholds()
+
+    nearest_s = str(nearest or "none")
+    components: dict[str, float] = {}
+    distance_penalty = 0.0
+    sized_ev: float | None = None
+    mode = "none"
+    edge_hint = 0.0
+
+    if n_missing == 0:
+        # Full-gate EV path (unchanged confidence 0.70).
+        p = 0.70
+        sized_ev = (_TP_ATR * p) - (_SL_ATR * (1.0 - p))
+        edge_hint = max(0.0, atr_bps * sized_ev)
+        mode = "full"
+    elif (
+        n_missing in (1, 2)
+        and nearest_s in ("long", "short")
+        and n_missing in _NEAR_P_BY_MISSING
+    ):
+        p = float(_NEAR_P_BY_MISSING[n_missing])
+        sized_ev = (_TP_ATR * p) - (_SL_ATR * (1.0 - p))
+        if use_synthetic:
+            # Int-only API: treat each missing as a mild binary residual.
+            distance_penalty = atr_bps * _BINARY_GATE_PENALTY_FRAC * float(n_missing)
+            components = {f"gate_{i}": atr_bps * _BINARY_GATE_PENALTY_FRAC for i in range(n_missing)}
+        else:
+            distance_penalty, components = _distance_penalty_bps(
+                snapshot, missing_list, atr_bps=atr_bps, th=thr
+            )
+        edge_hint = max(0.0, atr_bps * sized_ev - distance_penalty)
+        mode = "near"
+    else:
+        mode = "none"
+        edge_hint = 0.0
+        sized_ev = None
+        distance_penalty = 0.0
+        components = {}
+
+    if edge_hint > 0:
+        edge_hint = min(edge_hint, expected_tp_bps, _EDGE_HINT_ATR_CAP * atr_bps)
+
     return {
         "atr_bps": float(atr_bps),
         "expected_tp_bps": float(expected_tp_bps),
         "edge_hint_bps": float(edge_hint),
+        "edge_hint_mode": mode,
+        "edge_hint_sized_ev": float(sized_ev) if sized_ev is not None else None,
+        "edge_hint_distance_penalty_bps": float(distance_penalty) if mode == "near" else (0.0 if mode == "full" else None),
+        "edge_hint_distance_components": dict(components) if mode == "near" else {},
     }
 
 
@@ -188,6 +350,10 @@ def apply_1h_edge_boost(
     except (TypeError, ValueError):
         return out
     if base_f != base_f or base_f < 0:
+        return out
+    # R7: no boost theater when base hint is already zero (live BTC symptom).
+    if base_f == 0.0:
+        out["edge_hint_bps"] = 0.0
         return out
 
     nearest_s = str(nearest or "")
@@ -276,6 +442,9 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     (``15m`` or ``15m+1h``), ``trend_1h_confirm``, ``require_1h_trend``.
     R6: optional 1h-confirm ``edge_hint`` boost (``edge_hint_1h_boosted``,
     ``edge_hint_boost_mult``, ``edge_hint_bps_raw`` when applied).
+    R7: ``edge_hint_mode`` (``full``|``near``|``none``) plus
+    ``edge_hint_sized_ev`` / ``edge_hint_distance_penalty_bps`` /
+    ``edge_hint_distance_components`` for near-signal geometry audit.
     """
     th = _rule_thresholds()
     rsi_long_max = float(th["rsi_long_max"])
@@ -425,7 +594,12 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         gates["near_ready"] = False
         gates.update(
             apply_1h_edge_boost(
-                _edge_hints(snapshot, _RULE_GATE_COUNT),
+                _edge_hints(
+                    snapshot,
+                    ["data_valid"],
+                    nearest="none",
+                    th=th,
+                ),
                 trend_1h_confirm=False,
                 nearest="none",
                 trend_15m=trend_15m,
@@ -471,7 +645,12 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     gates["near_ready"] = near_vol or near_rsi_long or near_rsi_short
     gates.update(
         apply_1h_edge_boost(
-            _edge_hints(snapshot, len(missing)),
+            _edge_hints(
+                snapshot,
+                list(missing),
+                nearest=str(nearest),
+                th=th,
+            ),
             trend_1h_confirm=bool(trend_1h_confirm),
             nearest=str(nearest),
             trend_15m=trend_15m,
@@ -503,7 +682,8 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     Attaches ``signal_diag`` (from ``diagnose_rule_signal``) on every decision.
     Near-probe fee hurdle (10 bps taker RT) is unchanged — edge hints are audit-only.
     R6 may boost ``edge_hint_bps`` when 1h confirms nearest side (still does not
-    lower the fee hurdle).
+    lower the fee hurdle). R7 near-signal geometry may yield a non-zero base hint
+    when 1–2 gates are missing (distance-to-threshold + ATR); hurdle unchanged.
     """
     diag = diagnose_rule_signal(snapshot)
 
