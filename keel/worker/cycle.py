@@ -12,7 +12,7 @@ Stage 4: persists factor_snapshots + coherent Decision↔risk↔ledger events so
 keel.api can read the latest cycle from SQLite without hitting live OKX.
 
 Stage 5: optional OkxRestAdapter via keel.exchange.factory.build_exchange.
-Live/demo OKX path fetches public 15m/1h candles (synthetic fallback on failure).
+Live/demo OKX path fetches public 15m/1H/4H candles (synthetic fallback on failure).
 
 Stage 6: DecisionPolicy port (Stub/Rule/LLM) + modular prompts; default Rule for offline.
 
@@ -128,10 +128,11 @@ def _fetch_okx_snapshot_candles(
     base_price: float,
 ) -> tuple[list[Candle], list[Candle], list[Candle], str]:
     """
-    Fetch 15m (and optionally 1h) public candles.
+    Fetch distinct 15m / 1H / 4H public candles for multi-TF trends (R5).
 
     Returns (c15, c1h, c4h, quality_tag). quality_tag is "okx_public" on success
-    or "synthetic_fallback:<reason>" when falling back.
+    or "synthetic_fallback:<reason>" when falling back. 1H/4H fall back to
+    subsampled finer bars when the coarser fetch fails (still distinct series).
     """
     try:
         rows_15m = fetch_candles(inst_id, bar="15m", limit=64)
@@ -157,7 +158,16 @@ def _fetch_okx_snapshot_candles(
         logger.warning("okx 1h candles failed inst=%s err=%s; subsample 15m", inst_id, exc)
         candles_1h = candles_15m[::4] or candles_15m
 
-    candles_4h = candles_1h[::4] or candles_1h
+    candles_4h: list[Candle]
+    try:
+        rows_4h = fetch_candles(inst_id, bar="4H", limit=64)
+        candles_4h = _okx_rows_to_candles(rows_4h)
+        if len(candles_4h) < 5:
+            candles_4h = candles_1h[::4] or candles_1h
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("okx 4h candles failed inst=%s err=%s; subsample 1h", inst_id, exc)
+        candles_4h = candles_1h[::4] or candles_1h
+
     return candles_15m, candles_1h, candles_4h, "okx_public"
 
 
@@ -223,6 +233,24 @@ def compute_volume_ratio(
     return float(ratio), float(pct)
 
 
+
+def classify_trend_from_candles(candles: list[Candle]) -> str:
+    """
+    Classify EMA-stack trend on a candle series (oldest → newest).
+
+    Uses the same EMA9/21/55 + price alignment as ``classify_trend``.
+    Returns ``neutral`` when the series is too short for a meaningful stack.
+    """
+    if not candles or len(candles) < 3:
+        return "neutral"
+    closes = [c.close for c in candles]
+    price = float(closes[-1])
+    ema_9 = calculate_ema(closes, 9)
+    ema_21 = calculate_ema(closes, 21)
+    ema_55 = calculate_ema(closes, 55)
+    return classify_trend(ema_9, ema_21, ema_55, price)
+
+
 def enrich_snapshot(snapshot: MarketSnapshot) -> MarketSnapshot:
     """Compute technical factors onto a snapshot (pure math over candles)."""
     # MarketSnapshot stores newest-first in comments elsewhere; we keep oldest→newest.
@@ -250,7 +278,17 @@ def enrich_snapshot(snapshot: MarketSnapshot) -> MarketSnapshot:
     atr_pct = (atr / price * 100.0) if price else 0.0
     vwap_bias = ((price - vwap) / vwap * 100.0) if vwap else 0.0
     vol_ratio, vol_pct = compute_volume_ratio(volumes, lookback=20)
-    trend = classify_trend(ema_9, ema_21, ema_55, price)
+    # R5: distinct multi-TF trends — 15m from primary EMA stack; 1h/4h from
+    # their own candle series (OKX public 1H/4H or synthetic subsamples).
+    trend_15m = classify_trend(ema_9, ema_21, ema_55, price)
+    if snapshot.candles_1h:
+        trend_1h = classify_trend_from_candles(snapshot.candles_1h)
+    else:
+        trend_1h = trend_15m
+    if snapshot.candles_4h:
+        trend_4h = classify_trend_from_candles(snapshot.candles_4h)
+    else:
+        trend_4h = trend_1h
 
     snapshot.price = price
     snapshot.ema_9 = ema_9
@@ -268,9 +306,9 @@ def enrich_snapshot(snapshot: MarketSnapshot) -> MarketSnapshot:
     snapshot.obv = obv
     snapshot.volume_ratio = vol_ratio
     snapshot.volume_percentile = vol_pct
-    snapshot.trend_15m = trend  # type: ignore[assignment]
-    snapshot.trend_1h = trend  # type: ignore[assignment]
-    snapshot.trend_4h = trend  # type: ignore[assignment]
+    snapshot.trend_15m = trend_15m  # type: ignore[assignment]
+    snapshot.trend_1h = trend_1h  # type: ignore[assignment]
+    snapshot.trend_4h = trend_4h  # type: ignore[assignment]
     snapshot.data_valid = True
     snapshot.data_quality_reason = "ok"
     # Silence unused local for lint-friendly completeness
@@ -561,6 +599,8 @@ def run_paper_cycle(
                     "vwap_bias_pct": snap.vwap_bias_pct,
                     "macd_line": snap.macd_line,
                     "macd_signal": snap.macd_signal,
+                    "trend_1h": snap.trend_1h,
+                    "trend_4h": snap.trend_4h,
                     "data_valid": snap.data_valid,
                     "data_quality_reason": snap.data_quality_reason,
                 },
@@ -629,6 +669,8 @@ def run_paper_cycle(
                     "validation_error": decision.validation_error or None,
                     "rsi_14": snap.rsi_14,
                     "trend_15m": snap.trend_15m,
+                    "trend_1h": snap.trend_1h,
+                    "trend_4h": snap.trend_4h,
                     "policy_name": audit_policy,
                     "prompt_modules": audit_modules,
                     "market_source": market_source_from_quality_tag(

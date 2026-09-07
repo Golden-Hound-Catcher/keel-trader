@@ -222,6 +222,21 @@ Rule v3+ defaults (override via `.env`, do not commit secrets):
 
 `signal_diag` includes `volume_threshold`, `volume_path` (`hard|percentile|soft|fail`), `volume_soft_pass`, `rsi_path` / `rsi_soft_pass`, `near_ready`, plus `atr_bps` / `expected_tp_bps` / `edge_hint_bps`. Near-probe prefers `edge_hint_bps` when finite, else crude ATR EV; **fee hurdle (taker RT ≈ 10 bps) unchanged.** Kill-switch / no live orders unchanged.
 
+### Phase R5 — real multi-timeframe trends
+
+`enrich_snapshot` now classifies **distinct** `trend_15m` / `trend_1h` / `trend_4h` from each TF’s candle closes (EMA9/21/55 stack via `classify_trend`). Previously 1h/4h were copied from the 15m classification, so multi-TF gates looked real but were not.
+
+| Source | How 1h / 4h obtained |
+|--------|----------------------|
+| OKX public path | `fetch_candles` bars `1H` and `4H` (limit 64); on failure, subsample finer bars |
+| Paper / synthetic | Subsample 15m → 1h (`[::4]`) and 4h (`[::16]`); still independently classified |
+
+**Rule policy**: entry trend gate remains **15m** (`trend_bullish` / `trend_bearish`). Soft 1h confirmation is recorded on `signal_diag` (`trend_1h_confirm`, `trend_gate=15m`). Set `KEEL_RULE_REQUIRE_1H_TREND=1` to hard-require 1h same direction (`trend_gate=15m+1h`). Default **0** so fires are not silently zeroed. Diag also exposes `trend_15m` / `trend_1h` / `trend_4h` / `require_1h_trend`.
+
+| Knob | Default | Role |
+|------|---------|------|
+| `KEEL_RULE_REQUIRE_1H_TREND` | **0** | `0` = soft confirm (audit); `1` = hard 15m+1h alignment |
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.

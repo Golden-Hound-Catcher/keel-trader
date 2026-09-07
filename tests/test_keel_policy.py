@@ -751,3 +751,100 @@ class TestComputeVolumeRatio(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMultiTfTrendGate(unittest.TestCase):
+    """R5: soft vs hard 1h trend confirmation in rule signal_diag / gates."""
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="SOL-USDT-SWAP",
+            name="SOL",
+            timestamp=1.0,
+            price=145.0,
+            atr_14=2.0,
+            rsi_14=35.0,
+            trend_15m="bullish",
+            trend_1h="bullish",
+            trend_4h="neutral",
+            macd_histogram=10.0,
+            ema_9=146.0,
+            ema_21=144.0,
+            volume_ratio=1.2,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def test_default_soft_fires_on_15m_even_if_1h_disagrees(self):
+        import os
+        prev = os.environ.pop("KEEL_RULE_REQUIRE_1H_TREND", None)
+        try:
+            d = rule_based_decision(self._snap(trend_1h="bearish", trend_4h="bearish"))
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m")
+            self.assertFalse(d.signal_diag["require_1h_trend"])
+            self.assertFalse(d.signal_diag["trend_1h_confirm"])
+            self.assertEqual(d.signal_diag["trend_15m"], "bullish")
+            self.assertEqual(d.signal_diag["trend_1h"], "bearish")
+            self.assertEqual(d.signal_diag["trend_4h"], "bearish")
+            self.assertIn("trend15m=", d.reason)
+            self.assertIn("trend1h=", d.reason)
+        finally:
+            if prev is None:
+                os.environ.pop("KEEL_RULE_REQUIRE_1H_TREND", None)
+            else:
+                os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = prev
+
+    def test_require_1h_blocks_when_disagrees(self):
+        import os
+        prev = os.environ.get("KEEL_RULE_REQUIRE_1H_TREND")
+        try:
+            os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "1"
+            d = rule_based_decision(self._snap(trend_1h="bearish"))
+            self.assertEqual(d.action, "WAIT")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h")
+            self.assertTrue(d.signal_diag["require_1h_trend"])
+            self.assertFalse(d.signal_diag["trend_bullish"])
+            self.assertIn("trend_bullish", d.signal_diag["missing"])
+        finally:
+            if prev is None:
+                os.environ.pop("KEEL_RULE_REQUIRE_1H_TREND", None)
+            else:
+                os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = prev
+
+    def test_require_1h_fires_when_aligned(self):
+        import os
+        prev = os.environ.get("KEEL_RULE_REQUIRE_1H_TREND")
+        try:
+            os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "1"
+            d = rule_based_decision(self._snap(trend_1h="bullish", trend_4h="bullish"))
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h")
+            self.assertTrue(d.signal_diag["trend_1h_confirm"])
+            self.assertTrue(d.signal_diag["trend_bullish"])
+        finally:
+            if prev is None:
+                os.environ.pop("KEEL_RULE_REQUIRE_1H_TREND", None)
+            else:
+                os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = prev
+
+    def test_diagnose_exposes_multi_tf_fields(self):
+        import os
+        from keel.policy.stub import diagnose_rule_signal
+
+        prev = os.environ.pop("KEEL_RULE_REQUIRE_1H_TREND", None)
+        try:
+            g = diagnose_rule_signal(
+                self._snap(trend_15m="bearish", trend_1h="bearish", trend_4h="neutral")
+            )
+            self.assertEqual(g["trend_15m"], "bearish")
+            self.assertEqual(g["trend_1h"], "bearish")
+            self.assertEqual(g["trend_4h"], "neutral")
+            self.assertEqual(g["trend_gate"], "15m")
+            self.assertTrue(g["trend_1h_confirm"])
+        finally:
+            if prev is None:
+                os.environ.pop("KEEL_RULE_REQUIRE_1H_TREND", None)
+            else:
+                os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = prev

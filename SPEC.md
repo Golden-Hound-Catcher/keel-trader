@@ -315,6 +315,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 | 2026-09-07 | **Phase R Rule v3 edge pack**: audit volume_ratio (= last/mean20, correct); default min_vol 1.0→0.5 + percentile/soft volume paths; signal_diag edge hints (atr/expected_tp/edge_hint_bps); compare_rule_params missing-gate hist; near-probe 10bps fee hurdle unchanged |
 | 2026-09-07 | **Phase R RSI soft + edge_hint wire**: hard RSI defaults 42/58→45/55; soft RSI relax when other four gates pass (48/52); near-probe prefers signal_diag.edge_hint_bps; 10bps hurdle unchanged |
 | 2026-09-07 | **S1 economic arming gates**: `evaluate_arming` requires shadow markout evidence (min fills/probe, 300s sample, probe net-RT win_rate≥0.55, avg net-RT≥0); `insufficient_shadow_markout_sample` when undersampled; `arming.economic` on status + Monitor; kill still manual; RUNBOOK/SPEC |
+| 2026-09-07 | **Phase R5 real multi-TF trends**: distinct `trend_15m/1h/4h` from OKX `15m/1H/4H` (or synthetic subsample); rule entry=15m; soft `KEEL_RULE_REQUIRE_1H_TREND` (default 0); signal_diag trend_gate |
 | 2026-09-07 | **Phase R4 fee-aware rule suggest**: `scripts/suggest_rule_params.py` + `keel.ledger.rule_suggest` grid-search RSI/vol/rsi_relax on okx_public cohort; rank by edge≥10bps fires under fire-rate cap; recommend-only (no .env write) |
 | 2026-09-07 | **Q3.4 near-probe fee edge hurdle**: gate `KEEL_SHADOW_NEAR_PROBE` on estimated `edge_bps` ≥ OKX RT/open fee (or `KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS`); fail-closed; audit + status hurdle fields; RUNBOOK/SPEC |
 | 2026-09-07 | **Q3.3 fee-aware shadow markout**: OKX `makerU`/`takerU` (or Regular 2/5 bps fallback) nets on `/stats/shadow*`; `fee_model` + net open/RT fields; optional funding at 00/08/16 UTC; Monitor prefers netRT; RUNBOOK/SPEC cite OKX fee docs |
@@ -408,6 +409,10 @@ Rule policy v3+ keeps the five-gate stack (RSI / trend / MACD / EMA / volume) bu
 - **Diagnostics**: `signal_diag` exposes volume/RSI path + soft flags, `near_ready`, and ATR-based `atr_bps` / `expected_tp_bps` / `edge_hint_bps`. Near-probe prefers `edge_hint_bps` when finite; fee hurdle unchanged (~10 bps taker RT).
 - **Safety**: Q3.4 near-probe fee hurdle unchanged; kill-switch uncleared; no live orders from this pack.
 - **Verify**: `scripts/compare_rule_params.py` prints missing-gate histograms on ledger cohorts.
+
+## Addendum: Phase R5 real multi-timeframe trends
+
+`MarketSnapshot.trend_15m` / `trend_1h` / `trend_4h` are computed independently in `enrich_snapshot` from each TF’s closes (EMA stack + `classify_trend`). OKX public cycles fetch `15m` / `1H` / `4H` candles; paper/synthetic uses subsampled series. Rule entry gate = **15m**; `KEEL_RULE_REQUIRE_1H_TREND` (default **0**) optionally hard-requires 1h same direction. `signal_diag` documents `trend_gate`, `trend_1h_confirm`, and all three trend fields. Does not clear kill-switch or place live orders.
 
 ## Addendum: Phase R4 fee-aware Rule param suggest
 
