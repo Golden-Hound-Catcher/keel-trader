@@ -306,16 +306,19 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 ---
 
-## 15b. Phase E0/E1 — full-gate measurement (gen-2)
+## 15b. Phase E0/E1/E2A — full-gate measurement + trend-follow variant (gen-2)
 
 **E0 freeze:** do not re-enable `KEEL_SHADOW_NEAR_PROBE`, do not lower the ~10 bps fee hurdle, do not clear kill from near-probe evidence, do not add near-probe tweaks.
 
 **E1:** A *full-gate fire* is a rule decision with action ∈ {BUY_LONG, SELL_SHORT} and `signal_diag.missing == []`. Count distinctly from WAIT/near. `GET /api/v1/stats/quality` exposes `full_gate_fires` (`count` / `by_action` / `by_instrument`) and `economic_evidence` (`none`|`probe`|`full_gate`|`mixed`). Offline markout: `scripts/full_gate_markout.py` (or `near_entry_markout.py --full-gate-only`) reports fee-aware net RT at 60/300/900s; prefer matched non-probe `shadow_fill`, else counterfactual entry. Success criteria later: n≥20 and 5m netRT win≥0.55. Economic arming may annotate `economic_sample_source` / `full_gate_fires` without changing gate thresholds. See RUNBOOK.
 
+**E2A (trend-follow variant):** Opt-in `KEEL_RULE_VARIANT=trend_follow` (default `mean_revert` preserves bit-for-bit existing rule). Under TF: hard-require 15m+1h same direction; RSI long = not overbought (`rsi_14 ≤ KEEL_RULE_TF_RSI_LONG_MAX`, default 68); RSI short = not oversold (`rsi_14 ≥ KEEL_RULE_TF_RSI_SHORT_MIN`, default 32); MACD/EMA/volume unchanged. Policy name stays `rule`. `signal_diag.rule_variant` + status/config `rule_variant`. Flip only in local `.env`; E0 freeze still active. Success = `full_gate_fires > 0` under TF while kill+shadow. See RUNBOOK.
+
 ## 16. Changelog
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **E2A trend-follow rule variant**: `KEEL_RULE_VARIANT=mean_revert\|trend_follow`; TF forces 15m+1h + RSI not-OB/OS (68/32); policy name stays `rule`; status/config `rule_variant`; E0 freeze unchanged |
 | 2026-09-07 | **E1 full-gate fires**: track BUY_LONG/SELL_SHORT with `signal_diag.missing==[]` (rule); `/stats/quality` exposes `full_gate_fires` + `economic_evidence`; `scripts/full_gate_markout.py` / `--full-gate-only`; Monitor chips; E0 freeze keeps near_probe off / 10bps hurdle / kill uncleared |
 | 2026-09-07 | **Per-instrument quality/economic**: `/stats/quality` + `/stats/shadow` (+ arming/`first_live` economic) optional `by_instrument` maps for BTC/ETH/SOL diagnosis; Monitor soft-fail chips; aggregate gates unchanged; never clears kill |
 | 2026-09-07 | **S2 first-live checklist**: `status.first_live` aggregates kill/shadow/capability + arming/economic + suggested `KEEL_LIVE_MAX_*` + `allowed_now` (false while kill on or economic fail) + `human_steps`; Monitor「First live」card; RUNBOOK Stage T gate; never auto-clears kill |

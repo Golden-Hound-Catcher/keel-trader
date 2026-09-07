@@ -1398,3 +1398,189 @@ class TestR8NearEdgeLowAtrCalibration(unittest.TestCase):
         self.assertAlmostEqual(hurdle, 10.0)
         self.assertFalse(edge_clears_hurdle(9.9, hurdle))
         self.assertTrue(edge_clears_hurdle(10.0, hurdle))
+
+
+class TestE2ATrendFollowVariant(unittest.TestCase):
+    """E2A: KEEL_RULE_VARIANT=trend_follow vs default mean_revert."""
+
+    _VARIANT_KEYS = (
+        "KEEL_RULE_VARIANT",
+        "KEEL_RULE_TF_RSI_LONG_MAX",
+        "KEEL_RULE_TF_RSI_SHORT_MIN",
+        "KEEL_RULE_REQUIRE_1H_TREND",
+        "KEEL_RULE_RSI_RELAX_ENABLE",
+        "KEEL_RULE_MIN_VOLUME_RATIO",
+        "KEEL_RULE_MIN_VOLUME_PERCENTILE",
+        "KEEL_RULE_VOLUME_SOFT_ENABLE",
+    )
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=1.0,
+            price=65000.0,
+            atr_14=500.0,
+            rsi_14=50.0,
+            trend_15m="bullish",
+            trend_1h="bullish",
+            trend_4h="neutral",
+            macd_histogram=10.0,
+            ema_9=65100.0,
+            ema_21=64900.0,
+            volume_ratio=1.2,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def _save_env(self):
+        import os
+
+        return {k: os.environ.get(k) for k in self._VARIANT_KEYS}
+
+    def _restore_env(self, prev):
+        import os
+
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _enable_tf(self):
+        import os
+
+        os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
+        # Isolate volume soft / percentile noise for crafted snaps.
+        os.environ["KEEL_RULE_MIN_VOLUME_RATIO"] = "0.5"
+        os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+        os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
+        # Prove TF forces 1h even when this is explicitly off.
+        os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
+
+    def test_default_mean_revert_mid_rsi_waits(self):
+        """Without variant env, mid RSI still needs mean-reversion extreme."""
+        import os
+        from keel.policy import diagnose_rule_signal, resolve_rule_variant
+
+        prev = self._save_env()
+        try:
+            for k in self._VARIANT_KEYS:
+                os.environ.pop(k, None)
+            self.assertEqual(resolve_rule_variant(), "mean_revert")
+            diag = diagnose_rule_signal(self._snap(rsi_14=50.0))
+            self.assertEqual(diag["rule_variant"], "mean_revert")
+            self.assertIn("rsi_long_ok", diag["missing"])
+            self.assertEqual(rule_based_decision(self._snap(rsi_14=50.0)).action, "WAIT")
+        finally:
+            self._restore_env(prev)
+
+    def test_tf_aligned_mid_rsi_full_gate_long(self):
+        """Bullish 15m+1h + macd/ema/vol + RSI=50 → BUY_LONG missing=[]."""
+        prev = self._save_env()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(self._snap(rsi_14=50.0))
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertEqual(d.signal_diag["rule_variant"], "trend_follow")
+            self.assertTrue(d.signal_diag["require_1h_trend"])
+            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h")
+            self.assertTrue(d.signal_diag["rsi_long_ok"])
+            self.assertIn("trend_follow", d.reason)
+            self.assertEqual(d.signal_diag["nearest"], "long")
+        finally:
+            self._restore_env(prev)
+
+    def test_tf_aligned_mid_rsi_full_gate_short(self):
+        prev = self._save_env()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(
+                self._snap(
+                    rsi_14=50.0,
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    macd_histogram=-5.0,
+                    ema_9=64800.0,
+                    ema_21=65100.0,
+                )
+            )
+            self.assertEqual(d.action, "SELL_SHORT")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertTrue(d.signal_diag["rsi_short_ok"])
+            self.assertIn("trend_follow", d.reason)
+        finally:
+            self._restore_env(prev)
+
+    def test_tf_overbought_blocks_long(self):
+        prev = self._save_env()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(self._snap(rsi_14=72.0))
+            self.assertEqual(d.action, "WAIT")
+            self.assertIn("rsi_long_ok", d.signal_diag["missing"])
+            self.assertFalse(d.signal_diag["rsi_long_ok"])
+        finally:
+            self._restore_env(prev)
+
+    def test_tf_oversold_blocks_short(self):
+        prev = self._save_env()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(
+                self._snap(
+                    rsi_14=28.0,
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    macd_histogram=-5.0,
+                    ema_9=64800.0,
+                    ema_21=65100.0,
+                )
+            )
+            self.assertEqual(d.action, "WAIT")
+            self.assertIn("rsi_short_ok", d.signal_diag["missing"])
+        finally:
+            self._restore_env(prev)
+
+    def test_tf_forces_1h_even_when_require_env_off(self):
+        prev = self._save_env()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(self._snap(trend_1h="bearish", rsi_14=50.0))
+            self.assertEqual(d.action, "WAIT")
+            self.assertTrue(d.signal_diag["require_1h_trend"])
+            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h")
+            self.assertIn("trend_bullish", d.signal_diag["missing"])
+        finally:
+            self._restore_env(prev)
+
+    def test_tf_custom_rsi_band_env(self):
+        import os
+
+        prev = self._save_env()
+        try:
+            self._enable_tf()
+            os.environ["KEEL_RULE_TF_RSI_LONG_MAX"] = "60"
+            # 62 > 60 → blocked; 58 ≤ 60 → fires
+            self.assertEqual(
+                rule_based_decision(self._snap(rsi_14=62.0)).action, "WAIT"
+            )
+            self.assertEqual(
+                rule_based_decision(self._snap(rsi_14=58.0)).action, "BUY_LONG"
+            )
+        finally:
+            self._restore_env(prev)
+
+    def test_policy_name_still_rule(self):
+        from keel.policy import RuleDecisionPolicy, build_decision_policy
+
+        prev = self._save_env()
+        try:
+            self._enable_tf()
+            p = build_decision_policy(force_rule=True)
+            self.assertEqual(p.name, "rule")
+            self.assertEqual(RuleDecisionPolicy().name, "rule")
+        finally:
+            self._restore_env(prev)

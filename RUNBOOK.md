@@ -379,6 +379,36 @@ PYTHONPATH=. python scripts/near_entry_markout.py --full-gate-only \
 
 **Recommend-only** — do **not** flip `KEEL_SHADOW_NEAR_PROBE` from this evidence yet. Prefer weighing full-gate markout for economic arming once n is large enough; until then keep near_probe off.
 
+### Phase E2A — trend-follow rule variant (gen-2)
+
+Live observe showed `full_gate_fires=0` under default **mean-reversion** RSI (WAIT≈99%; missing dominated by `volume_ok` + `rsi_long/short_ok`). E2A adds an **opt-in** rule variant that can full-gate fire in trends **without** replacing the default.
+
+| Knob | Default | Notes |
+|------|---------|--------|
+| `KEEL_RULE_VARIANT` | `mean_revert` | `trend_follow` enables E2A semantics |
+| `KEEL_RULE_TF_RSI_LONG_MAX` | `68` | Long OK when RSI **not overbought** (`rsi_14 ≤ max`) |
+| `KEEL_RULE_TF_RSI_SHORT_MIN` | `32` | Short OK when RSI **not oversold** (`rsi_14 ≥ min`) |
+
+When `trend_follow`:
+- **Hard-require** 15m+1h same direction (forces `require_1h` behavior regardless of `KEEL_RULE_REQUIRE_1H_TREND`).
+- Keep MACD / EMA / volume gates (volume soft path still OK).
+- RSI side gate **keys** stay `rsi_long_ok` / `rsi_short_ok` so E1 full_gate + near-signal UX keep working.
+- `signal_diag.rule_variant` + reason strings mention `trend_follow` when firing.
+- Factory still returns `RuleDecisionPolicy` with `name=="rule"` (E1 `policy_name` detection unchanged).
+- Status/config echo `rule_variant` next to `decision_policy`.
+
+**How to flip (local `.env` only — never commit):**
+```bash
+# In local .env (kill+shadow still on; E0 freeze still active)
+KEEL_RULE_VARIANT=trend_follow
+# optional:
+# KEEL_RULE_TF_RSI_LONG_MAX=68
+# KEEL_RULE_TF_RSI_SHORT_MIN=32
+```
+Restart worker after edit. Success = observe `full_gate_fires > 0` under TF while **still** kill+shadow. **Do not** enable `KEEL_SHADOW_NEAR_PROBE`, lower the 10bps hurdle, or clear kill-switch (E0 freeze).
+
+Revert: set `KEEL_RULE_VARIANT=mean_revert` (or remove) and restart.
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.
