@@ -84,6 +84,12 @@ class Settings:
     shadow_near_probe_cooldown_seconds: int = 900
     shadow_near_probe_max_missing: int = 2
     shadow_near_probe_min_confidence: float = 0.0
+    # Q3.3 fee-aware shadow markout (OKX USDT-SWAP makerU/takerU).
+    # Role default taker — shadow/near_probe assume immediate fill.
+    shadow_fee_role: str = "taker"  # taker|maker
+    # Optional bps overrides (positive=cost, negative=rebate); None → live/fallback.
+    shadow_maker_fee_bps: float | None = None
+    shadow_taker_fee_bps: float | None = None
 
     # Trader cycle interval (KEEL_CYCLE_INTERVAL_SECONDS / KEEL_OBSERVE_PRESET); default 900
     cycle_interval_seconds: int = 900
@@ -180,6 +186,23 @@ def _env_float(key: str, default: float) -> float:
         return float(_env(key, str(default)))
     except ValueError:
         return default
+
+
+def _env_optional_float(key: str) -> float | None:
+    """Read optional float; empty/unset → None."""
+    raw = _env(key, "").strip()
+    if raw == "":
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _env_shadow_fee_role() -> str:
+    """taker (default) | maker for shadow markout fee legs."""
+    raw = (_env("KEEL_SHADOW_FEE_ROLE", "taker") or "taker").strip().lower()
+    return "maker" if raw == "maker" else "taker"
 
 
 # Trader cycle interval bounds (seconds): min 1m, max 24h.
@@ -388,6 +411,9 @@ def get_settings() -> Settings:
         shadow_near_probe_cooldown_seconds=_env_int("KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS", 900),
         shadow_near_probe_max_missing=_env_int("KEEL_SHADOW_NEAR_PROBE_MAX_MISSING", 2),
         shadow_near_probe_min_confidence=_env_float("KEEL_SHADOW_NEAR_PROBE_MIN_CONFIDENCE", 0.0),
+        shadow_fee_role=_env_shadow_fee_role(),
+        shadow_maker_fee_bps=_env_optional_float("KEEL_SHADOW_MAKER_FEE_BPS"),
+        shadow_taker_fee_bps=_env_optional_float("KEEL_SHADOW_TAKER_FEE_BPS"),
         cycle_interval_seconds=cycle_interval_seconds,
         observe_preset=observe_preset,
         instruments=_env_instruments(),

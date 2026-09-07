@@ -216,25 +216,60 @@ export interface KeelShadowMarkoutAction {
   avg_markout_bps?: number | null
   median_markout_bps?: number | null
   win_rate?: number | null
+  avg_net_open_markout_bps?: number | null
+  median_net_open_markout_bps?: number | null
+  win_rate_net_open?: number | null
+  avg_net_roundtrip_markout_bps?: number | null
+  median_net_roundtrip_markout_bps?: number | null
+  win_rate_net_roundtrip?: number | null
 }
 
 export interface KeelShadowMarkoutHorizon {
   horizon_seconds: number
   sample_count: number
   skipped: number
+  /** Gross mid markout (fee-unaware). */
   avg_markout_bps?: number | null
   median_markout_bps?: number | null
   win_rate?: number | null
+  avg_net_open_markout_bps?: number | null
+  median_net_open_markout_bps?: number | null
+  win_rate_net_open?: number | null
+  avg_net_roundtrip_markout_bps?: number | null
+  median_net_roundtrip_markout_bps?: number | null
+  win_rate_net_roundtrip?: number | null
   probe_sample_count?: number
   probe_avg_markout_bps?: number | null
   probe_median_markout_bps?: number | null
   probe_win_rate?: number | null
+  probe_avg_net_open_markout_bps?: number | null
+  probe_median_net_open_markout_bps?: number | null
+  probe_win_rate_net_open?: number | null
+  probe_avg_net_roundtrip_markout_bps?: number | null
+  probe_median_net_roundtrip_markout_bps?: number | null
+  probe_win_rate_net_roundtrip?: number | null
+  funding_applied_count?: number
   by_action?: Record<string, KeelShadowMarkoutAction>
 }
 
 export interface KeelShadowMarkout {
   price_source?: string
   horizons: KeelShadowMarkoutHorizon[]
+}
+
+/** Q3.3 OKX-official fee model on /stats/shadow*. */
+export interface KeelShadowFeeModel {
+  source?: string
+  inst_type?: string
+  margin?: string
+  level?: string | null
+  maker_bps?: number
+  taker_bps?: number
+  role?: string
+  open_fee_bps?: number
+  round_trip_fee_bps?: number
+  funding_note?: string
+  funding_applied?: boolean
 }
 
 export interface KeelShadowStats {
@@ -245,6 +280,8 @@ export interface KeelShadowStats {
   /** Q3 near-probe fills in lookback. */
   probe_count?: number
   last_timestamp?: number | null
+  /** Q3.3 fee model (soft-fail if older API). */
+  fee_model?: KeelShadowFeeModel | null
   /** Q3.2 offline markout nest (soft-fail if older API). */
   markout?: KeelShadowMarkout | null
 }

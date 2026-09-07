@@ -267,6 +267,16 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("by_policy", sh_props)
         self.assertIn("probe_count", sh_props)
         self.assertIn("last_timestamp", sh_props)
+        self.assertIn("fee_model", sh_props)
+        self.assertIn("ShadowFeeModel", comps)
+        fm_props = comps["ShadowFeeModel"]["properties"]
+        self.assertIn("maker_bps", fm_props)
+        self.assertIn("taker_bps", fm_props)
+        self.assertIn("round_trip_fee_bps", fm_props)
+        self.assertIn("role", fm_props)
+        hz = comps["ShadowMarkoutHorizon"]["properties"]
+        self.assertIn("avg_net_roundtrip_markout_bps", hz)
+        self.assertIn("win_rate_net_roundtrip", hz)
         self.assertIn("/api/v1/stats/quality", paths)
         self.assertIn("QualityStatsResponse", comps)
         q_props = comps["QualityStatsResponse"]["properties"]

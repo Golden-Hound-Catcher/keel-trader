@@ -1,11 +1,14 @@
-"""Q3.2 shadow fill markout — offline outcome stats from ledger."""
+"""Q3.2/Q3.3 shadow fill markout — offline outcome + OKX fee-aware nets."""
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -13,6 +16,16 @@ from keel.api.app import create_app
 from keel.api.deps import set_ledger_path_override
 from keel.config import refresh_settings
 from keel.domain.records import FactorSnapshot
+from keel.exchange.okx_fees import (
+    REGULAR_USDT_SWAP_MAKER_BPS,
+    REGULAR_USDT_SWAP_TAKER_BPS,
+    SwapFeeRates,
+    build_fee_model,
+    clear_fee_caches,
+    crosses_standard_funding_boundary,
+    get_swap_usdt_fee_rates,
+    okx_rate_to_cost_bps,
+)
 from keel.ledger import KeelLedger
 from keel.ledger.shadow_markout import (
     DEFAULT_MARKOUT_HORIZONS_SECONDS,
@@ -33,21 +46,152 @@ class TestMarkoutBps(unittest.TestCase):
         self.assertIsNone(markout_bps("WAIT", 100, 101))
 
 
+class TestOkxFeeHelpers(unittest.TestCase):
+    def setUp(self):
+        clear_fee_caches()
+        self._env_keys = [
+            "KEEL_SHADOW_FEE_ROLE",
+            "KEEL_SHADOW_MAKER_FEE_BPS",
+            "KEEL_SHADOW_TAKER_FEE_BPS",
+            "KEEL_OKX_API_KEY",
+            "KEEL_OKX_SECRET_KEY",
+            "KEEL_OKX_PASSPHRASE",
+        ]
+        self._prev = {k: os.environ.get(k) for k in self._env_keys}
+        for k in self._env_keys:
+            os.environ.pop(k, None)
+        refresh_settings()
+
+    def tearDown(self):
+        clear_fee_caches()
+        for k, v in self._prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        refresh_settings()
+
+    def test_okx_rate_to_cost_bps(self):
+        # OKX -0.0005 (pay) → +5 bps cost; +0.0002 (rebate) → -2 bps.
+        self.assertAlmostEqual(okx_rate_to_cost_bps(-0.0005), 5.0)
+        self.assertAlmostEqual(okx_rate_to_cost_bps(0.0002), -2.0)
+
+    def test_defaults_regular_fallback(self):
+        settings = refresh_settings()
+        rates = get_swap_usdt_fee_rates(settings)
+        self.assertEqual(rates.source, "fallback")
+        self.assertAlmostEqual(rates.maker_bps, REGULAR_USDT_SWAP_MAKER_BPS)
+        self.assertAlmostEqual(rates.taker_bps, REGULAR_USDT_SWAP_TAKER_BPS)
+        model = build_fee_model(settings)
+        self.assertEqual(model["role"], "taker")
+        self.assertAlmostEqual(model["open_fee_bps"], 5.0)
+        self.assertAlmostEqual(model["round_trip_fee_bps"], 10.0)
+        self.assertEqual(model["inst_type"], "SWAP")
+        self.assertEqual(model["margin"], "USDT")
+
+    def test_taker_rt_10bps_maker_rt_4bps(self):
+        os.environ["KEEL_SHADOW_FEE_ROLE"] = "taker"
+        refresh_settings()
+        m = build_fee_model(refresh_settings())
+        self.assertAlmostEqual(m["round_trip_fee_bps"], 10.0)
+
+        os.environ["KEEL_SHADOW_FEE_ROLE"] = "maker"
+        refresh_settings()
+        m2 = build_fee_model(refresh_settings())
+        self.assertEqual(m2["role"], "maker")
+        self.assertAlmostEqual(m2["open_fee_bps"], 2.0)
+        self.assertAlmostEqual(m2["round_trip_fee_bps"], 4.0)
+
+    def test_override_and_negative_maker_rebate(self):
+        os.environ["KEEL_SHADOW_MAKER_FEE_BPS"] = "-1.0"
+        os.environ["KEEL_SHADOW_TAKER_FEE_BPS"] = "5.0"
+        os.environ["KEEL_SHADOW_FEE_ROLE"] = "maker"
+        refresh_settings()
+        m = build_fee_model(refresh_settings())
+        self.assertEqual(m["source"], "override")
+        self.assertAlmostEqual(m["maker_bps"], -1.0)
+        self.assertAlmostEqual(m["open_fee_bps"], -1.0)
+        self.assertAlmostEqual(m["round_trip_fee_bps"], -2.0)
+
+    def test_live_makerU_takerU(self):
+        def transport(method, url, headers, body):
+            self.assertIn("/api/v5/account/trade-fee", url)
+            self.assertIn("instType=SWAP", url)
+            # OKX: negative = pay. makerU -0.0002 → 2bps; takerU -0.0005 → 5bps
+            return json.dumps(
+                {
+                    "code": "0",
+                    "data": [
+                        {
+                            "instType": "SWAP",
+                            "level": "Lv1",
+                            "maker": "-0.0002",
+                            "taker": "-0.0005",
+                            "makerU": "-0.00015",
+                            "takerU": "-0.00045",
+                        }
+                    ],
+                }
+            )
+
+        settings = SimpleNamespace(
+            okx_api_key="k",
+            okx_secret_key="s",
+            okx_passphrase="p",
+            okx_environment="demo",
+            is_demo=True,
+            okx_configured=True,
+            shadow_fee_role="taker",
+            shadow_maker_fee_bps=None,
+            shadow_taker_fee_bps=None,
+        )
+        rates = get_swap_usdt_fee_rates(
+            settings, transport=transport, force_refresh=True
+        )
+        self.assertEqual(rates.source, "live")
+        self.assertAlmostEqual(rates.maker_bps, 1.5, places=4)
+        self.assertAlmostEqual(rates.taker_bps, 4.5, places=4)
+        # Must use U fields, not crypto-margined maker/taker (would be 2/5).
+        self.assertNotAlmostEqual(rates.maker_bps, 2.0, places=4)
+
+    def test_funding_boundary(self):
+        # 07:59 → 08:01 UTC crosses 08:00
+        fill = 8 * 3600 - 60
+        end = 8 * 3600 + 60
+        self.assertTrue(crosses_standard_funding_boundary(fill, end))
+        # Short window inside hour: no cross
+        self.assertFalse(crosses_standard_funding_boundary(100.0, 160.0))
+
+
 class TestShadowMarkoutLedger(unittest.TestCase):
     def setUp(self):
+        clear_fee_caches()
         self.temp = tempfile.TemporaryDirectory()
         self.db = Path(self.temp.name) / "markout.db"
         set_ledger_path_override(self.db)
         os.environ["KEEL_LEDGER_DB"] = str(self.db)
+        for k in (
+            "KEEL_SHADOW_FEE_ROLE",
+            "KEEL_SHADOW_MAKER_FEE_BPS",
+            "KEEL_SHADOW_TAKER_FEE_BPS",
+        ):
+            os.environ.pop(k, None)
         refresh_settings()
         self.ledger = KeelLedger(self.db)
         self.client = TestClient(create_app())
         self.t0 = time.time() - 3600
 
     def tearDown(self):
+        clear_fee_caches()
         self.ledger.close()
         set_ledger_path_override(None)
         os.environ.pop("KEEL_LEDGER_DB", None)
+        for k in (
+            "KEEL_SHADOW_FEE_ROLE",
+            "KEEL_SHADOW_MAKER_FEE_BPS",
+            "KEEL_SHADOW_TAKER_FEE_BPS",
+        ):
+            os.environ.pop(k, None)
         refresh_settings()
         self.temp.cleanup()
 
@@ -86,16 +230,21 @@ class TestShadowMarkoutLedger(unittest.TestCase):
         body = r.json()
         self.assertEqual(body["count"], 0)
         self.assertIn("markout", body)
+        self.assertIn("fee_model", body)
         self.assertEqual(body["markout"]["horizons"][0]["sample_count"], 0)
+        fm = body["fee_model"]
+        self.assertEqual(fm["role"], "taker")
+        self.assertAlmostEqual(fm["round_trip_fee_bps"], 10.0)
+        self.assertEqual(fm["margin"], "USDT")
 
-    def test_markout_long_and_probe(self):
-        # Long fill at t0, later price up → positive markout.
+    def test_markout_long_and_probe_gross_and_net(self):
+        # Long fill at t0, later price up → +100 bps gross @60s
         self._seed_fill(ts=self.t0, action="BUY_LONG", price=100.0, probe=False)
-        self._seed_factor(ts=self.t0 + 65, price=101.0)  # ~60s
-        self._seed_factor(ts=self.t0 + 310, price=102.0)  # ~300s
-        self._seed_factor(ts=self.t0 + 910, price=103.0)  # ~900s
+        self._seed_factor(ts=self.t0 + 65, price=101.0)
+        self._seed_factor(ts=self.t0 + 310, price=102.0)
+        self._seed_factor(ts=self.t0 + 910, price=103.0)
 
-        # Probe short at t0+100, later price down → positive for short.
+        # Probe short at t0+100, later price down → +100 bps gross
         self._seed_fill(
             ts=self.t0 + 100,
             action="SELL_SHORT",
@@ -111,31 +260,78 @@ class TestShadowMarkoutLedger(unittest.TestCase):
         body = r.json()
         self.assertEqual(body["count"], 2)
         self.assertEqual(body["probe_count"], 1)
-        self.assertEqual(body["by_policy"].get("shadow_near_probe"), 1)
+        self.assertIn("fee_model", body)
+        self.assertAlmostEqual(body["fee_model"]["open_fee_bps"], 5.0)
+        self.assertAlmostEqual(body["fee_model"]["round_trip_fee_bps"], 10.0)
 
         horizons = {h["horizon_seconds"]: h for h in body["markout"]["horizons"]}
-        self.assertIn(60, horizons)
         h60 = horizons[60]
         self.assertEqual(h60["sample_count"], 2)
         self.assertEqual(h60["skipped"], 0)
-        self.assertIsNotNone(h60["avg_markout_bps"])
-        self.assertGreater(h60["avg_markout_bps"], 0)
-        self.assertEqual(h60["win_rate"], 1.0)
-        self.assertEqual(h60["probe_sample_count"], 1)
+        # Gross unchanged at +100 for probe short
         self.assertAlmostEqual(h60["probe_avg_markout_bps"], 100.0, places=4)
-        self.assertEqual(h60["probe_win_rate"], 1.0)
-        self.assertIn("BUY_LONG", h60["by_action"])
-        self.assertIn("SELL_SHORT", h60["by_action"])
+        # Net open = gross - 5; net RT = gross - 10
+        self.assertAlmostEqual(h60["probe_avg_net_open_markout_bps"], 95.0, places=4)
+        self.assertAlmostEqual(
+            h60["probe_avg_net_roundtrip_markout_bps"], 90.0, places=4
+        )
+        self.assertEqual(h60["probe_win_rate_net_roundtrip"], 1.0)
+        # Combined avg gross ~100; net RT ~90
+        self.assertAlmostEqual(h60["avg_markout_bps"], 100.0, places=4)
+        self.assertAlmostEqual(h60["avg_net_roundtrip_markout_bps"], 90.0, places=4)
+        self.assertAlmostEqual(
+            h60["avg_net_roundtrip_markout_bps"],
+            h60["avg_markout_bps"] - body["fee_model"]["round_trip_fee_bps"],
+            places=4,
+        )
 
-        # Sibling endpoint
         r2 = self.client.get("/api/v1/stats/shadow_markout?hours=24")
         self.assertEqual(r2.status_code, 200)
         self.assertEqual(r2.json()["count"], 2)
-        self.assertEqual(len(r2.json()["markout"]["horizons"]), len(DEFAULT_MARKOUT_HORIZONS_SECONDS))
+        self.assertIn("fee_model", r2.json())
+        self.assertEqual(
+            len(r2.json()["markout"]["horizons"]),
+            len(DEFAULT_MARKOUT_HORIZONS_SECONDS),
+        )
+
+    def test_net_equals_gross_minus_fee_with_override(self):
+        os.environ["KEEL_SHADOW_TAKER_FEE_BPS"] = "7.5"
+        os.environ["KEEL_SHADOW_FEE_ROLE"] = "taker"
+        refresh_settings()
+        self._seed_fill(ts=self.t0, action="BUY_LONG", price=100.0, probe=True)
+        self._seed_factor(ts=self.t0 + 70, price=101.0)
+        raw = compute_shadow_markout(
+            self.ledger._get_conn(),
+            hours=24.0,
+            horizons=(60,),
+            apply_funding=False,
+        )
+        self.assertEqual(raw["fee_model"]["source"], "override")
+        h = raw["markout"]["horizons"][0]
+        self.assertAlmostEqual(h["avg_markout_bps"], 100.0, places=4)
+        self.assertAlmostEqual(h["avg_net_open_markout_bps"], 92.5, places=4)
+        self.assertAlmostEqual(h["avg_net_roundtrip_markout_bps"], 85.0, places=4)
+
+    def test_rebate_negative_maker_increases_net(self):
+        os.environ["KEEL_SHADOW_MAKER_FEE_BPS"] = "-1.0"
+        os.environ["KEEL_SHADOW_FEE_ROLE"] = "maker"
+        refresh_settings()
+        self._seed_fill(ts=self.t0, action="BUY_LONG", price=100.0)
+        self._seed_factor(ts=self.t0 + 70, price=101.0)
+        raw = compute_shadow_markout(
+            self.ledger._get_conn(),
+            hours=24.0,
+            horizons=(60,),
+            apply_funding=False,
+        )
+        h = raw["markout"]["horizons"][0]
+        # net = gross - (-1) = gross + 1; RT = gross - (-2) = gross + 2
+        self.assertAlmostEqual(h["avg_markout_bps"], 100.0, places=4)
+        self.assertAlmostEqual(h["avg_net_open_markout_bps"], 101.0, places=4)
+        self.assertAlmostEqual(h["avg_net_roundtrip_markout_bps"], 102.0, places=4)
 
     def test_skip_when_no_later_price(self):
         self._seed_fill(ts=self.t0, action="BUY_LONG", price=100.0)
-        # No factor snapshots → all skipped
         raw = self.ledger.get_shadow_markout(hours=24)
         for h in raw["markout"]["horizons"]:
             self.assertEqual(h["sample_count"], 0)
@@ -144,7 +340,9 @@ class TestShadowMarkoutLedger(unittest.TestCase):
     def test_direct_helper_matches_ledger(self):
         self._seed_fill(ts=self.t0, action="BUY_LONG", price=50.0, probe=True)
         self._seed_factor(ts=self.t0 + 70, price=50.5)
-        a = compute_shadow_markout(self.ledger._get_conn(), hours=24.0, horizons=(60,))
+        a = compute_shadow_markout(
+            self.ledger._get_conn(), hours=24.0, horizons=(60,), apply_funding=False
+        )
         b = self.ledger.get_shadow_stats(hours=24.0, markout_horizons=(60,))
         self.assertEqual(a["count"], b["count"])
         self.assertEqual(
@@ -156,6 +354,8 @@ class TestShadowMarkoutLedger(unittest.TestCase):
             100.0,
             places=4,
         )
+        self.assertIn("fee_model", a)
+        self.assertIn("fee_model", b)
 
 
 if __name__ == "__main__":

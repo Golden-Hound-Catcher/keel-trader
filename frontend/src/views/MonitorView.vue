@@ -319,7 +319,7 @@ const shadowProbeCount = computed(() => {
   const n = shadowStats.value?.probe_count
   return typeof n === 'number' && Number.isFinite(n) ? n : 0
 })
-/** Q3.2 probe markout chip — prefer 300s then 900s/60s; soft-fail if nest absent. */
+/** Q3.2/Q3.3 probe markout chip — prefer net roundtrip when present; soft-fail. */
 const shadowProbeMarkoutChip = computed(() => {
   const horizons = shadowStats.value?.markout?.horizons
   if (!Array.isArray(horizons) || !horizons.length) return null
@@ -336,19 +336,32 @@ const shadowProbeMarkoutChip = computed(() => {
     best = horizons.find((x) => x && Number(x.probe_sample_count || 0) > 0) || null
   }
   if (!best) return null
-  const wr = best.probe_win_rate
-  const avg = best.probe_avg_markout_bps
+  const useNet =
+    typeof best.probe_win_rate_net_roundtrip === 'number' ||
+    typeof best.probe_avg_net_roundtrip_markout_bps === 'number'
+  const wr = useNet ? best.probe_win_rate_net_roundtrip : best.probe_win_rate
+  const avg = useNet
+    ? best.probe_avg_net_roundtrip_markout_bps
+    : best.probe_avg_markout_bps
   const wrLabel =
     typeof wr === 'number' && Number.isFinite(wr) ? `${(wr * 100).toFixed(0)}%` : '—'
   const avgLabel =
     typeof avg === 'number' && Number.isFinite(avg)
       ? `${avg >= 0 ? '+' : ''}${avg.toFixed(1)}bps`
       : '—'
+  const feeRole = shadowStats.value?.fee_model?.role
+  const rtFee = shadowStats.value?.fee_model?.round_trip_fee_bps
+  const netTag = useNet ? 'netRT' : 'gross'
   return {
     horizon: Number(best.horizon_seconds),
     samples: Number(best.probe_sample_count || 0),
     wrLabel,
     avgLabel,
+    netTag,
+    feeHint:
+      useNet && typeof rtFee === 'number'
+        ? `net RT (−${rtFee}bps ${feeRole || 'taker'}×2)`
+        : 'gross mid',
   }
 })
 function radarNearestLabel(nearest: string | null | undefined, action: string): string {
@@ -1279,8 +1292,8 @@ const configStrip = computed(() => {
               <span
                 v-if="shadowProbeMarkoutChip"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/40 text-amber-300"
-                :title="`probe markout @ ${shadowProbeMarkoutChip.horizon}s · n=${shadowProbeMarkoutChip.samples} · offline factor_snapshots`"
-              >mk {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }}</span>
+                :title="`probe markout @ ${shadowProbeMarkoutChip.horizon}s · n=${shadowProbeMarkoutChip.samples} · ${shadowProbeMarkoutChip.feeHint} · offline`"
+              >mk {{ shadowProbeMarkoutChip.netTag }} {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }}</span>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
               <div>
@@ -1344,8 +1357,8 @@ const configStrip = computed(() => {
               <span
                 v-if="shadowProbeMarkoutChip"
                 class="text-amber-300/90 tabular-nums"
-                :title="`probe markout @ ${shadowProbeMarkoutChip.horizon}s · n=${shadowProbeMarkoutChip.samples} · win_rate / avg (offline factor_snapshots)`"
-              >probe mk {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }} ({{ shadowProbeMarkoutChip.horizon }}s)</span>
+                :title="`probe markout @ ${shadowProbeMarkoutChip.horizon}s · n=${shadowProbeMarkoutChip.samples} · ${shadowProbeMarkoutChip.feeHint} · win_rate / avg`"
+              >probe mk {{ shadowProbeMarkoutChip.netTag }} {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }} ({{ shadowProbeMarkoutChip.horizon }}s)</span>
               <span v-if="shadowStatsByAction" class="truncate" :title="shadowStatsByAction">{{ shadowStatsByAction }}</span>
               <span v-if="shadowStats.last_timestamp" class="text-[#707E94]">last {{ fmtTs(shadowStats.last_timestamp) }}</span>
               <span v-else class="text-[#707E94]">no fills</span>
