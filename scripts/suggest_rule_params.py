@@ -6,8 +6,17 @@ Finds modest RSI / volume / rsi_relax settings that produce some non-WAIT
 fires with edge_hint_bps ≥ OKX taker round-trip (~10 bps) without flooding
 the cohort (default fire-rate cap 25%). **Does not write .env** — recommend only.
 
+Supports **per-instrument** search (multi-inst observe often differs by symbol):
+
   PYTHONPATH=. python scripts/suggest_rule_params.py \\
     --db data/keel_ledger.db --hours 168 --market-source okx_public
+
+  PYTHONPATH=. python scripts/suggest_rule_params.py \\
+    --db data/keel_ledger.db --hours 168 --market-source okx_public \\
+    --inst-id BTC-USDT-SWAP --inst-id ETH-USDT-SWAP --inst-id SOL-USDT-SWAP
+
+  PYTHONPATH=. python scripts/suggest_rule_params.py \\
+    --db data/keel_ledger.db --all-instruments --hours 168
 
   PYTHONPATH=. python scripts/suggest_rule_params.py \\
     --from-ledger /tmp/decisions.jsonl --hurdle-bps 10 --out /tmp/suggest.json
@@ -43,11 +52,21 @@ from keel.ledger.decision_export import load_export_path  # noqa: E402
 from keel.ledger.rule_suggest import (  # noqa: E402
     ComboEval,
     default_grid,
+    distinct_inst_ids,
+    filter_rows_by_inst_ids,
     grid_search,
+    grid_search_per_instrument,
+    parse_inst_id_args,
+    rank_instruments_by_fee_clearing,
+    summarize_inst_best,
 )
 
 
-def _load_rows(args: argparse.Namespace) -> tuple[list[dict], str]:
+def _load_rows(
+    args: argparse.Namespace,
+    *,
+    inst_ids: list[str] | None,
+) -> tuple[list[dict], str]:
     if args.from_ledger is not None and args.db is not None:
         raise SystemExit("error: use either --from-ledger or --db, not both")
 
@@ -55,6 +74,8 @@ def _load_rows(args: argparse.Namespace) -> tuple[list[dict], str]:
         if not args.from_ledger.is_file():
             raise SystemExit(f"error: export not found: {args.from_ledger}")
         rows = load_export_path(args.from_ledger)
+        if inst_ids:
+            rows = filter_rows_by_inst_ids(rows, inst_ids)
         return rows, f"file:{args.from_ledger}"
 
     db = args.db if args.db is not None else _ROOT / "data" / "keel_ledger.db"
@@ -65,12 +86,15 @@ def _load_rows(args: argparse.Namespace) -> tuple[list[dict], str]:
         rows = ledger.export_decisions(
             hours=float(args.hours),
             market_source=args.market_source,
+            inst_ids=inst_ids if inst_ids else None,
             limit=int(args.limit),
             include_factors=True,
         )
     finally:
         ledger.close()
     source = f"db:{db} hours={args.hours} market_source={args.market_source}"
+    if inst_ids:
+        source += f" inst_ids={','.join(inst_ids)}"
     return rows, source
 
 
@@ -89,6 +113,60 @@ def _print_eval(rank: int, ev: ComboEval, *, hurdle_bps: float) -> None:
         f"actions={ev.actions}"
     )
     print(f"    missing_top={top_miss}")
+
+
+def _print_recommended(ranked: list[ComboEval], *, hurdle_bps: float, max_fire_rate: float) -> None:
+    under = [e for e in ranked if not e.over_fire_cap and e.fires_edge_ge_hurdle > 0]
+    if under:
+        best = under[0]
+        c = best.combo
+        print(
+            "recommended (manual .env only — script does not write): "
+            f"KEEL_RULE_RSI_LONG_MAX={c.rsi_long_max} "
+            f"KEEL_RULE_RSI_SHORT_MIN={c.rsi_short_min} "
+            f"KEEL_RULE_MIN_VOLUME_RATIO={c.min_vol} "
+            f"KEEL_RULE_RSI_RELAX_ENABLE={'1' if c.rsi_relax else '0'}"
+        )
+        print(
+            f"  rationale: fires_edge>={hurdle_bps:g}bps="
+            f"{best.fires_edge_ge_hurdle}, fire_rate={100.0 * best.fire_rate:.1f}% "
+            f"(cap {100.0 * max_fire_rate:.0f}%), "
+            f"vol_ok_only_misses={best.volume_ok_only_misses}"
+        )
+    else:
+        any_fire = [e for e in ranked if e.fire_count > 0 and not e.over_fire_cap]
+        if any_fire:
+            print(
+                "note: some under-cap fires exist but none cleared "
+                f"edge_hint_bps>={hurdle_bps:g}; prefer observe / wider ATR "
+                "rather than blindly setting RSI short_min=40"
+            )
+        else:
+            print(
+                "note: no under-cap non-WAIT fires in this grid — keep observing; "
+                "do not blindly set RSI short_min=40"
+            )
+
+
+def _resolve_inst_mode(args: argparse.Namespace) -> tuple[bool, list[str]]:
+    """
+    Returns (per_instrument_mode, selected_inst_ids).
+
+    selected_inst_ids empty + per_instrument True → discover from cohort
+    (--all-instruments). selected_inst_ids empty + per_instrument False →
+    pooled legacy search.
+    """
+    parsed = parse_inst_id_args(args.inst_id)
+    if args.all_instruments and parsed:
+        raise SystemExit("error: use either --all-instruments or --inst-id, not both")
+    if args.all_instruments:
+        return True, []
+    if len(parsed) > 1:
+        return True, parsed
+    if len(parsed) == 1:
+        # Single instrument: still filter, but one search (per-inst header).
+        return True, parsed
+    return False, []
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -118,6 +196,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--limit", type=int, default=5000, help="Max rows when using --db")
     p.add_argument(
+        "--inst-id",
+        action="append",
+        default=None,
+        help=(
+            "Instrument filter (repeatable and/or comma-separated). "
+            "With 1+ ids, runs grid per instrument."
+        ),
+    )
+    p.add_argument(
+        "--all-instruments",
+        action="store_true",
+        help="Discover distinct inst_ids in the cohort and search each separately",
+    )
+    p.add_argument(
         "--hurdle-bps",
         type=float,
         default=10.0,
@@ -133,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         "--top",
         type=int,
         default=5,
-        help="How many ranked recommendations to print (default 5)",
+        help="How many ranked recommendations to print per instrument (default 5)",
     )
     p.add_argument(
         "--no-rsi-relax-grid",
@@ -152,27 +244,38 @@ def main(argv: list[str] | None = None) -> int:
     if args.from_ledger is None and args.db is None:
         args.db = _ROOT / "data" / "keel_ledger.db"
 
-    rows, source = _load_rows(args)
+    per_inst, selected = _resolve_inst_mode(args)
+    # For DB export: when discovering all instruments, load unfiltered then split.
+    load_filter = selected if selected else None
+    rows, source = _load_rows(args, inst_ids=load_filter)
     include_relax = not args.no_rsi_relax_grid
     grid = default_grid(include_rsi_relax=include_relax)
+    top_n = max(1, int(args.top))
+    hurdle = float(args.hurdle_bps)
+    max_fr = float(args.max_fire_rate)
 
+    mode = "per-instrument" if per_inst else "pooled"
     print(
         f"Keel R4 suggest_rule_params (offline, no .env write) source={source} "
-        f"cohort_n={len(rows)} grid_n={len(grid)} hurdle_bps={args.hurdle_bps} "
-        f"max_fire_rate={args.max_fire_rate}"
+        f"mode={mode} cohort_n={len(rows)} grid_n={len(grid)} "
+        f"hurdle_bps={args.hurdle_bps} max_fire_rate={args.max_fire_rate}"
     )
+
     if not rows:
         print(
             "warning: empty cohort — nothing to search "
-            "(check --hours / --market-source / export path)"
+            "(check --hours / --market-source / --inst-id / export path)"
         )
         if args.out is not None:
             payload = {
                 "source": source,
+                "mode": mode,
                 "cohort_n": 0,
                 "hurdle_bps": args.hurdle_bps,
                 "max_fire_rate": args.max_fire_rate,
                 "recommendations": [],
+                "by_instrument": {},
+                "closest_to_fee_clearing": [],
                 "note": "empty cohort",
             }
             args.out.write_text(
@@ -183,59 +286,109 @@ def main(argv: list[str] | None = None) -> int:
         print("done")
         return 0
 
-    ranked = grid_search(
+    if not per_inst:
+        ranked = grid_search(
+            rows,
+            grid=grid,
+            hurdle_bps=hurdle,
+            max_fire_rate=max_fr,
+            include_rsi_relax=include_relax,
+        )
+        print(f"top {min(top_n, len(ranked))} recommendations (ranked):")
+        for i, ev in enumerate(ranked[:top_n], start=1):
+            _print_eval(i, ev, hurdle_bps=hurdle)
+        _print_recommended(ranked, hurdle_bps=hurdle, max_fire_rate=max_fr)
+
+        if args.out is not None:
+            payload = {
+                "source": source,
+                "mode": mode,
+                "cohort_n": len(rows),
+                "hurdle_bps": args.hurdle_bps,
+                "max_fire_rate": args.max_fire_rate,
+                "grid_n": len(grid),
+                "recommendations": [e.as_dict() for e in ranked],
+                "top": [e.as_dict() for e in ranked[:top_n]],
+            }
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            print(f"wrote {args.out}")
+        print("done")
+        return 0
+
+    # Per-instrument mode
+    targets = selected if selected else distinct_inst_ids(rows)
+    if not targets:
+        print("warning: no inst_ids found in cohort")
+        print("done")
+        return 0
+
+    print(f"instruments ({len(targets)}): {', '.join(targets)}")
+    by_inst = grid_search_per_instrument(
         rows,
+        inst_ids=targets,
         grid=grid,
-        hurdle_bps=float(args.hurdle_bps),
-        max_fire_rate=float(args.max_fire_rate),
+        hurdle_bps=hurdle,
+        max_fire_rate=max_fr,
         include_rsi_relax=include_relax,
     )
 
-    top_n = max(1, int(args.top))
-    print(f"top {min(top_n, len(ranked))} recommendations (ranked):")
-    for i, ev in enumerate(ranked[:top_n], start=1):
-        _print_eval(i, ev, hurdle_bps=float(args.hurdle_bps))
+    summaries = []
+    for iid in targets:
+        ranked = by_inst.get(iid) or []
+        subset_n = len(filter_rows_by_inst_ids(rows, [iid]))
+        print(f"\n=== {iid} cohort_n={subset_n} ===")
+        if not ranked:
+            print("  (empty cohort — skipped)")
+            summaries.append(summarize_inst_best(iid, [], max_fire_rate=max_fr))
+            continue
+        print(f"top {min(top_n, len(ranked))} recommendations:")
+        for i, ev in enumerate(ranked[:top_n], start=1):
+            _print_eval(i, ev, hurdle_bps=hurdle)
+        _print_recommended(ranked, hurdle_bps=hurdle, max_fire_rate=max_fr)
+        summaries.append(summarize_inst_best(iid, ranked, max_fire_rate=max_fr))
 
-    under = [e for e in ranked if not e.over_fire_cap and e.fires_edge_ge_hurdle > 0]
-    if under:
-        best = under[0]
-        c = best.combo
-        print(
-            "recommended (manual .env only — script does not write): "
-            f"KEEL_RULE_RSI_LONG_MAX={c.rsi_long_max} "
-            f"KEEL_RULE_RSI_SHORT_MIN={c.rsi_short_min} "
-            f"KEEL_RULE_MIN_VOLUME_RATIO={c.min_vol} "
-            f"KEEL_RULE_RSI_RELAX_ENABLE={'1' if c.rsi_relax else '0'}"
-        )
-        print(
-            f"  rationale: fires_edge>={args.hurdle_bps:g}bps="
-            f"{best.fires_edge_ge_hurdle}, fire_rate={100.0 * best.fire_rate:.1f}% "
-            f"(cap {100.0 * args.max_fire_rate:.0f}%), "
-            f"vol_ok_only_misses={best.volume_ok_only_misses}"
-        )
-    else:
-        any_fire = [e for e in ranked if e.fire_count > 0 and not e.over_fire_cap]
-        if any_fire:
-            print(
-                "note: some under-cap fires exist but none cleared "
-                f"edge_hint_bps>={args.hurdle_bps:g}; prefer observe / wider ATR "
-                "rather than blindly setting RSI short_min=40"
+    closest = rank_instruments_by_fee_clearing(summaries)
+    print("\n=== combined: closest to fee-clearing fires ===")
+    for rank, s in enumerate(closest, start=1):
+        best = s.best
+        combo_s = "n/a"
+        if best is not None:
+            c = best.combo
+            combo_s = (
+                f"rsi_long_max={c.rsi_long_max} rsi_short_min={c.rsi_short_min} "
+                f"min_vol={c.min_vol} rsi_relax={'on' if c.rsi_relax else 'off'}"
             )
-        else:
-            print(
-                "note: no under-cap non-WAIT fires in this grid — keep observing; "
-                "do not blindly set RSI short_min=40"
-            )
+        flag = "FEE_CLEAR" if s.has_fee_clearing_fire else "no_fee_clear"
+        print(
+            f"#{rank} {s.inst_id} [{flag}] cohort_n={s.cohort_n} "
+            f"fires_edge>={hurdle:g}bps={s.fires_edge_ge_hurdle} "
+            f"edge_ge_hurdle_rate={s.edge_ge_hurdle_rate:.3f} "
+            f"fire_rate={100.0 * s.fire_rate:.1f}% "
+            f"vol_ok_only={s.volume_ok_only_misses} best=({combo_s})"
+        )
 
     if args.out is not None:
         payload = {
             "source": source,
+            "mode": mode,
             "cohort_n": len(rows),
+            "instruments": targets,
             "hurdle_bps": args.hurdle_bps,
             "max_fire_rate": args.max_fire_rate,
             "grid_n": len(grid),
-            "recommendations": [e.as_dict() for e in ranked],
-            "top": [e.as_dict() for e in ranked[:top_n]],
+            "by_instrument": {
+                iid: {
+                    "cohort_n": len(filter_rows_by_inst_ids(rows, [iid])),
+                    "recommendations": [e.as_dict() for e in (by_inst.get(iid) or [])],
+                    "top": [e.as_dict() for e in (by_inst.get(iid) or [])[:top_n]],
+                }
+                for iid in targets
+            },
+            "closest_to_fee_clearing": [s.as_dict() for s in closest],
         }
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(

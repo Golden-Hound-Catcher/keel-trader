@@ -1,8 +1,10 @@
 """
 Phase R4: offline fee-aware Rule param suggestions from a ledger cohort.
 
-Grid-search helpers + ranking. Does **not** write ``.env`` — recommend only.
-Fee hurdle default matches OKX Regular taker round-trip (~10 bps).
+Grid-search helpers + ranking, including **per-instrument** cohort filters
+(multi-inst observe often shows different skip profiles). Does **not** write
+``.env`` — recommend only. Fee hurdle default matches OKX Regular taker
+round-trip (~10 bps).
 """
 from __future__ import annotations
 
@@ -275,3 +277,165 @@ def grid_search(
         for c in combos
     ]
     return rank_combos(evals, max_fire_rate=max_fire_rate)
+
+
+def row_inst_id(row: dict[str, Any]) -> str:
+    """Normalize ``inst_id`` / ``instrument`` from an export or replay row."""
+    raw = row.get("inst_id") if row.get("inst_id") not in (None, "") else row.get("instrument")
+    return str(raw or "").strip()
+
+
+def parse_inst_id_args(values: Sequence[str] | None) -> list[str]:
+    """
+    Parse CLI ``--inst-id`` values: repeatable flags and/or comma-separated lists.
+
+    Empty tokens dropped; order preserved; duplicates removed.
+    """
+    if not values:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in values:
+        for part in str(raw).split(","):
+            inst = part.strip()
+            if not inst or inst in seen:
+                continue
+            seen.add(inst)
+            out.append(inst)
+    return out
+
+
+def distinct_inst_ids(rows: Iterable[dict[str, Any]]) -> list[str]:
+    """Unique instrument ids in cohort order-of-first-seen, then sorted stably."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in rows:
+        iid = row_inst_id(row)
+        if not iid or iid in seen:
+            continue
+        seen.add(iid)
+        out.append(iid)
+    return sorted(out)
+
+
+def filter_rows_by_inst_ids(
+    rows: Sequence[dict[str, Any]],
+    inst_ids: Sequence[str] | None,
+) -> list[dict[str, Any]]:
+    """
+    Keep rows whose ``inst_id`` is in ``inst_ids``.
+
+    ``None`` / empty ``inst_ids`` → return a shallow copy of all rows (no filter).
+    """
+    if not inst_ids:
+        return list(rows)
+    allow = {str(i).strip() for i in inst_ids if str(i).strip()}
+    if not allow:
+        return list(rows)
+    return [r for r in rows if row_inst_id(r) in allow]
+
+
+@dataclass(frozen=True)
+class InstSuggestSummary:
+    """Best under-cap combo for one instrument (for cross-inst comparison)."""
+
+    inst_id: str
+    cohort_n: int
+    best: ComboEval | None
+    fires_edge_ge_hurdle: int = 0
+    fire_rate: float = 0.0
+    edge_ge_hurdle_rate: float = 0.0
+    volume_ok_only_misses: int = 0
+    has_fee_clearing_fire: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "inst_id": self.inst_id,
+            "cohort_n": self.cohort_n,
+            "fires_edge_ge_hurdle": self.fires_edge_ge_hurdle,
+            "fire_rate": self.fire_rate,
+            "edge_ge_hurdle_rate": self.edge_ge_hurdle_rate,
+            "volume_ok_only_misses": self.volume_ok_only_misses,
+            "has_fee_clearing_fire": self.has_fee_clearing_fire,
+            "best": self.best.as_dict() if self.best is not None else None,
+        }
+
+
+def summarize_inst_best(
+    inst_id: str,
+    ranked: Sequence[ComboEval],
+    *,
+    max_fire_rate: float = 0.25,
+) -> InstSuggestSummary:
+    """Pick the best under-cap eval for ``inst_id`` (or top overall if none)."""
+    under = [e for e in ranked if not e.over_fire_cap]
+    pool = under if under else list(ranked)
+    best = pool[0] if pool else None
+    if best is None:
+        return InstSuggestSummary(inst_id=inst_id, cohort_n=0, best=None)
+    return InstSuggestSummary(
+        inst_id=inst_id,
+        cohort_n=best.cohort_n,
+        best=best,
+        fires_edge_ge_hurdle=best.fires_edge_ge_hurdle,
+        fire_rate=best.fire_rate,
+        edge_ge_hurdle_rate=best.edge_ge_hurdle_rate,
+        volume_ok_only_misses=best.volume_ok_only_misses,
+        has_fee_clearing_fire=best.fires_edge_ge_hurdle > 0
+        and best.fire_rate <= max_fire_rate,
+    )
+
+
+def rank_instruments_by_fee_clearing(
+    summaries: Sequence[InstSuggestSummary],
+) -> list[InstSuggestSummary]:
+    """
+    Rank symbols by closeness to fee-clearing fires.
+
+    Prefer: fee-clearing under-cap fires → higher edge-hurdle fire count →
+    higher edge_ge_hurdle_rate → fewer volume_ok-only misses → larger cohort.
+    """
+
+    def key(s: InstSuggestSummary) -> tuple:
+        return (
+            0 if s.has_fee_clearing_fire else 1,
+            -s.fires_edge_ge_hurdle,
+            -s.edge_ge_hurdle_rate,
+            s.volume_ok_only_misses,
+            -s.cohort_n,
+            s.inst_id,
+        )
+
+    return sorted(summaries, key=key)
+
+
+def grid_search_per_instrument(
+    rows: list[dict[str, Any]],
+    *,
+    inst_ids: Sequence[str] | None = None,
+    grid: Sequence[RuleParamCombo] | None = None,
+    hurdle_bps: float = 10.0,
+    max_fire_rate: float = 0.25,
+    include_rsi_relax: bool = True,
+) -> dict[str, list[ComboEval]]:
+    """
+    Run ``grid_search`` independently on each instrument's filtered cohort.
+
+    When ``inst_ids`` is None/empty, discovers distinct ids from ``rows``.
+    Instruments with an empty filtered cohort still appear with an empty list.
+    """
+    targets = list(inst_ids) if inst_ids else distinct_inst_ids(rows)
+    out: dict[str, list[ComboEval]] = {}
+    for iid in targets:
+        subset = filter_rows_by_inst_ids(rows, [iid])
+        if not subset:
+            out[iid] = []
+            continue
+        out[iid] = grid_search(
+            subset,
+            grid=grid,
+            hurdle_bps=hurdle_bps,
+            max_fire_rate=max_fire_rate,
+            include_rsi_relax=include_rsi_relax,
+        )
+    return out

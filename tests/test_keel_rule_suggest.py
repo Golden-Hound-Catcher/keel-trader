@@ -18,8 +18,13 @@ from keel.ledger.rule_suggest import (
     RuleParamCombo,
     default_grid,
     evaluate_results,
+    filter_rows_by_inst_ids,
     grid_search,
+    grid_search_per_instrument,
+    parse_inst_id_args,
     rank_combos,
+    rank_instruments_by_fee_clearing,
+    summarize_inst_best,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -320,6 +325,284 @@ class TestSuggestScript(unittest.TestCase):
         self.assertGreaterEqual(len(payload["top"]), 1)
         self.assertIn("combo", payload["top"][0])
 
+
+
+
+class TestInstFilterAndParse(unittest.TestCase):
+    def test_parse_inst_id_args_repeatable_and_comma(self):
+        self.assertEqual(parse_inst_id_args(None), [])
+        self.assertEqual(
+            parse_inst_id_args(["BTC-USDT-SWAP", "ETH-USDT-SWAP"]),
+            ["BTC-USDT-SWAP", "ETH-USDT-SWAP"],
+        )
+        self.assertEqual(
+            parse_inst_id_args(["BTC-USDT-SWAP,ETH-USDT-SWAP", "SOL-USDT-SWAP"]),
+            ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"],
+        )
+        # dedupe preserve order
+        self.assertEqual(
+            parse_inst_id_args(["BTC-USDT-SWAP", "BTC-USDT-SWAP,ETH-USDT-SWAP"]),
+            ["BTC-USDT-SWAP", "ETH-USDT-SWAP"],
+        )
+
+    def test_filter_rows_by_inst_ids(self):
+        rows = [
+            {"inst_id": "BTC-USDT-SWAP", "n": 1},
+            {"instrument": "ETH-USDT-SWAP", "n": 2},
+            {"inst_id": "SOL-USDT-SWAP", "n": 3},
+            {"inst_id": "BTC-USDT-SWAP", "n": 4},
+        ]
+        self.assertEqual(len(filter_rows_by_inst_ids(rows, None)), 4)
+        self.assertEqual(len(filter_rows_by_inst_ids(rows, [])), 4)
+        btc = filter_rows_by_inst_ids(rows, ["BTC-USDT-SWAP"])
+        self.assertEqual([r["n"] for r in btc], [1, 4])
+        two = filter_rows_by_inst_ids(rows, ["ETH-USDT-SWAP", "SOL-USDT-SWAP"])
+        self.assertEqual([r["n"] for r in two], [2, 3])
+
+
+class TestPerInstRankAndGrid(unittest.TestCase):
+    def _eval(
+        self,
+        *,
+        fires_edge: int,
+        fire_count: int,
+        cohort_n: int,
+        vol_only: int = 0,
+        rsi_long: float = 45.0,
+    ) -> ComboEval:
+        fire_rate = fire_count / cohort_n if cohort_n else 0.0
+        return ComboEval(
+            combo=RuleParamCombo(rsi_long, 55.0, 0.5, True),
+            cohort_n=cohort_n,
+            replayed=cohort_n,
+            skipped=0,
+            actions={"BUY_LONG": fire_count, "WAIT": cohort_n - fire_count},
+            fire_count=fire_count,
+            fire_rate=fire_rate,
+            fires_edge_ge_hurdle=fires_edge,
+            edge_ge_hurdle_count=fires_edge,
+            edge_ge_hurdle_rate=fires_edge / cohort_n if cohort_n else 0.0,
+            volume_ok_only_misses=vol_only,
+            over_fire_cap=fire_rate > 0.25,
+        )
+
+    def test_rank_instruments_prefers_fee_clearing(self):
+        btc = summarize_inst_best(
+            "BTC-USDT-SWAP",
+            [self._eval(fires_edge=0, fire_count=0, cohort_n=20, vol_only=3)],
+        )
+        eth = summarize_inst_best(
+            "ETH-USDT-SWAP",
+            [self._eval(fires_edge=2, fire_count=2, cohort_n=20, vol_only=1)],
+        )
+        sol = summarize_inst_best(
+            "SOL-USDT-SWAP",
+            [self._eval(fires_edge=0, fire_count=0, cohort_n=10, vol_only=8)],
+        )
+        ranked = rank_instruments_by_fee_clearing([btc, sol, eth])
+        self.assertEqual(ranked[0].inst_id, "ETH-USDT-SWAP")
+        self.assertTrue(ranked[0].has_fee_clearing_fire)
+        self.assertEqual(ranked[1].inst_id, "BTC-USDT-SWAP")  # fewer vol misses
+        self.assertEqual(ranked[2].inst_id, "SOL-USDT-SWAP")
+
+    def test_grid_search_per_instrument_filters(self):
+        # BTC near-long fires with long_max>=45; ETH mid RSI never fires on this grid
+        btc_row = {
+            "inst_id": "BTC-USDT-SWAP",
+            "timestamp": time.time(),
+            "action": "WAIT",
+            "factors": {
+                "price": 50000.0,
+                "atr_14": 500.0,
+                "rsi_14": 44.0,
+                "ema_9": 50100.0,
+                "ema_21": 50000.0,
+                "macd_histogram": 1.0,
+                "trend_15m": "bullish",
+                "volume_ratio": 0.8,
+                "data_valid": True,
+            },
+            "calculus_data": {"market_source": "okx_public"},
+            "replayable": True,
+        }
+        eth_row = {
+            **btc_row,
+            "inst_id": "ETH-USDT-SWAP",
+            "factors": {
+                **btc_row["factors"],
+                "rsi_14": 50.0,
+                "trend_15m": "neutral",
+                "macd_histogram": 0.0,
+                "volume_ratio": 0.1,
+            },
+        }
+        # Pad so 1 BTC fire stays under 25%; ETH rows never fire on this grid
+        btc_pads = [
+            {
+                **btc_row,
+                "inst_id": "BTC-USDT-SWAP",
+                "timestamp": time.time() + i + 1,
+                "factors": {
+                    **btc_row["factors"],
+                    "rsi_14": 50.0,
+                    "trend_15m": "neutral",
+                    "macd_histogram": 0.0,
+                    "volume_ratio": 0.1,
+                },
+            }
+            for i in range(7)
+        ]
+        eth_rows = [{**eth_row, "timestamp": time.time() + i + 20} for i in range(4)]
+        rows = [btc_row] + btc_pads + eth_rows
+        grid = [
+            RuleParamCombo(40.0, 60.0, 0.5, False),
+            RuleParamCombo(45.0, 55.0, 0.5, True),
+        ]
+        by_inst = grid_search_per_instrument(
+            rows,
+            inst_ids=["BTC-USDT-SWAP", "ETH-USDT-SWAP"],
+            grid=grid,
+            hurdle_bps=10.0,
+            max_fire_rate=0.25,
+        )
+        self.assertIn("BTC-USDT-SWAP", by_inst)
+        self.assertIn("ETH-USDT-SWAP", by_inst)
+        self.assertEqual(len(by_inst["BTC-USDT-SWAP"]), 2)
+        self.assertEqual(len(by_inst["ETH-USDT-SWAP"]), 2)
+        self.assertGreaterEqual(by_inst["BTC-USDT-SWAP"][0].fire_count, 1)
+        self.assertFalse(by_inst["BTC-USDT-SWAP"][0].over_fire_cap)
+        self.assertEqual(by_inst["ETH-USDT-SWAP"][0].fire_count, 0)
+        # Filtering: BTC pads + signal = 8; ETH = 4
+        self.assertEqual(by_inst["BTC-USDT-SWAP"][0].cohort_n, 8)
+        self.assertEqual(by_inst["ETH-USDT-SWAP"][0].cohort_n, 4)
+
+
+class TestSuggestScriptPerInst(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.db_path = Path(self.temp_dir) / "ledger.db"
+        self.ledger = KeelLedger(self.db_path)
+        ts = time.time()
+        for iid, rsi in (("BTC-USDT-SWAP", 44.0), ("ETH-USDT-SWAP", 50.0)):
+            self.ledger.record_factor_snapshot(
+                FactorSnapshot(
+                    timestamp=ts,
+                    inst_id=iid,
+                    price=50000.0,
+                    rsi_14=rsi,
+                    ema_9=50100.0,
+                    ema_21=50000.0,
+                    atr_14=500.0,
+                    macd_histogram=1.0 if iid.startswith("BTC") else 0.0,
+                    trend_15m="bullish" if iid.startswith("BTC") else "neutral",
+                    volume_ratio=0.8 if iid.startswith("BTC") else 0.1,
+                    payload={"data_valid": True, "data_quality_reason": "okx_public"},
+                )
+            )
+            self.ledger.record_decision(
+                DecisionRecord(
+                    timestamp=ts,
+                    inst_id=iid,
+                    action="WAIT",
+                    policy_name="rule",
+                    calculus_data={
+                        "market_source": "okx_public",
+                        "rsi_14": rsi,
+                        "trend_15m": "bullish" if iid.startswith("BTC") else "neutral",
+                        "signal_diag": {
+                            "data_valid": True,
+                            "rsi_14": rsi,
+                            "volume_ratio": 0.8 if iid.startswith("BTC") else 0.1,
+                            "ema_9": 50100.0,
+                            "ema_21": 50000.0,
+                            "macd_histogram": 1.0 if iid.startswith("BTC") else 0.0,
+                            "trend_15m": "bullish" if iid.startswith("BTC") else "neutral",
+                            "nearest": "long" if iid.startswith("BTC") else "none",
+                            "missing": ["rsi_long_ok"],
+                        },
+                    },
+                )
+            )
+        self.ledger.close()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_script_per_inst_and_filter(self):
+        script = REPO_ROOT / "scripts" / "suggest_rule_params.py"
+        out = Path(self.temp_dir) / "suggest_per.json"
+        env = _clear_okx_env(os.environ)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--db",
+                str(self.db_path),
+                "--hours",
+                "1",
+                "--market-source",
+                "okx_public",
+                "--inst-id",
+                "BTC-USDT-SWAP,ETH-USDT-SWAP",
+                "--hurdle-bps",
+                "10",
+                "--top",
+                "2",
+                "--no-rsi-relax-grid",
+                "--out",
+                str(out),
+            ],
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+        self.assertIn("per-instrument", proc.stdout)
+        self.assertIn("BTC-USDT-SWAP", proc.stdout)
+        self.assertIn("ETH-USDT-SWAP", proc.stdout)
+        self.assertIn("closest to fee-clearing", proc.stdout)
+        self.assertIn("done", proc.stdout)
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(payload["mode"], "per-instrument")
+        self.assertIn("BTC-USDT-SWAP", payload["by_instrument"])
+        self.assertIn("ETH-USDT-SWAP", payload["by_instrument"])
+        self.assertEqual(payload["by_instrument"]["BTC-USDT-SWAP"]["cohort_n"], 1)
+        self.assertEqual(payload["by_instrument"]["ETH-USDT-SWAP"]["cohort_n"], 1)
+        self.assertEqual(len(payload["closest_to_fee_clearing"]), 2)
+
+    def test_script_filters_single_inst_excludes_other(self):
+        script = REPO_ROOT / "scripts" / "suggest_rule_params.py"
+        out = Path(self.temp_dir) / "suggest_btc.json"
+        env = _clear_okx_env(os.environ)
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--db",
+                str(self.db_path),
+                "--hours",
+                "1",
+                "--inst-id",
+                "BTC-USDT-SWAP",
+                "--no-rsi-relax-grid",
+                "--top",
+                "1",
+                "--out",
+                str(out),
+            ],
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr or proc.stdout)
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(payload["instruments"], ["BTC-USDT-SWAP"])
+        self.assertNotIn("ETH-USDT-SWAP", payload["by_instrument"])
+        self.assertEqual(payload["by_instrument"]["BTC-USDT-SWAP"]["cohort_n"], 1)
 
 if __name__ == "__main__":
     unittest.main()

@@ -871,6 +871,7 @@ class KeelLedger:
         since: float | None = None,
         market_source: str | None = None,
         inst_id: str | None = None,
+        inst_ids: list[str] | tuple[str, ...] | None = None,
         limit: int = 5000,
         include_factors: bool = True,
     ) -> list[dict[str, Any]]:
@@ -880,6 +881,9 @@ class KeelLedger:
         Includes instrument, action, timestamp, market_source, signal_diag,
         calculus_data, policy_name, and (when available) a matched factor
         snapshot for RuleDecisionPolicy offline compare.
+
+        ``inst_id`` (single) or ``inst_ids`` (IN-list) filter the cohort;
+        when both are set, ``inst_ids`` takes precedence.
         """
         from keel.ledger.decision_export import (
             build_export_row,
@@ -893,15 +897,25 @@ class KeelLedger:
         ms_raw = (market_source or "any").strip().lower()
         ms_filter = ms_raw if ms_raw in ("okx_public", "synthetic") else None
 
+        ids: list[str] = []
+        if inst_ids is not None:
+            ids = [str(i).strip() for i in inst_ids if str(i).strip()]
+        elif inst_id is not None and str(inst_id).strip():
+            ids = [str(inst_id).strip()]
+
         conn = self._get_conn()
         query = "SELECT * FROM decisions WHERE 1=1"
         params: list[Any] = []
         if since is not None:
             query += " AND timestamp >= ?"
             params.append(float(since))
-        if inst_id is not None:
+        if len(ids) == 1:
             query += " AND inst_id = ?"
-            params.append(inst_id)
+            params.append(ids[0])
+        elif len(ids) > 1:
+            placeholders = ",".join("?" for _ in ids)
+            query += f" AND inst_id IN ({placeholders})"
+            params.extend(ids)
         if ms_filter:
             query += (
                 " AND calculus_data IS NOT NULL"
