@@ -42,9 +42,11 @@ class TestApiSchemas(unittest.TestCase):
             error_count=1,
             errors=[CycleError(inst_id="BTC-USDT-SWAP", error="timeout")],
             duration_ms=42,
+            market_source="synthetic",
         )
         self.assertEqual(m.mode, "paper")
         self.assertEqual(m.duration_ms, 42)
+        self.assertEqual(m.market_source, "synthetic")
         self.assertEqual(m.risk_denies, 1)
         self.assertEqual(m.risk_deny_reasons[0].gate, "kill_switch")
         self.assertEqual(m.error_count, 1)
@@ -159,8 +161,23 @@ class TestApiSchemas(unittest.TestCase):
             rsi_14=55.0,
             atr_14=1.0,
             macd=MacdBlock(line=0.1, signal=0.05, histogram=0.05),
+            data_quality_reason="okx_public",
         )
         self.assertEqual(fr.source, "ledger")
+        self.assertEqual(fr.data_quality_reason, "okx_public")
+
+    def test_factors_response_quality_optional(self):
+        fr = FactorsResponse(
+            inst_id="BTC-USDT-SWAP",
+            source="ledger",
+            price=100.0,
+            ema_9=99.0,
+            ema_21=98.0,
+            rsi_14=55.0,
+            atr_14=1.0,
+            macd=MacdBlock(line=0.1, signal=0.05, histogram=0.05),
+        )
+        self.assertIsNone(fr.data_quality_reason)
 
     def test_openapi_includes_typed_paths(self):
         client = TestClient(create_app())
@@ -184,6 +201,9 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("risk_deny_reasons", last_cycle_props)
         self.assertIn("error_count", last_cycle_props)
         self.assertIn("errors", last_cycle_props)
+        self.assertIn("market_source", last_cycle_props)
+        factors_props = comps["FactorsResponse"]["properties"]
+        self.assertIn("data_quality_reason", factors_props)
         self.assertIn("RiskDenyReason", comps)
         self.assertIn("CycleError", comps)
         self.assertIn("DecisionsResponse", comps)

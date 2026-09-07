@@ -179,6 +179,8 @@ PYTHONPATH=. python scripts/compare_policies_paper.py
 
 On OKX REST (demo or live), each worker cycle fetches **public** 15m (and 1h) candles via `keel.exchange.okx_public.fetch_candles` — no trading permission required. Paper path keeps synthetic candles. If the public fetch fails, the cycle logs a warning, falls back to synthetic, and still completes (`data_quality_reason` starts with `synthetic_fallback:`).
 
+Monitor/API show candle quality for live observation: Factors responses include `data_quality_reason` (ledger badge `ledger·okx` / `ledger·synth`); status `last_cycle.market_source` is `okx_public` | `synthetic` | `mixed` | `unknown`.
+
 Kill-switch (`KEEL_KILL_SWITCH=1`) still blocks order placement; **read-only API keys are enough** for this observation path (candles + factors + decisions). Orders still need trade-enabled keys and kill-switch off.
 
 ## Live（无模拟盘 key）

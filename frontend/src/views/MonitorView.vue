@@ -69,16 +69,53 @@ const factorRows = computed(() =>
   })),
 )
 
-function factorSourceLabel(source: string | undefined): string {
+function factorQualityShort(quality: string | null | undefined): string | null {
+  if (!quality) return null
+  const q = quality.toLowerCase()
+  if (q === 'okx_public') return 'okx'
+  if (q === 'synthetic' || q.startsWith('synthetic_fallback')) return 'synth'
+  if (q.length > 10) return `${q.slice(0, 8)}…`
+  return q
+}
+
+function factorSourceLabel(
+  source: string | undefined,
+  quality?: string | null,
+): string {
   if (!source) return '—'
   if (source === 'okx_public') return 'live'
-  if (source === 'ledger') return 'ledger'
+  if (source === 'ledger') {
+    const short = factorQualityShort(quality)
+    return short ? `ledger·${short}` : 'ledger'
+  }
   return source
 }
 
-function factorSourceClass(source: string | undefined): string {
+function factorSourceClass(
+  source: string | undefined,
+  quality?: string | null,
+): string {
   if (source === 'okx_public') return 'bg-cyan-500/15 text-cyan-400 border-cyan-500/40'
-  if (source === 'ledger') return 'bg-zinc-500/10 text-[#A8B3C7] border-zinc-500/30'
+  if (source === 'ledger') {
+    const short = factorQualityShort(quality)
+    if (short === 'okx') return 'bg-cyan-500/10 text-cyan-400/90 border-cyan-500/30'
+    if (short === 'synth') return 'bg-amber-500/10 text-amber-400/90 border-amber-500/30'
+    return 'bg-zinc-500/10 text-[#A8B3C7] border-zinc-500/30'
+  }
+  return 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'
+}
+
+function marketSourceLabel(src: string | null | undefined): string {
+  if (!src) return '—'
+  if (src === 'okx_public') return 'okx'
+  if (src === 'synthetic') return 'synth'
+  return src
+}
+
+function marketSourceClass(src: string | null | undefined): string {
+  if (src === 'okx_public') return 'bg-cyan-500/15 text-cyan-400 border-cyan-500/40'
+  if (src === 'synthetic') return 'bg-amber-500/15 text-amber-400 border-amber-500/40'
+  if (src === 'mixed') return 'bg-violet-500/15 text-violet-300 border-violet-500/40'
   return 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'
 }
 
@@ -762,6 +799,16 @@ const configStrip = computed(() => {
                 <div class="text-[#707E94]">Duration</div>
                 <div class="text-white">{{ lastCycle.duration_ms != null ? `${lastCycle.duration_ms} ms` : '—' }}</div>
               </div>
+              <div>
+                <div class="text-[#707E94]">Market source</div>
+                <div class="mt-0.5">
+                  <span
+                    class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                    :class="marketSourceClass(lastCycle.market_source)"
+                    :title="lastCycle.market_source || 'unknown'"
+                  >{{ marketSourceLabel(lastCycle.market_source) }}</span>
+                </div>
+              </div>
               <div class="md:col-span-2">
                 <div class="text-[#707E94]">Decisions</div>
                 <div class="text-cyan-400">{{ lastCycleActions || '—' }}</div>
@@ -1012,7 +1059,7 @@ const configStrip = computed(() => {
                   >{{ d.policy_name || '—' }}<span v-if="modulesPreview(d.prompt_modules)" class="text-[#707E94]"> · {{ modulesPreview(d.prompt_modules) }}</span></td>
                   <td class="py-2 pr-3">{{ fmt(d.confidence, 2) }}</td>
                   <td class="py-2 pr-3">{{ fmt(d.entry_price) }}</td>
-                  <td class="py-2 text-zinc-400 max-w-md truncate" :title="d.reason">{{ d.reason || '—' }}</td>
+                  <td class="py-2 text-zinc-400 max-w-lg line-clamp-2 whitespace-normal break-words" :title="d.reason">{{ d.reason || '—' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -1155,6 +1202,7 @@ const configStrip = computed(() => {
                   <th class="pb-2 pr-3">RSI14</th>
                   <th class="pb-2 pr-3">EMA9</th>
                   <th class="pb-2 pr-3">EMA21</th>
+                  <th class="pb-2 pr-3">VolΔ</th>
                   <th class="pb-2 pr-3">MACD hist</th>
                   <th class="pb-2">Trend / status</th>
                 </tr>
@@ -1165,13 +1213,15 @@ const configStrip = computed(() => {
                   <td class="py-2 pr-3">
                     <span
                       class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
-                      :class="factorSourceClass(row.f?.source)"
-                    >{{ factorSourceLabel(row.f?.source) }}</span>
+                      :class="factorSourceClass(row.f?.source, row.f?.data_quality_reason)"
+                      :title="row.f?.data_quality_reason || row.f?.source || ''"
+                    >{{ factorSourceLabel(row.f?.source, row.f?.data_quality_reason) }}</span>
                   </td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.price) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.rsi_14) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.ema_9) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.ema_21) }}</td>
+                  <td class="py-2 pr-3">{{ fmt(row.f?.volume_ratio, 2) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.macd?.histogram) }}</td>
                   <td class="py-2">
                     <span v-if="row.loading" class="text-cyan-400/80">loading…</span>

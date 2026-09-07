@@ -87,6 +87,38 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertEqual(body["source"], "ledger")
         self.assertGreater(body["price"], 0)
         self.assertIn("rsi_14", body)
+        # Paper cycle stores synthetic quality on factor payload.
+        self.assertEqual(body.get("data_quality_reason"), "synthetic")
+
+    def test_factors_ledger_passes_payload_quality(self):
+        """Factors router must surface payload.data_quality_reason from ledger."""
+        from keel.domain import FactorSnapshot
+
+        self.ledger.record_factor_snapshot(
+            FactorSnapshot(
+                timestamp=__import__("time").time(),
+                inst_id="SOL-USDT-SWAP",
+                price=150.0,
+                rsi_14=50.0,
+                ema_9=149.0,
+                ema_21=148.0,
+                atr_14=1.0,
+                macd_histogram=0.1,
+                trend_15m="up",
+                volume_ratio=1.2,
+                payload={
+                    "macd_line": 0.2,
+                    "macd_signal": 0.1,
+                    "data_quality_reason": "okx_public",
+                },
+            )
+        )
+        r = self.client.get("/api/v1/factors/SOL-USDT-SWAP")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["source"], "ledger")
+        self.assertEqual(body["data_quality_reason"], "okx_public")
+        self.assertAlmostEqual(body["volume_ratio"], 1.2, places=4)
 
     def test_status_shows_ledger_path(self):
         r = self.client.get("/api/v1/status")
@@ -115,6 +147,7 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIn("duration_ms", lc)
         self.assertIsInstance(lc["duration_ms"], int)
         self.assertGreaterEqual(lc["duration_ms"], 0)
+        self.assertEqual(lc.get("market_source"), "synthetic")
 
     def test_status_and_config_expose_kill_switch(self):
         r = self.client.get("/api/v1/status")

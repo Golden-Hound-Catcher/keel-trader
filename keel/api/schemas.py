@@ -60,6 +60,8 @@ class LastCycleSummary(BaseModel):
     errors: list[CycleError] = Field(default_factory=list)
     policy_success: bool | None = None
     duration_ms: int = 0
+    # Candle quality aggregate for this cycle (okx_public | synthetic | mixed | unknown).
+    market_source: str | None = None
 
 
 class StatusResponse(BaseModel):
@@ -231,3 +233,5 @@ class FactorsResponse(BaseModel):
     volume_ratio: float | None = None
     bollinger: BollingerBlock | None = None
     candle_count: int | None = None
+    # Worker snapshot quality tag (okx_public / synthetic / synthetic_fallback:…); live path = okx_public.
+    data_quality_reason: str | None = None

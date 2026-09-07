@@ -35,6 +35,8 @@ export interface KeelLastCycle {
   errors?: KeelCycleError[]
   policy_success?: boolean | null
   duration_ms?: number
+  /** Candle quality aggregate: okx_public | synthetic | mixed | unknown */
+  market_source?: string | null
 }
 
 export interface KeelStatus {
@@ -187,6 +189,8 @@ export interface KeelFactors {
   volume_ratio?: number
   bollinger?: Record<string, number>
   candle_count?: number
+  /** Worker snapshot quality (okx_public / synthetic / synthetic_fallback:…); live = okx_public */
+  data_quality_reason?: string | null
 }
 
 /** Default watchlist — mirrors keel.domain.instruments.DEFAULT_CRYPTO_INSTRUMENTS */
