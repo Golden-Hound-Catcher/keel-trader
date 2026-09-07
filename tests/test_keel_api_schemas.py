@@ -229,6 +229,7 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("capability", arming_props)
         self.assertIn("blockers", arming_props)
         self.assertIn("warnings", arming_props)
+        self.assertIn("economic", arming_props)
         self.assertIn("ConfigResponse", comps)
         config_props = comps["ConfigResponse"]["properties"]
         self.assertIn("kill_switch", config_props)

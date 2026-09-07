@@ -558,6 +558,16 @@ const arming = computed(() => store.status?.arming ?? null)
 const armingReady = computed(() => Boolean(arming.value?.ready_to_arm))
 const armingBlockers = computed(() => arming.value?.blockers ?? [])
 const armingWarnings = computed(() => arming.value?.warnings ?? [])
+const armingEconomic = computed(() => arming.value?.economic ?? null)
+const armingEconBlockers = computed(() =>
+  (armingBlockers.value || []).filter((b) =>
+    b === 'insufficient_shadow_markout_sample'
+    || b === 'probe_win_rate_net_roundtrip_below_threshold'
+    || b === 'avg_net_roundtrip_markout_bps_below_threshold'
+    || String(b).includes('markout')
+    || String(b).includes('win_rate_net')
+  )
+)
 
 const realizedPnl = computed(() => {
   const n = Number(store.dailyPnl?.realized_pnl ?? NaN)
@@ -1062,7 +1072,7 @@ const configStrip = computed(() => {
                   :class="armingReady ? 'text-emerald-400' : 'text-amber-400'"
                 />
                 <span class="text-white font-bold uppercase tracking-wide">实盘准入</span>
-                <span class="text-[#707E94] font-normal normal-case">arming checklist · read-only</span>
+                <span class="text-[#707E94] font-normal normal-case">arming + economic gates · read-only</span>
               </div>
               <span
                 class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-extrabold border tracking-wide"
@@ -1102,10 +1112,45 @@ const configStrip = computed(() => {
               >{{ w }}</span>
             </div>
             <div
+              v-if="armingEconomic && armingEconomic.enabled !== false"
+              class="mt-2 pt-2 border-t border-[#1A2232] text-[10px] font-mono text-[#A8B3C7] space-y-1"
+            >
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span class="text-white font-bold uppercase tracking-wide">Economic</span>
+                <span
+                  class="inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-extrabold"
+                  :class="armingEconomic.passed
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                    : 'bg-rose-500/15 text-rose-300 border-rose-500/40'"
+                  :title="armingEconomic.note || 'Shadow markout economic gates'"
+                >{{ armingEconomic.passed ? 'PASS' : 'FAIL' }}</span>
+                <span v-if="armingEconBlockers.length" class="text-rose-300 truncate" :title="armingEconBlockers.join('; ')">
+                  {{ armingEconBlockers.join(' · ') }}
+                </span>
+              </div>
+              <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-[#707E94]">
+                <span>fills <span class="text-white">{{ armingEconomic.fill_count ?? '—' }}</span>/<span>{{ armingEconomic.min_fills ?? 10 }}</span></span>
+                <span>probe <span class="text-white">{{ armingEconomic.probe_count ?? '—' }}</span>/<span>{{ armingEconomic.min_probe_fills ?? 5 }}</span></span>
+                <span>mk{{ armingEconomic.horizon_seconds ?? 300 }}s n=<span class="text-white">{{ armingEconomic.sample_count ?? '—' }}</span></span>
+                <span>netRT wr <span class="text-white">{{
+                  armingEconomic.probe_win_rate_net_roundtrip != null
+                    ? Number(armingEconomic.probe_win_rate_net_roundtrip).toFixed(2)
+                    : (armingEconomic.win_rate_net_roundtrip != null
+                      ? Number(armingEconomic.win_rate_net_roundtrip).toFixed(2)
+                      : '—')
+                }}</span>≥{{ armingEconomic.min_probe_win_rate_net_rt ?? 0.55 }}</span>
+                <span>avgNetRT <span class="text-white">{{
+                  armingEconomic.avg_net_roundtrip_markout_bps != null
+                    ? Number(armingEconomic.avg_net_roundtrip_markout_bps).toFixed(1)
+                    : '—'
+                }}</span>bps</span>
+              </div>
+            </div>
+            <div
               v-if="armingReady && !armingBlockers.length"
               class="text-[10px] font-mono text-emerald-400/80 mt-1"
             >
-              Checklist green — rehearse with KEEL_SHADOW_MODE=1 (kill may stay ON; shadow still records), then set KEEL_KILL_SWITCH=0 manually (no UI toggle).
+              Checklist + economic gates green — rehearse with KEEL_SHADOW_MODE=1 (kill may stay ON; shadow still records), then set KEEL_KILL_SWITCH=0 manually (no UI toggle).
             </div>
           </div>
 
