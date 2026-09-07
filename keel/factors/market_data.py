@@ -81,6 +81,8 @@ class MarketSnapshot:
     vwap_bias_pct: float = 0.0
     obv: float = 0.0
     volume_ratio: float = 1.0
+    # Rank of last bar volume within lookback window (0–100); None if unknown (e.g. ledger replay).
+    volume_percentile: float | None = None
 
     # Structure classification
     trend_15m: Literal["bullish", "bearish", "neutral"] = "neutral"

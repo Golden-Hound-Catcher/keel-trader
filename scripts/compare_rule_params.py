@@ -2,7 +2,7 @@
 """
 Offline Q2 rule-param compare: A/B thresholds on synthetic cycles OR ledger cohort.
 
-No network / no OKX keys. Prints action histograms + near-signal rates; exit 0.
+No network / no OKX keys. Prints action histograms + near-signal rates + missing-gate histograms; exit 0.
 
 Synthetic (default — same paper snaps, invents market via paper cycle):
 
@@ -101,6 +101,39 @@ def _restore_thresholds(saved: dict[str, str | None]) -> None:
             os.environ[k] = v
 
 
+
+def missing_gate_histogram(results: list) -> dict[str, int]:
+    """Count how often each gate appears in signal_diag.missing (replay or cycle)."""
+    counts: Counter[str] = Counter()
+    for row in results:
+        if isinstance(row, dict):
+            if row.get("skipped"):
+                continue
+            diag = row.get("signal_diag") or {}
+            action = str(row.get("action") or "").upper()
+        else:
+            diag = getattr(row, "signal_diag", None) or {}
+            action = str(getattr(row, "action", "") or "").upper()
+        if not isinstance(diag, dict):
+            continue
+        missing = diag.get("missing")
+        if not isinstance(missing, list):
+            continue
+        for gate in missing:
+            counts[str(gate)] += 1
+        if action in ("BUY_LONG", "SELL_SHORT") and not missing:
+            counts["__fired__"] += 1
+    return dict(counts.most_common())
+
+
+def _print_missing(label: str, results: list) -> None:
+    hist = missing_gate_histogram(results)
+    n = sum(1 for r in results if not (isinstance(r, dict) and r.get("skipped")))
+    vol_n = hist.get("volume_ok", 0)
+    vol_pct = (100.0 * vol_n / n) if n else 0.0
+    print(f"missing_gates[{label}]={hist} volume_ok_in_missing={vol_n}/{n} ({vol_pct:.1f}%)")
+
+
 def _near_signal_rate_cycle(results: list[dict]) -> float:
     """Fraction of WAIT decisions with nearest in {long, short} (paper cycle)."""
     if not results:
@@ -153,6 +186,7 @@ def _run_synthetic_set(
             f"min_vol={min_vol} actions={hist} near_signal_rate={near_rate:.3f} "
             f"n={len(results)}"
         )
+        _print_missing(label, results)
     finally:
         _restore_thresholds(saved)
 
@@ -176,6 +210,7 @@ def _run_ledger_set(
             f"min_vol={min_vol} actions={hist} near_signal_rate={near_rate:.3f} "
             f"n={replayed} skipped_incomplete={skipped}"
         )
+        _print_missing(label, results)
     finally:
         _restore_thresholds(saved)
 
@@ -190,7 +225,7 @@ def _parse_thresholds(args: argparse.Namespace) -> tuple[
         "KEEL_RULE_RSI_SHORT_MIN", 58.0
     )
     a_vol = args.min_vol_a if args.min_vol_a is not None else _env_float(
-        "KEEL_RULE_MIN_VOLUME_RATIO", 1.0
+        "KEEL_RULE_MIN_VOLUME_RATIO", 0.5
     )
     b_long = args.rsi_long_max_b if args.rsi_long_max_b is not None else _env_float(
         "KEEL_RULE_RSI_LONG_MAX_B", 35.0

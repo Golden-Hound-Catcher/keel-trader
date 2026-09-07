@@ -196,6 +196,33 @@ def build_synthetic_candles(
     return candles
 
 
+
+def compute_volume_ratio(
+    volumes: list[float], *, lookback: int = 20
+) -> tuple[float, float]:
+    """
+    Relative volume vs a trailing window (Rule v3 / enrich semantics).
+
+    ``volume_ratio`` = last_bar_volume / mean(last ``lookback`` bars).
+    A value of 1.0 means the latest bar matches the recent average — not a
+    mis-scaled percent. Crypto 15m bars are right-skewed, so most bars sit
+    below 1.0 (live okx_public: p50≈0.36–0.40, p90≈0.86); requiring ≥1.0
+    therefore blocks the large majority of cycles even when other gates align.
+
+    Also returns ``volume_percentile`` ∈ [0, 100]: empirical rank of the last
+    bar within the same window (fraction of bars with volume ≤ last × 100).
+    """
+    if not volumes:
+        return 1.0, 50.0
+    lb = max(1, int(lookback))
+    window = volumes[-lb:] if len(volumes) >= lb else list(volumes)
+    avg_vol = sum(window) / float(len(window))
+    last = float(volumes[-1])
+    ratio = (last / avg_vol) if avg_vol else 1.0
+    pct = 100.0 * sum(1 for v in window if float(v) <= last) / float(len(window))
+    return float(ratio), float(pct)
+
+
 def enrich_snapshot(snapshot: MarketSnapshot) -> MarketSnapshot:
     """Compute technical factors onto a snapshot (pure math over candles)."""
     # MarketSnapshot stores newest-first in comments elsewhere; we keep oldest→newest.
@@ -222,8 +249,7 @@ def enrich_snapshot(snapshot: MarketSnapshot) -> MarketSnapshot:
     price = closes[-1]
     atr_pct = (atr / price * 100.0) if price else 0.0
     vwap_bias = ((price - vwap) / vwap * 100.0) if vwap else 0.0
-    avg_vol = sum(volumes[-20:]) / 20.0 if volumes else 1.0
-    vol_ratio = (volumes[-1] / avg_vol) if avg_vol else 1.0
+    vol_ratio, vol_pct = compute_volume_ratio(volumes, lookback=20)
     trend = classify_trend(ema_9, ema_21, ema_55, price)
 
     snapshot.price = price
@@ -241,6 +267,7 @@ def enrich_snapshot(snapshot: MarketSnapshot) -> MarketSnapshot:
     snapshot.vwap_bias_pct = vwap_bias
     snapshot.obv = obv
     snapshot.volume_ratio = vol_ratio
+    snapshot.volume_percentile = vol_pct
     snapshot.trend_15m = trend  # type: ignore[assignment]
     snapshot.trend_1h = trend  # type: ignore[assignment]
     snapshot.trend_4h = trend  # type: ignore[assignment]
