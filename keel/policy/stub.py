@@ -11,6 +11,10 @@ KEEL_RULE_1H_EDGE_BOOST (default 1.25x, clamped 1.0–2.0; uplift capped +5 bps)
 R7: near-signal (1–2 missing gates) edge_hint uses distance-to-threshold geometry
 + ATR so base hint is non-zero when close; full-gate EV path unchanged; 1h boost
 still applied after base; probe fee hurdle (~10 bps) unchanged.
+R8: recalibrate near-edge penalties for low-ATR regimes (BTC/ETH ~18–40 bps):
+penalties scale with min(atr_bps, available_ev) so modest residuals leave room to
+clear the 10 bps probe hurdle without spamming when far from gates; near p and
+penalty coeffs are env-tunable; ≥3 missing still fail-closed; hurdle unchanged.
 Q0: diagnose_rule_signal attaches structured near-signal gate diagnostics.
 """
 from __future__ import annotations
@@ -31,12 +35,17 @@ _1H_EDGE_BOOST_DEFAULT = 1.25
 _1H_EDGE_BOOST_MIN = 1.0
 _1H_EDGE_BOOST_MAX = 2.0
 _1H_EDGE_BOOST_CAP_BPS = 5.0
-# R7: near-signal edge_hint geometry (distance-to-threshold + ATR).
-# Sized win-prob for 1 / 2 missing gates (conservative vs full-fire 0.70).
-_NEAR_P_BY_MISSING = {1: 0.45, 2: 0.38}
-_RSI_ATR_SCALE = 14.0  # RSI period → pts map to ATR bps
-_VOL_PENALTY_FRAC = 0.40  # volume gap weight vs atr_bps
-_BINARY_GATE_PENALTY_FRAC = 0.30  # trend/macd/ema miss → fraction of atr_bps
+# R7/R8: near-signal edge_hint geometry (distance-to-threshold + ATR).
+# R8 defaults: slightly higher near p + softer penalty fracs so low-ATR
+# (≈18–40 bps) can still clear the 10 bps probe hurdle when residuals are modest.
+_NEAR_P1_DEFAULT = 0.50
+_NEAR_P2_DEFAULT = 0.45
+_RSI_ATR_SCALE_DEFAULT = 14.0  # RSI pts → severity vs pen_scale
+_VOL_PENALTY_FRAC_DEFAULT = 0.25  # volume gap weight vs pen_scale (R8; was 0.40)
+_BINARY_GATE_PENALTY_FRAC_DEFAULT = 0.25  # trend/macd/ema miss vs pen_scale (R8; was 0.30)
+_RSI_PENALTY_COEF_DEFAULT = 1.0
+_NEAR_P_MIN = 0.20
+_NEAR_P_MAX = 0.65
 _EDGE_HINT_ATR_CAP = 1.5  # never claim more than 1.5× atr_bps
 _BINARY_MISSING_GATES = frozenset(
     {
@@ -69,6 +78,51 @@ def _env_bool(key: str, default: bool) -> bool:
     if raw in ("0", "false", "no", "off"):
         return False
     return default
+
+
+def _clamp_near_p(raw: float, default: float) -> float:
+    """Clamp near-mode win-prob into a conservative band."""
+    try:
+        p = float(raw)
+    except (TypeError, ValueError):
+        p = default
+    if p != p:  # NaN
+        return default
+    return max(_NEAR_P_MIN, min(_NEAR_P_MAX, p))
+
+
+def _edge_hint_geometry() -> dict[str, float]:
+    """
+    R8 env-tunable near-edge geometry coefficients (documented defaults).
+
+    Penalties scale with ``min(atr_bps, atr_bps * sized_EV)`` so modest residuals
+    leave fee-clearing room in low-ATR regimes without lowering the 10 bps hurdle.
+    """
+    return {
+        "near_p1": _clamp_near_p(
+            _env_float("KEEL_RULE_EDGE_NEAR_P1", _NEAR_P1_DEFAULT), _NEAR_P1_DEFAULT
+        ),
+        "near_p2": _clamp_near_p(
+            _env_float("KEEL_RULE_EDGE_NEAR_P2", _NEAR_P2_DEFAULT), _NEAR_P2_DEFAULT
+        ),
+        "rsi_atr_scale": max(
+            1.0, _env_float("KEEL_RULE_EDGE_RSI_ATR_SCALE", _RSI_ATR_SCALE_DEFAULT)
+        ),
+        "vol_penalty_frac": max(
+            0.0,
+            _env_float("KEEL_RULE_EDGE_VOL_PENALTY_FRAC", _VOL_PENALTY_FRAC_DEFAULT),
+        ),
+        "binary_penalty_frac": max(
+            0.0,
+            _env_float(
+                "KEEL_RULE_EDGE_BINARY_PENALTY_FRAC", _BINARY_GATE_PENALTY_FRAC_DEFAULT
+            ),
+        ),
+        "rsi_penalty_coef": max(
+            0.0,
+            _env_float("KEEL_RULE_EDGE_RSI_PENALTY_COEF", _RSI_PENALTY_COEF_DEFAULT),
+        ),
+    }
 
 
 def _rule_thresholds() -> dict[str, float | bool]:
@@ -143,17 +197,28 @@ def _distance_penalty_bps(
     missing: list[str],
     *,
     atr_bps: float,
+    available_ev_bps: float,
     th: dict[str, float | bool],
-) -> tuple[float, dict[str, float]]:
+    geo: dict[str, float],
+) -> tuple[float, dict[str, float], float]:
     """
-    Residual distance-to-threshold in bps for near-signal edge hints (R7).
+    Residual distance-to-threshold in bps for near-signal edge hints (R7/R8).
 
-    - RSI: pts past hard band × (atr_bps / 14)
-    - volume: atr_bps × 0.40 × gap_frac (gap vs hard floor; halved if ≥ soft floor)
-    - binary trend/macd/ema: atr_bps × 0.30 each
+    R8: penalties scale with ``pen_scale = min(atr_bps, available_ev_bps)`` so that
+    when ATR is low and residuals are modest, ``atr*sized_EV - penalty`` can still
+    clear ~10 bps; large residuals (e.g. RSI ≥15 pts) still wipe the hint.
+
+    - RSI: pen_scale × (pts / rsi_atr_scale) × rsi_penalty_coef
+    - volume: pen_scale × vol_penalty_frac × gap_frac (gap vs hard; ×0.5 if ≥ soft)
+    - binary trend/macd/ema: pen_scale × binary_penalty_frac each
     """
     components: dict[str, float] = {}
     total = 0.0
+    pen_scale = min(float(atr_bps), max(0.0, float(available_ev_bps)))
+    rsi_scale = float(geo["rsi_atr_scale"])
+    vol_frac = float(geo["vol_penalty_frac"])
+    bin_frac = float(geo["binary_penalty_frac"])
+    rsi_coef = float(geo["rsi_penalty_coef"])
     rsi_long_max = float(th["rsi_long_max"])
     rsi_short_min = float(th["rsi_short_min"])
     min_vol = float(th["min_vol"])
@@ -172,27 +237,27 @@ def _distance_penalty_bps(
         if gate == "rsi_long_ok":
             if rsi == rsi:  # not NaN
                 pts = max(0.0, rsi - rsi_long_max)
-                pen = pts * (atr_bps / _RSI_ATR_SCALE)
+                pen = pen_scale * (pts / rsi_scale) * rsi_coef
         elif gate == "rsi_short_ok":
             if rsi == rsi:
                 pts = max(0.0, rsi_short_min - rsi)
-                pen = pts * (atr_bps / _RSI_ATR_SCALE)
+                pen = pen_scale * (pts / rsi_scale) * rsi_coef
         elif gate == "volume_ok":
             if min_vol > 0 and ratio < min_vol:
                 gap = (min_vol - ratio) / min_vol
                 if ratio >= soft_floor:
                     gap *= 0.5
-                pen = atr_bps * _VOL_PENALTY_FRAC * min(gap, 1.5)
+                pen = pen_scale * vol_frac * min(gap, 1.5)
             else:
                 # Failed via percentile/soft context with ratio ≥ hard — mild penalty.
-                pen = atr_bps * _VOL_PENALTY_FRAC * 0.15
+                pen = pen_scale * vol_frac * 0.15
         elif gate in _BINARY_MISSING_GATES:
-            pen = atr_bps * _BINARY_GATE_PENALTY_FRAC
+            pen = pen_scale * bin_frac
         else:
-            pen = atr_bps * _BINARY_GATE_PENALTY_FRAC
+            pen = pen_scale * bin_frac
         components[gate] = float(pen)
         total += pen
-    return float(total), components
+    return float(total), components, float(pen_scale)
 
 
 def _edge_hints(
@@ -205,17 +270,19 @@ def _edge_hints(
     """
     ATR-based expected move / edge hint for probe observability (does not change fee hurdle).
 
-    R7 formula (documented):
+    R7/R8 formula (documented):
       atr_bps = (atr_14 / price) * 10_000
       expected_tp_bps = atr_bps * 2.2
       if missing empty (full fire):
           p = 0.70; sized_EV = 2.2*p - 1.0*(1-p)
           edge_hint_bps = max(0, atr_bps * sized_EV)   # mode=full
       elif 1–2 missing and nearest ∈ {long, short}:
-          p = {1: 0.45, 2: 0.38}[n]
+          p = {1: near_p1, 2: near_p2}[n]   # R8 defaults 0.50 / 0.45
           sized_EV = 2.2*p - 1.0*(1-p)
-          distance_penalty = Σ gate residuals (RSI pts→bps, vol gap, binary)
-          edge_hint_bps = max(0, atr_bps * sized_EV - distance_penalty)  # mode=near
+          available_ev = atr_bps * sized_EV
+          pen_scale = min(atr_bps, available_ev)       # R8 low-ATR room
+          distance_penalty = Σ gate residuals vs pen_scale
+          edge_hint_bps = max(0, available_ev - distance_penalty)  # mode=near
       else:
           edge_hint_bps = 0; mode=none
       cap: min(expected_tp_bps, 1.5 * atr_bps)
@@ -230,6 +297,7 @@ def _edge_hints(
         "edge_hint_sized_ev": None,
         "edge_hint_distance_penalty_bps": None,
         "edge_hint_distance_components": {},
+        "edge_hint_penalty_scale_bps": None,
     }
     try:
         price = float(snapshot.price or 0.0)
@@ -254,10 +322,13 @@ def _edge_hints(
     atr_bps = (atr / price) * 10_000.0
     expected_tp_bps = atr_bps * _TP_ATR
     thr = th if th is not None else _rule_thresholds()
+    geo = _edge_hint_geometry()
+    near_p_by_missing = {1: float(geo["near_p1"]), 2: float(geo["near_p2"])}
 
     nearest_s = str(nearest or "none")
     components: dict[str, float] = {}
     distance_penalty = 0.0
+    pen_scale: float | None = None
     sized_ev: float | None = None
     mode = "none"
     edge_hint = 0.0
@@ -268,22 +339,27 @@ def _edge_hints(
         sized_ev = (_TP_ATR * p) - (_SL_ATR * (1.0 - p))
         edge_hint = max(0.0, atr_bps * sized_ev)
         mode = "full"
-    elif (
-        n_missing in (1, 2)
-        and nearest_s in ("long", "short")
-        and n_missing in _NEAR_P_BY_MISSING
-    ):
-        p = float(_NEAR_P_BY_MISSING[n_missing])
+    elif n_missing in (1, 2) and nearest_s in ("long", "short"):
+        p = float(near_p_by_missing[n_missing])
         sized_ev = (_TP_ATR * p) - (_SL_ATR * (1.0 - p))
+        available_ev = atr_bps * sized_ev
+        pen_scale = min(atr_bps, max(0.0, available_ev))
+        bin_frac = float(geo["binary_penalty_frac"])
         if use_synthetic:
             # Int-only API: treat each missing as a mild binary residual.
-            distance_penalty = atr_bps * _BINARY_GATE_PENALTY_FRAC * float(n_missing)
-            components = {f"gate_{i}": atr_bps * _BINARY_GATE_PENALTY_FRAC for i in range(n_missing)}
+            per = pen_scale * bin_frac
+            distance_penalty = per * float(n_missing)
+            components = {f"gate_{i}": per for i in range(n_missing)}
         else:
-            distance_penalty, components = _distance_penalty_bps(
-                snapshot, missing_list, atr_bps=atr_bps, th=thr
+            distance_penalty, components, pen_scale = _distance_penalty_bps(
+                snapshot,
+                missing_list,
+                atr_bps=atr_bps,
+                available_ev_bps=available_ev,
+                th=thr,
+                geo=geo,
             )
-        edge_hint = max(0.0, atr_bps * sized_ev - distance_penalty)
+        edge_hint = max(0.0, available_ev - distance_penalty)
         mode = "near"
     else:
         mode = "none"
@@ -291,6 +367,7 @@ def _edge_hints(
         sized_ev = None
         distance_penalty = 0.0
         components = {}
+        pen_scale = None
 
     if edge_hint > 0:
         edge_hint = min(edge_hint, expected_tp_bps, _EDGE_HINT_ATR_CAP * atr_bps)
@@ -301,8 +378,11 @@ def _edge_hints(
         "edge_hint_bps": float(edge_hint),
         "edge_hint_mode": mode,
         "edge_hint_sized_ev": float(sized_ev) if sized_ev is not None else None,
-        "edge_hint_distance_penalty_bps": float(distance_penalty) if mode == "near" else (0.0 if mode == "full" else None),
+        "edge_hint_distance_penalty_bps": (
+            float(distance_penalty) if mode == "near" else (0.0 if mode == "full" else None)
+        ),
         "edge_hint_distance_components": dict(components) if mode == "near" else {},
+        "edge_hint_penalty_scale_bps": float(pen_scale) if mode == "near" else None,
     }
 
 
@@ -442,9 +522,10 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     (``15m`` or ``15m+1h``), ``trend_1h_confirm``, ``require_1h_trend``.
     R6: optional 1h-confirm ``edge_hint`` boost (``edge_hint_1h_boosted``,
     ``edge_hint_boost_mult``, ``edge_hint_bps_raw`` when applied).
-    R7: ``edge_hint_mode`` (``full``|``near``|``none``) plus
+    R7/R8: ``edge_hint_mode`` (``full``|``near``|``none``) plus
     ``edge_hint_sized_ev`` / ``edge_hint_distance_penalty_bps`` /
-    ``edge_hint_distance_components`` for near-signal geometry audit.
+    ``edge_hint_distance_components`` / ``edge_hint_penalty_scale_bps``
+    for near-signal geometry audit (R8 low-ATR pen_scale = min(atr, available_ev)).
     """
     th = _rule_thresholds()
     rsi_long_max = float(th["rsi_long_max"])
@@ -682,8 +763,9 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     Attaches ``signal_diag`` (from ``diagnose_rule_signal``) on every decision.
     Near-probe fee hurdle (10 bps taker RT) is unchanged — edge hints are audit-only.
     R6 may boost ``edge_hint_bps`` when 1h confirms nearest side (still does not
-    lower the fee hurdle). R7 near-signal geometry may yield a non-zero base hint
-    when 1–2 gates are missing (distance-to-threshold + ATR); hurdle unchanged.
+    lower the fee hurdle). R7/R8 near-signal geometry may yield a non-zero base
+    hint when 1–2 gates are missing (distance-to-threshold + ATR; R8 pen_scale
+    leaves room in low-ATR regimes); hurdle unchanged.
     """
     diag = diagnose_rule_signal(snapshot)
 

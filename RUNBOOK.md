@@ -268,6 +268,40 @@ cap: min(expected_tp_bps, 1.5 × atr_bps)
 
 `signal_diag` adds `edge_hint_mode` (`full`|`near`|`none`), `edge_hint_sized_ev`, `edge_hint_distance_penalty_bps`, `edge_hint_distance_components`. **R6 1h boost still applies after the base hint** (and is skipped when base is already 0). **Probe fee hurdle (taker RT ≈ 10 bps) is not lowered.**
 
+### Phase R8 — near-edge low-ATR calibration (fee hurdle unchanged)
+
+After R7, live BTC/ETH often still showed `edge_hint_mode=near` with **edge=0**: ATR ≈ **18–40 bps** while RSI/volume distance penalties (scaled on full `atr_bps`) wiped `atr_bps * sized_EV` (~5 bps for 2-missing). Unit tests used `atr_bps≈77`, which cleared hurdles but was not representative.
+
+R8 keeps the R7 full-gate path and fail-closed ≥3 missing, and recalibrates **near** geometry:
+
+```
+# near (1–2 missing), nearest ∈ {long,short}:
+p = {1: near_p1, 2: near_p2}[n]          # defaults 0.50 / 0.45 (env-tunable)
+sized_EV = 2.2*p - 1.0*(1-p)
+available_ev = atr_bps * sized_EV
+pen_scale = min(atr_bps, available_ev)   # leaves room when ATR is small
+distance_penalty_bps = Σ vs pen_scale:
+  RSI: pen_scale × (pts / rsi_atr_scale) × rsi_coef
+  volume: pen_scale × vol_frac × gap_frac  (×0.5 if ratio ≥ soft floor)
+  trend/macd/ema: pen_scale × binary_frac each
+edge_hint_bps = max(0, available_ev - distance_penalty_bps)
+```
+
+When residuals are **modest** (e.g. volume just below hard floor, RSI within ~3 pts), hint can reach **≥10 bps** at `atr_bps≈25`. When far (e.g. RSI 15 pts past band), hint stays **<10**. **Probe fee hurdle (taker RT ≈ 10 bps) is not lowered.**
+
+`signal_diag` adds `edge_hint_penalty_scale_bps` (= `pen_scale`) alongside existing distance components.
+
+| Knob | Default | Role |
+|------|---------|------|
+| `KEEL_RULE_EDGE_NEAR_P1` | **0.50** | Near win-prob when exactly 1 gate missing (clamped 0.20–0.65) |
+| `KEEL_RULE_EDGE_NEAR_P2` | **0.45** | Near win-prob when exactly 2 gates missing |
+| `KEEL_RULE_EDGE_RSI_ATR_SCALE` | **14** | RSI pts divisor vs `pen_scale` |
+| `KEEL_RULE_EDGE_RSI_PENALTY_COEF` | **1.0** | Extra RSI penalty multiplier |
+| `KEEL_RULE_EDGE_VOL_PENALTY_FRAC` | **0.25** | Volume gap weight vs `pen_scale` (R7 was 0.40) |
+| `KEEL_RULE_EDGE_BINARY_PENALTY_FRAC` | **0.25** | Binary gate weight vs `pen_scale` (R7 was 0.30) |
+
+**Before/after @ atr_bps=25 (1 missing volume, ratio just below hard, soft-halved gap):** R7 raw ≈ 10.0 (fragile; ~0 at atr≈18 after RSI/vol wipe); R8 raw ≈ **14.6** with components audit. **RSI 15 pts away @ atr=25:** R7/R8 both → hint **0** (not spammy).
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.

@@ -1075,16 +1075,22 @@ class TestR7NearEdgeHintGeometry(unittest.TestCase):
             self.assertEqual(diag["edge_hint_mode"], "near")
             self.assertGreater(diag["edge_hint_bps_raw"], 0.0)
             self.assertGreater(diag["edge_hint_bps"], 10.0)  # clears hurdle after boost
-            # Documented example: atr_bps≈76.92, sized_EV=0.44 → base≈33.85
-            # vol gap soft: (0.5-0.4)/0.5*0.5=0.1 → penalty≈3.08 → raw≈30.77
-            self.assertAlmostEqual(diag["atr_bps"], 500.0 / 65000.0 * 10000.0, places=5)
-            self.assertAlmostEqual(diag["edge_hint_sized_ev"], 0.44, places=5)
-            self.assertAlmostEqual(diag["edge_hint_distance_penalty_bps"], 3.0769230769230766, places=5)
-            self.assertAlmostEqual(diag["edge_hint_bps_raw"], 30.769230769230777, places=5)
+            # R8 @ atr≈76.92: sized_EV=0.60 → available≈46.15; pen_scale=min(atr,avail)
+            # vol soft gap 0.1 → pen≈1.15 → raw≈45.00; boost capped +5 → 50.00
+            atr = 500.0 / 65000.0 * 10000.0
+            self.assertAlmostEqual(diag["atr_bps"], atr, places=5)
+            self.assertAlmostEqual(diag["edge_hint_sized_ev"], 0.60, places=5)
+            avail = atr * 0.60
+            pen_scale = min(atr, avail)
+            pen = pen_scale * 0.25 * 0.1
+            raw = avail - pen
+            self.assertAlmostEqual(diag["edge_hint_penalty_scale_bps"], pen_scale, places=5)
+            self.assertAlmostEqual(diag["edge_hint_distance_penalty_bps"], pen, places=5)
+            self.assertAlmostEqual(diag["edge_hint_bps_raw"], raw, places=5)
             self.assertIn("volume_ok", diag["edge_hint_distance_components"])
             self.assertTrue(diag["edge_hint_1h_boosted"])
-            # boost after base: min(30.77*1.25, 30.77+5) = 35.77
-            self.assertAlmostEqual(diag["edge_hint_bps"], 35.769230769230774, places=5)
+            boosted = min(raw * 1.25, raw + 5.0)
+            self.assertAlmostEqual(diag["edge_hint_bps"], boosted, places=5)
         finally:
             self._restore()
 
@@ -1099,9 +1105,14 @@ class TestR7NearEdgeHintGeometry(unittest.TestCase):
             self.assertEqual(diag["missing"], ["rsi_long_ok"])
             self.assertEqual(diag["edge_hint_mode"], "near")
             self.assertGreater(diag["edge_hint_bps"], 0.0)
-            # penalty = 5 * (atr_bps/14) ≈ 27.47; sized base ≈ 33.85 → raw ≈ 6.37
-            self.assertAlmostEqual(diag["edge_hint_bps_raw"], 6.373626373626376, places=4)
+            # R8: pen_scale=min(atr, avail); pen = pen_scale*(5/14); avail=atr*0.60
+            atr = 500.0 / 65000.0 * 10000.0
+            avail = atr * 0.60
+            pen_scale = min(atr, avail)
+            raw = avail - pen_scale * (5.0 / 14.0)
+            self.assertAlmostEqual(diag["edge_hint_bps_raw"], raw, places=4)
             self.assertIn("rsi_long_ok", diag["edge_hint_distance_components"])
+            self.assertAlmostEqual(diag["edge_hint_penalty_scale_bps"], pen_scale, places=5)
         finally:
             self._restore()
 
@@ -1168,8 +1179,8 @@ class TestR7NearEdgeHintGeometry(unittest.TestCase):
             )
             self.assertEqual(sorted(diag["missing"]), ["rsi_long_ok", "volume_ok"])
             self.assertEqual(diag["edge_hint_mode"], "near")
-            # sized_EV = 2.2*0.38 - 0.62 = 0.216
-            self.assertAlmostEqual(diag["edge_hint_sized_ev"], 0.216, places=5)
+            # R8: sized_EV = 2.2*0.45 - 0.55 = 0.44
+            self.assertAlmostEqual(diag["edge_hint_sized_ev"], 0.44, places=5)
             self.assertGreaterEqual(diag["edge_hint_bps"], 0.0)
         finally:
             self._restore()
@@ -1184,3 +1195,206 @@ class TestR7NearEdgeHintGeometry(unittest.TestCase):
             self.assertIsNone(diag["edge_hint_bps"])
         finally:
             self._restore()
+
+class TestR8NearEdgeLowAtrCalibration(unittest.TestCase):
+    """R8: low-ATR near-edge recalibration (hurdle still 10bps)."""
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=1.0,
+            price=65000.0,
+            atr_14=162.5,  # atr_bps = 25.0
+            rsi_14=40.0,
+            trend_15m="bullish",
+            trend_1h="bullish",
+            trend_4h="neutral",
+            macd_histogram=10.0,
+            ema_9=65100.0,
+            ema_21=64900.0,
+            volume_ratio=0.8,
+            volume_percentile=0.0,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def _env_hard(self):
+        import os
+
+        keys = (
+            "KEEL_RULE_MIN_VOLUME_RATIO",
+            "KEEL_RULE_MIN_VOLUME_PERCENTILE",
+            "KEEL_RULE_VOLUME_SOFT_ENABLE",
+            "KEEL_RULE_RSI_RELAX_ENABLE",
+            "KEEL_RULE_1H_EDGE_BOOST",
+            "KEEL_RULE_REQUIRE_1H_TREND",
+            "KEEL_RULE_RSI_LONG_MAX",
+            "KEEL_RULE_RSI_SHORT_MIN",
+            "KEEL_RULE_EDGE_NEAR_P1",
+            "KEEL_RULE_EDGE_NEAR_P2",
+            "KEEL_RULE_EDGE_RSI_ATR_SCALE",
+            "KEEL_RULE_EDGE_RSI_PENALTY_COEF",
+            "KEEL_RULE_EDGE_VOL_PENALTY_FRAC",
+            "KEEL_RULE_EDGE_BINARY_PENALTY_FRAC",
+        )
+        self._prev = {k: os.environ.get(k) for k in keys}
+        for k in keys:
+            os.environ.pop(k, None)
+        os.environ["KEEL_RULE_MIN_VOLUME_RATIO"] = "0.5"
+        os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+        os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
+        os.environ["KEEL_RULE_RSI_RELAX_ENABLE"] = "0"
+        os.environ["KEEL_RULE_1H_EDGE_BOOST"] = "1.25"
+
+    def _restore(self):
+        import os
+
+        for k, v in self._prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_atr25_volume_just_below_clears_hurdle(self):
+        """near, 1 missing volume just below threshold → hint ≥10 at atr_bps=25."""
+        from keel.policy.stub import diagnose_rule_signal
+
+        self._env_hard()
+        try:
+            diag = diagnose_rule_signal(self._snap(volume_ratio=0.4))
+            self.assertEqual(diag["missing"], ["volume_ok"])
+            self.assertEqual(diag["nearest"], "long")
+            self.assertEqual(diag["edge_hint_mode"], "near")
+            self.assertAlmostEqual(diag["atr_bps"], 25.0, places=5)
+            self.assertGreaterEqual(diag["edge_hint_bps_raw"], 10.0)
+            self.assertGreaterEqual(diag["edge_hint_bps"], 10.0)
+            self.assertIn("volume_ok", diag["edge_hint_distance_components"])
+            self.assertIsNotNone(diag["edge_hint_penalty_scale_bps"])
+            # pen_scale = min(25, 25*0.60)=15; soft gap 0.1 → pen=15*0.25*0.1=0.375
+            self.assertAlmostEqual(diag["edge_hint_penalty_scale_bps"], 15.0, places=5)
+            self.assertAlmostEqual(diag["edge_hint_distance_penalty_bps"], 0.375, places=5)
+            self.assertAlmostEqual(diag["edge_hint_bps_raw"], 14.625, places=5)
+        finally:
+            self._restore()
+
+    def test_atr25_rsi_15pts_stays_below_hurdle(self):
+        """near, RSI 15 pts away → hint stays low (<10) at atr_bps=25."""
+        from keel.policy.stub import diagnose_rule_signal
+
+        self._env_hard()
+        try:
+            # hard long max 45; rsi=60 → 15 pts past
+            diag = diagnose_rule_signal(self._snap(rsi_14=60.0, volume_ratio=0.8))
+            self.assertEqual(diag["missing"], ["rsi_long_ok"])
+            self.assertEqual(diag["edge_hint_mode"], "near")
+            self.assertLess(diag["edge_hint_bps"], 10.0)
+            self.assertEqual(diag["edge_hint_bps"], 0.0)
+            # base 0 → R6 skips boost theater (no edge_hint_bps_raw)
+            self.assertEqual(diag.get("edge_hint_bps_raw", 0.0), 0.0)
+            self.assertIn("rsi_long_ok", diag["edge_hint_distance_components"])
+        finally:
+            self._restore()
+
+    def test_atr25_rsi_modest_leaves_room(self):
+        """RSI within ~3 pts of band: modest residual leaves ≥10 raw at atr=25."""
+        from keel.policy.stub import diagnose_rule_signal
+
+        self._env_hard()
+        try:
+            diag = diagnose_rule_signal(self._snap(rsi_14=48.0, volume_ratio=0.8))
+            self.assertEqual(diag["missing"], ["rsi_long_ok"])
+            self.assertEqual(diag["edge_hint_mode"], "near")
+            self.assertGreaterEqual(diag["edge_hint_bps_raw"], 10.0)
+        finally:
+            self._restore()
+
+    def test_three_missing_still_zero(self):
+        """≥3 missing → 0 (fail-closed)."""
+        from keel.policy.stub import diagnose_rule_signal
+
+        self._env_hard()
+        try:
+            diag = diagnose_rule_signal(
+                self._snap(
+                    rsi_14=50.0,
+                    trend_15m="neutral",
+                    macd_histogram=-1.0,
+                    volume_ratio=0.1,
+                )
+            )
+            self.assertGreaterEqual(len(diag["missing"]), 3)
+            self.assertEqual(diag["edge_hint_mode"], "none")
+            self.assertEqual(diag["edge_hint_bps"], 0.0)
+        finally:
+            self._restore()
+
+    def test_full_fire_healthy_at_low_and_rich_atr(self):
+        """full fire → healthy hint at atr≈25 and atr≈77."""
+        from keel.policy.stub import diagnose_rule_signal
+
+        self._env_hard()
+        try:
+            low = diagnose_rule_signal(self._snap())
+            self.assertEqual(low["edge_hint_mode"], "full")
+            self.assertGreater(low["edge_hint_bps"], 10.0)
+            # sized_EV full 1.24 → 25*1.24=31
+            self.assertAlmostEqual(low["edge_hint_bps_raw"], 31.0, places=5)
+
+            rich = diagnose_rule_signal(self._snap(atr_14=500.0))
+            self.assertEqual(rich["edge_hint_mode"], "full")
+            self.assertGreater(rich["edge_hint_bps"], 10.0)
+            self.assertAlmostEqual(rich["edge_hint_sized_ev"], 1.24, places=5)
+        finally:
+            self._restore()
+
+    def test_regression_atr20_and_atr77_volume_near(self):
+        """Regression: atr_bps≈20 and ≈77 with 1 missing volume stay fee-clearing."""
+        from keel.policy.stub import diagnose_rule_signal
+
+        self._env_hard()
+        try:
+            # atr_bps=20 → atr_14 = 20/10000*65000 = 130
+            d20 = diagnose_rule_signal(self._snap(atr_14=130.0, volume_ratio=0.4))
+            self.assertAlmostEqual(d20["atr_bps"], 20.0, places=5)
+            self.assertEqual(d20["edge_hint_mode"], "near")
+            self.assertGreaterEqual(d20["edge_hint_bps_raw"], 10.0)
+
+            d77 = diagnose_rule_signal(self._snap(atr_14=500.0, volume_ratio=0.4))
+            self.assertAlmostEqual(d77["atr_bps"], 500.0 / 65000.0 * 10000.0, places=5)
+            self.assertEqual(d77["edge_hint_mode"], "near")
+            self.assertGreater(d77["edge_hint_bps"], 10.0)
+            self.assertIn("volume_ok", d77["edge_hint_distance_components"])
+        finally:
+            self._restore()
+
+    def test_two_missing_modest_can_clear_at_atr25(self):
+        """2 missing with modest residuals can reach ≥10 at atr_bps=25."""
+        from keel.policy.stub import diagnose_rule_signal
+
+        self._env_hard()
+        try:
+            # volume just below only would be 1 miss; add tiny RSI miss (3 pts)
+            diag = diagnose_rule_signal(
+                self._snap(rsi_14=48.0, volume_ratio=0.4)
+            )
+            self.assertEqual(sorted(diag["missing"]), ["rsi_long_ok", "volume_ok"])
+            self.assertEqual(diag["edge_hint_mode"], "near")
+            self.assertAlmostEqual(diag["edge_hint_sized_ev"], 0.44, places=5)
+            # With 1h boost, modest 2-miss should clear (raw may be ~8–11)
+            self.assertGreaterEqual(diag["edge_hint_bps"], 10.0)
+        finally:
+            self._restore()
+
+    def test_probe_hurdle_still_ten_bps(self):
+        from keel.execution.near_probe import (
+            resolve_near_probe_hurdle_bps,
+            edge_clears_hurdle,
+        )
+
+        hurdle, role, mode = resolve_near_probe_hurdle_bps(None)
+        self.assertEqual(role, "taker")
+        self.assertAlmostEqual(hurdle, 10.0)
+        self.assertFalse(edge_clears_hurdle(9.9, hurdle))
+        self.assertTrue(edge_clears_hurdle(10.0, hurdle))
