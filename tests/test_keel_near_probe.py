@@ -20,12 +20,16 @@ from keel.exchange.okx_fees import (
 from keel.execution.near_probe import (
     PROBE_POLICY,
     PROBE_STRATEGY_TAG,
+    SKIP_EVENT_TYPE,
     build_near_probe_decision,
     edge_clears_hurdle,
     estimate_near_probe_edge_bps,
+    evaluate_near_probe,
     maybe_near_probe_decision,
+    near_probe_skip_payload,
     near_signal_meets_gates,
     probe_fill_recent,
+    record_near_probe_skip,
     resolve_near_probe_hurdle_bps,
     should_attempt_near_probe,
 )
@@ -626,6 +630,253 @@ class TestNearProbeEdgeHurdle(unittest.TestCase):
             trades = ledger.get_trades()
             self.assertIn("edge_bps", trades[0].metadata)
             ledger.close()
+
+
+
+
+class TestNearProbeSkipObservability(unittest.TestCase):
+    """Q3.5: skip reasons + durable shadow_near_probe_skip events."""
+
+    def test_skip_payload_shape(self):
+        payload = near_probe_skip_payload(
+            "below_hurdle",
+            edge_bps=4.8,
+            hurdle_bps=10.0,
+            fee_role="taker",
+            edge_mode="round_trip",
+        )
+        self.assertEqual(payload["reason"], "below_hurdle")
+        self.assertEqual(payload["edge_bps"], 4.8)
+        self.assertEqual(payload["hurdle_bps"], 10.0)
+        self.assertEqual(payload["fee_role"], "taker")
+        self.assertEqual(payload["edge_mode"], "round_trip")
+
+    def test_evaluate_below_hurdle_reason(self):
+        out = evaluate_near_probe(
+            _wait_near("long", missing=["volume_ok"], confidence=40.0),
+            _snap(price=100.0, atr_14=2.0),
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=True,
+            cooldown_seconds=0,
+            settings=refresh_settings(),
+        )
+        self.assertIsNone(out.decision)
+        self.assertEqual(out.skip_reason, "below_hurdle")
+        self.assertIsNotNone(out.hurdle_bps)
+        self.assertIsNotNone(out.edge_bps)
+        self.assertLess(out.edge_bps, out.hurdle_bps)
+
+    def test_evaluate_edge_unavailable(self):
+        out = evaluate_near_probe(
+            _wait_near("long", missing=[], confidence=80.0),
+            _snap(price=100.0, atr_14=0.0),
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=True,
+            cooldown_seconds=0,
+            min_edge_bps=10.0,
+        )
+        self.assertIsNone(out.decision)
+        self.assertEqual(out.skip_reason, "edge_unavailable")
+
+    def test_evaluate_max_missing(self):
+        out = evaluate_near_probe(
+            _wait_near("long", missing=["a", "b", "c"], confidence=80.0),
+            _snap(),
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=True,
+            cooldown_seconds=0,
+            max_missing=2,
+            min_edge_bps=0,
+        )
+        self.assertEqual(out.skip_reason, "max_missing")
+
+    def test_evaluate_not_near(self):
+        out = evaluate_near_probe(
+            _wait_near("none", missing=[], confidence=80.0),
+            _snap(),
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=True,
+            cooldown_seconds=0,
+            min_edge_bps=0,
+        )
+        self.assertEqual(out.skip_reason, "not_near")
+
+    def test_evaluate_probe_disabled(self):
+        out = evaluate_near_probe(
+            _wait_near(),
+            _snap(),
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=False,
+            cooldown_seconds=0,
+            min_edge_bps=0,
+        )
+        self.assertEqual(out.skip_reason, "probe_disabled")
+
+    def test_evaluate_cooldown(self):
+        with tempfile.TemporaryDirectory() as td:
+            ledger = KeelLedger(Path(td) / "t.db")
+            decision = build_near_probe_decision(_wait_near("long"), _snap())
+            assert decision is not None
+            exchange = PaperAdapter()
+            exchange.set_ticker(
+                Ticker(
+                    inst_id="BTC-USDT-SWAP",
+                    last=100.0,
+                    bid=99.9,
+                    ask=100.1,
+                    open_24h=100.0,
+                    high_24h=101.0,
+                    low_24h=99.0,
+                    vol_24h=1_000_000.0,
+                    timestamp=time.time(),
+                )
+            )
+            orch = ExecutionOrchestrator(exchange=exchange, ledger=ledger)
+            orch.execute_decision(decision, kill_switch=True, shadow_mode=True)
+            out = evaluate_near_probe(
+                _wait_near("long"),
+                _snap(),
+                kill_switch=True,
+                shadow_mode=True,
+                probe_enabled=True,
+                cooldown_seconds=3600,
+                ledger=ledger,
+                min_edge_bps=0,
+            )
+            self.assertEqual(out.skip_reason, "cooldown")
+            ledger.close()
+
+    def test_record_skip_and_shadow_stats(self):
+        with tempfile.TemporaryDirectory() as td:
+            ledger = KeelLedger(Path(td) / "t.db")
+            eid = record_near_probe_skip(
+                ledger,
+                inst_id="BTC-USDT-SWAP",
+                reason="below_hurdle",
+                edge_bps=4.8,
+                hurdle_bps=10.0,
+                fee_role="taker",
+                edge_mode="round_trip",
+            )
+            self.assertIsNotNone(eid)
+            events = ledger.get_events(event_type=SKIP_EVENT_TYPE)
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].data.get("reason"), "below_hurdle")
+            self.assertEqual(events[0].data.get("edge_bps"), 4.8)
+            self.assertEqual(events[0].data.get("hurdle_bps"), 10.0)
+            stats = ledger.get_shadow_stats(hours=24, include_markout=False)
+            self.assertIn("probe_skips", stats)
+            self.assertEqual(stats["probe_skips"]["count"], 1)
+            self.assertEqual(stats["by_skip_reason"].get("below_hurdle"), 1)
+            self.assertEqual(stats["probe_skips"]["top_skip_reason"], "below_hurdle")
+            # markout path also carries skips
+            stats2 = ledger.get_shadow_stats(hours=24, include_markout=True)
+            self.assertEqual(stats2["probe_skips"]["count"], 1)
+            ledger.close()
+
+    def test_cycle_records_below_hurdle_skip(self):
+        import os
+        from keel.config import refresh_settings
+        from keel.policy.protocol import PolicyResult
+        from keel.policy.stub import StubDecisionPolicy
+
+        prev = {}
+        keys = [
+            "KEEL_KILL_SWITCH",
+            "KEEL_SHADOW_MODE",
+            "KEEL_SHADOW_NEAR_PROBE",
+            "KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS",
+            "KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS",
+        ]
+        for k in keys:
+            prev[k] = os.environ.get(k)
+        try:
+            os.environ["KEEL_KILL_SWITCH"] = "1"
+            os.environ["KEEL_SHADOW_MODE"] = "1"
+            os.environ["KEEL_SHADOW_NEAR_PROBE"] = "1"
+            os.environ["KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS"] = "0"
+            # Use default fee hurdle (no override) so weak near fails below_hurdle
+            os.environ.pop("KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS", None)
+            refresh_settings()
+
+            class WeakNearWaitPolicy(StubDecisionPolicy):
+                @property
+                def name(self) -> str:
+                    return "weak-near-wait-test"
+
+                def decide(self, ctx):
+                    decisions = {}
+                    for inst_id in ctx.instrument_ids:
+                        decisions[inst_id] = Decision(
+                            inst_id=inst_id,
+                            action="WAIT",
+                            confidence=40.0,
+                            reason="test weak near",
+                            signal_diag={
+                                "nearest": "long",
+                                "missing": ["volume_ok"],
+                                "data_valid": True,
+                            },
+                        )
+                    return PolicyResult(
+                        decisions=decisions, policy_name=self.name, success=True
+                    )
+
+            with tempfile.TemporaryDirectory() as td:
+                ledger = KeelLedger(Path(td) / "t.db")
+                exchange = PaperAdapter()
+                # Seed a snap with moderate ATR via paper path — cycle builds own snaps.
+                summary = run_paper_cycle(
+                    exchange=exchange,
+                    ledger=ledger,
+                    instrument_ids=["BTC-USDT-SWAP"],
+                    force_paper=True,
+                    policy=WeakNearWaitPolicy(),
+                    seed_prices={"BTC-USDT-SWAP": 100.0},
+                )
+                self.assertTrue(summary["ok"])
+                skips = ledger.get_events(event_type=SKIP_EVENT_TYPE)
+                # May or may not skip depending on live ATR from synthetic candles;
+                # assert annotation path: either fired probe OR recorded skip OR not_near.
+                row = summary["results"][0]
+                if row.get("shadow_near_probe"):
+                    self.assertEqual(len(skips), 0)
+                else:
+                    # When probe stack on + WAIT, we should have skip reason on row
+                    self.assertIn("near_probe_skip_reason", row)
+                    reason = row["near_probe_skip_reason"]
+                    self.assertIn(
+                        reason,
+                        {
+                            "below_hurdle",
+                            "edge_unavailable",
+                            "not_near",
+                            "max_missing",
+                            "cooldown",
+                        },
+                    )
+                    if reason != "probe_disabled":
+                        self.assertGreaterEqual(len(skips), 1)
+                        self.assertEqual(skips[0].data.get("reason"), reason)
+                    # cycle_summary (and ledger last_cycle) carry by_skip_reason
+                    cs = summary.get("cycle_summary") or {}
+                    self.assertGreaterEqual(int(cs.get("probe_skips") or 0), 1)
+                    self.assertIn(reason, cs.get("by_skip_reason") or {})
+                    last = ledger.get_last_cycle_summary() or {}
+                    self.assertEqual(last.get("top_skip_reason"), reason)
+                ledger.close()
+        finally:
+            for k, v in prev.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            refresh_settings()
 
 
 

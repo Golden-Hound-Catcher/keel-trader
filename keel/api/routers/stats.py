@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query
 from keel.api.deps import get_ledger
 from keel.api.schemas import (
     DecisionStatsResponse,
+    ProbeSkipsBlock,
     QualityShadowBlock,
     QualityStatsResponse,
     ShadowFeeModel,
@@ -107,7 +108,24 @@ def _markout_block(raw: dict[str, Any] | None) -> ShadowMarkoutBlock | None:
     )
 
 
+def _probe_skips(raw: dict[str, Any] | None) -> ProbeSkipsBlock | None:
+    if not isinstance(raw, dict):
+        return None
+    by = dict(raw.get("by_skip_reason") or {})
+    return ProbeSkipsBlock(
+        count=int(raw.get("count", 0)),
+        by_skip_reason=by,
+        top_skip_reason=raw.get("top_skip_reason"),
+        last_reason=raw.get("last_reason"),
+        last_timestamp=raw.get("last_timestamp"),
+    )
+
+
 def _shadow_response(hours: int, raw: dict[str, Any]) -> ShadowStatsResponse:
+    skips_raw = raw.get("probe_skips") if isinstance(raw.get("probe_skips"), dict) else None
+    by_skip = dict(raw.get("by_skip_reason") or {})
+    if not by_skip and isinstance(skips_raw, dict):
+        by_skip = dict(skips_raw.get("by_skip_reason") or {})
     return ShadowStatsResponse(
         hours=hours,
         count=int(raw.get("count", 0)),
@@ -115,6 +133,8 @@ def _shadow_response(hours: int, raw: dict[str, Any]) -> ShadowStatsResponse:
         by_policy=dict(raw.get("by_policy") or {}),
         probe_count=int(raw.get("probe_count", 0)),
         last_timestamp=raw.get("last_timestamp"),
+        probe_skips=_probe_skips(skips_raw),
+        by_skip_reason=by_skip,
         fee_model=_fee_model(raw.get("fee_model") if isinstance(raw.get("fee_model"), dict) else None),
         markout=_markout_block(raw.get("markout")),
     )
@@ -148,7 +168,7 @@ def get_decision_stats(
 def get_shadow_stats(
     hours: int = Query(default=24, ge=1, le=168),
 ) -> ShadowStatsResponse:
-    """Counts + offline markout of shadow_fill events over the last ``hours``."""
+    """Counts + markout + Q3.5 probe_skips of shadow_fill / skip events over ``hours``."""
     ledger = get_ledger()
     raw = ledger.get_shadow_stats(hours=float(hours), include_markout=True)
     return _shadow_response(hours, raw)

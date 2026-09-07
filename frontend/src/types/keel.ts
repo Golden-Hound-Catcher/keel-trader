@@ -37,6 +37,11 @@ export interface KeelLastCycle {
   duration_ms?: number
   /** Candle quality aggregate: okx_public | synthetic | mixed | unknown */
   market_source?: string | null
+  /** Q3.5: near-probe skips in this cycle (status annotation). */
+  probe_skips?: number
+  by_skip_reason?: Record<string, number>
+  top_skip_reason?: string | null
+  last_probe_skip_reason?: string | null
 }
 
 export interface KeelArmingStatus {
@@ -280,6 +285,15 @@ export interface KeelShadowFeeModel {
   funding_applied?: boolean
 }
 
+/** Q3.5 near-probe skip aggregates (durable shadow_near_probe_skip events). */
+export interface KeelProbeSkips {
+  count: number
+  by_skip_reason?: Record<string, number>
+  top_skip_reason?: string | null
+  last_reason?: string | null
+  last_timestamp?: number | null
+}
+
 export interface KeelShadowStats {
   hours: number
   count: number
@@ -288,6 +302,9 @@ export interface KeelShadowStats {
   /** Q3 near-probe fills in lookback. */
   probe_count?: number
   last_timestamp?: number | null
+  /** Q3.5 skip counts (hours-filterable). */
+  probe_skips?: KeelProbeSkips | null
+  by_skip_reason?: Record<string, number>
   /** Q3.3 fee model (soft-fail if older API). */
   fee_model?: KeelShadowFeeModel | null
   /** Q3.2 offline markout nest (soft-fail if older API). */

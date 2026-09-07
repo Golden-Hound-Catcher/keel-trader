@@ -162,7 +162,7 @@ curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" | python -m json.t
 
 Response fields (`/stats/decisions`): `decision_count`, `by_action`, `by_policy`, `wait_rate` (0–1), `risk_deny_events` (`risk_gate_blocked` count), `cycle_count` (`worker_cycle_summary`), `avg_cycle_duration_ms`, `market_source` filter echo (`any`|`okx_public`|`synthetic`).
 
-Shadow stats (`/stats/shadow`): `count`, `by_action`, `by_policy`, `probe_count`, `last_timestamp` for `shadow_fill` events, plus nested **`markout`** (Q3.2/Q3.3 offline outcome): per-horizon (`60`/`300`/`900`s) gross `avg`/`median` `markout_bps` + `win_rate` (markout>0), fee-aware `avg_net_open_markout_bps` / `avg_net_roundtrip_markout_bps` (+ median/probe/`win_rate_net_roundtrip`), optional `by_action`. Top-level **`fee_model`** (`source` live|fallback|override, `maker_bps`/`taker_bps`, `role`, `open_fee_bps`, `round_trip_fee_bps`, `funding_note`). Later price from `factor_snapshots` (fallback `decisions.entry_price`); fills without a later price are `skipped`. Sibling: `GET /api/v1/stats/shadow_markout?hours=` (same payload). Read-only; never places orders.
+Shadow stats (`/stats/shadow`): `count`, `by_action`, `by_policy`, `probe_count`, `last_timestamp` for `shadow_fill` events, plus **`probe_skips`/`by_skip_reason`** (Q3.5), plus nested **`markout`** (Q3.2/Q3.3 offline outcome): per-horizon (`60`/`300`/`900`s) gross `avg`/`median` `markout_bps` + `win_rate` (markout>0), fee-aware `avg_net_open_markout_bps` / `avg_net_roundtrip_markout_bps` (+ median/probe/`win_rate_net_roundtrip`), optional `by_action`. Top-level **`fee_model`** (`source` live|fallback|override, `maker_bps`/`taker_bps`, `role`, `open_fee_bps`, `round_trip_fee_bps`, `funding_note`). Later price from `factor_snapshots` (fallback `decisions.entry_price`); fills without a later price are `skipped`. Sibling: `GET /api/v1/stats/shadow_markout?hours=` (same payload). Read-only; never places orders.
 
 Quality scorecard (`/stats/quality`): single glance for observe health — `market_source` breakdown (`okx_public` / `synthetic` / `unknown`), `decision_count`, `wait_rate`, `by_action`, `near_signal_rate` (fraction of WAIT with `signal_diag.nearest` in `{long,short}`), nested `shadow` (`count` / `by_action` / `last_timestamp`), `cycle_count`, `avg_cycle_duration_ms`. Read-only; does not enable trading.
 
@@ -324,7 +324,7 @@ See also §Live（无模拟盘 key） below.
 | Cooldown | 每 instrument `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS`（默认 900）内不重复 probe |
 | 安全 | 无 kill 或无 shadow → **不** probe、**不** live order；policy 决策仍记 WAIT |
 | Arming | probe 产生的 `shadow_fill` **计入** shadow 排练证据（与 forced/manual 同属 `shadow_fill`） |
-| 统计 | `/stats/shadow` 含 `probe_count` + `by_policy`，可与 forced 区分；**Q3.2** 另含 `markout`（probe win_rate / avg bps by horizon） |
+| 统计 | `/stats/shadow` 含 `probe_count` + `by_policy`，可与 forced 区分；**Q3.2** 另含 `markout`；**Q3.5** 另含 `probe_skips` / `by_skip_reason`（durable `shadow_near_probe_skip`） |
 
 **启用示例**（观察态，勿清 kill）：
 
@@ -346,6 +346,47 @@ KEEL_SHADOW_NEAR_PROBE=1
 Monitor / status：`GET /api/v1/status`（与 `/config`）暴露 `shadow_near_probe` + cooldown + Q3.4 `shadow_near_probe_edge_mode` / `shadow_near_probe_hurdle_bps`；Overview 显示 NEAR PROBE chip 与 quality/shadow 条的 `probe_count`。Q3.2/Q3.3：Overview soft-fail chip `mk netRT win% / ±bps`（优先 **net roundtrip**；旧 API 无 `markout`/net 字段时回退 gross 或隐藏）。
 
 **Edge 估计（Q3.4）**：用 ATR/price×1e4 与 probe 几何（TP=2.2 ATR / SL=1.0 ATR）的粗 EV；胜率 ≈ gate 完整度（5−missing）/5 × confidence/100。与 Q3.3 `keel/exchange/okx_fees.py` 同一费率模型（makerU/takerU 或 Regular 2/5 bps）。
+
+### Q3.5 Near-probe skip observability
+
+When near-probe **evaluates** (kill+shadow+probe on, policy `WAIT`) but does **not** fire, the worker writes a lightweight ledger event:
+
+```json
+{
+  "event_type": "shadow_near_probe_skip",
+  "inst_id": "BTC-USDT-SWAP",
+  "data": {
+    "reason": "below_hurdle",
+    "edge_bps": 4.8,
+    "hurdle_bps": 10.0,
+    "fee_role": "taker",
+    "edge_mode": "round_trip"
+  }
+}
+```
+
+| `reason` | Meaning |
+|----------|---------|
+| `below_hurdle` | Estimated `edge_bps` &lt; fee hurdle |
+| `edge_unavailable` | Edge not estimable (fail-closed) or geometry build failed |
+| `cooldown` | Recent probe fill inside cooldown window |
+| `max_missing` | `len(missing)` &gt; max_missing |
+| `not_near` | Nearest not long/short, or confidence below min |
+| `probe_disabled` | Kill/shadow/probe flag off (status/last-cycle only; **not** ledger-flooded) |
+
+**API**: `GET /api/v1/stats/shadow?hours=N` includes:
+
+- `probe_skips`: `{count, by_skip_reason, top_skip_reason, last_reason, last_timestamp}`
+- top-level `by_skip_reason` (same map; soft-fail friendly)
+
+Hours filter works because skips are durable ledger events. `GET /api/v1/status` → `last_cycle` also exposes cycle-local `probe_skips` / `by_skip_reason` / `top_skip_reason` / `last_probe_skip_reason` (always annotated when evaluated, even before events exist).
+
+Monitor: optional soft chip `skip <reason> ×N` next to probe count (hidden when no skips).
+
+```bash
+curl -s "http://127.0.0.1:8080/api/v1/stats/shadow?hours=24" \
+  | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('probe_skips')); print(d.get('by_skip_reason'))"
+```
 
 ### Q3.2 / Q3.3 Shadow markout（离线盈亏 + OKX 官方费率）
 
