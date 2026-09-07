@@ -432,6 +432,16 @@ KEEL_RULE_VARIANT=trend_follow
 ```
 Restart worker after edit. **Do not** enable `KEEL_SHADOW_NEAR_PROBE`, lower the 10bps hurdle, or clear kill (E0 freeze).
 
+**E2C offline fire-rate replay (no restart):** live observe can still show `full_gate_fires=0` when 15m/1h rarely align; soft_tf still needs trend+macd+ema first. Replay recent ledger snapshots under forced TF (E2B defaults) without touching `.env`:
+
+```bash
+# Offline TF+E2B full-gate fire-rate (local SQLite; strips OKX keys; never writes .env)
+PYTHONPATH=. python scripts/tf_full_gate_replay.py \
+  --db data/keel_ledger.db --hours 168 --variant trend_follow --compare-mr
+```
+
+Reports n snapshots, full_gate count/rate by instrument+action, top missing gates under TF, and 1-missing near fires. Fee-aware markout of counterfactual replay hits is skipped — use E1 `scripts/full_gate_markout.py` for live full-gate rows. Helpers: `keel.ledger.tf_fire_replay`.
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.
