@@ -83,6 +83,9 @@ class StatusResponse(BaseModel):
     ledger_db: str
     kill_switch: bool = False
     shadow_mode: bool = False
+    # Q3.1: near-signal shadow probe flag + cooldown (same as /config; never live orders).
+    shadow_near_probe: bool = False
+    shadow_near_probe_cooldown_seconds: int = 900
     decision_policy: str = "rule"
     last_cycle: LastCycleSummary | None = None
     seconds_since_last_cycle: int | None = None

@@ -20,6 +20,7 @@ import {
   Waves,
   ClipboardCheck,
   Ghost,
+  Crosshair,
 } from 'lucide-vue-next'
 
 const store = useMonitorStore()
@@ -310,6 +311,14 @@ const qualityShadowCount = computed(() => {
   const n = qualityStats.value?.shadow?.count
   return typeof n === 'number' && Number.isFinite(n) ? n : null
 })
+const qualityProbeCount = computed(() => {
+  const n = qualityStats.value?.shadow?.probe_count
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+})
+const shadowProbeCount = computed(() => {
+  const n = shadowStats.value?.probe_count
+  return typeof n === 'number' && Number.isFinite(n) ? n : 0
+})
 function radarNearestLabel(nearest: string | null | undefined, action: string): string {
   const a = (action || '').toUpperCase()
   if (a === 'BUY_LONG') return 'fired long'
@@ -427,6 +436,17 @@ const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
 const shadowModeOn = computed(() =>
   Boolean(store.status?.shadow_mode ?? store.config?.shadow_mode),
 )
+
+/** Read-only: KEEL_SHADOW_NEAR_PROBE — near-signal shadow rehearsal (kill+shadow only). */
+const shadowNearProbeOn = computed(() =>
+  Boolean(store.status?.shadow_near_probe ?? store.config?.shadow_near_probe),
+)
+const shadowNearProbeCooldown = computed(() => {
+  const n =
+    store.status?.shadow_near_probe_cooldown_seconds ??
+    store.config?.shadow_near_probe_cooldown_seconds
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+})
 
 /** Q1: OKX key capability badge (只读 / 可交易 / paper / 未知). */
 const okxCapability = computed(() => {
@@ -601,6 +621,9 @@ const configStrip = computed(() => {
   const liveMaxContracts = c?.live_max_contracts_per_instrument
   const kill = c?.kill_switch ?? store.status?.kill_switch ?? false
   const shadow = c?.shadow_mode ?? store.status?.shadow_mode ?? false
+  const nearProbe = c?.shadow_near_probe ?? store.status?.shadow_near_probe ?? false
+  const nearProbeCd =
+    c?.shadow_near_probe_cooldown_seconds ?? store.status?.shadow_near_probe_cooldown_seconds
   const isLiveEnv = String(env).toLowerCase() === 'live'
   const notify = c?.notify_configured
   const policy = c?.decision_policy || store.status?.decision_policy || '—'
@@ -622,6 +645,8 @@ const configStrip = computed(() => {
     isLiveEnv,
     kill: kill ? 'ON' : 'off',
     shadow: shadow ? 'ON' : 'off',
+    nearProbe: nearProbe ? 'ON' : 'off',
+    nearProbeCd: nearProbeCd == null ? '—' : String(nearProbeCd),
     notify: notify == null ? '—' : notify ? 'yes' : 'no',
     policy,
     cycle: formatCycleIntervalLabel(intervalSec),
@@ -667,6 +692,16 @@ const configStrip = computed(() => {
               >
                 <Ghost class="w-3 h-3" />
                 SHADOW MODE
+              </span>
+              <span
+                v-if="shadowNearProbeOn"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-extrabold bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/40 tracking-wide"
+                :title="shadowNearProbeCooldown != null
+                  ? `KEEL_SHADOW_NEAR_PROBE — near-signal → shadow_fill rehearsal; cooldown ${shadowNearProbeCooldown}s; never live orders`
+                  : 'KEEL_SHADOW_NEAR_PROBE — near-signal → shadow_fill rehearsal; never live orders'"
+              >
+                <Crosshair class="w-3 h-3" />
+                NEAR PROBE
               </span>
             </div>
             <p class="text-[10px] text-[#707E94] font-mono flex items-center gap-1.5">
@@ -762,6 +797,24 @@ const configStrip = computed(() => {
               </div>
               <div class="text-xs font-mono text-violet-100/80 mt-0.5">
                 影子成交 · risk-pass decisions ledger shadow_fill · no OKX place_order · env-only (KEEL_SHADOW_MODE)
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="shadowNearProbeOn"
+            class="rounded-xl border border-fuchsia-500/40 bg-fuchsia-500/10 px-4 py-3 flex items-start gap-3"
+            role="status"
+            aria-live="polite"
+          >
+            <Crosshair class="w-5 h-5 text-fuchsia-300 shrink-0 mt-0.5" />
+            <div class="min-w-0">
+              <div class="text-sm font-mono font-extrabold text-fuchsia-200 tracking-wide">
+                NEAR PROBE ON
+              </div>
+              <div class="text-xs font-mono text-fuchsia-100/80 mt-0.5">
+                近信号影子排练 · WAIT+near → shadow_fill · requires kill+shadow ·
+                cooldown {{ shadowNearProbeCooldown ?? '—' }}s · env-only (KEEL_SHADOW_NEAR_PROBE)
               </div>
             </div>
           </div>
@@ -1017,6 +1070,12 @@ const configStrip = computed(() => {
             >live_caps <span class="text-amber-300">${{ configStrip.liveMaxNotional }} / {{ configStrip.liveMaxContracts }} ct</span></span>
             <span class="text-[#A8B3C7]">kill <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
             <span class="text-[#A8B3C7]">shadow <span :class="shadowModeOn ? 'text-violet-300' : 'text-white'">{{ configStrip.shadow }}</span></span>
+            <span
+              class="text-[#A8B3C7]"
+              :title="`KEEL_SHADOW_NEAR_PROBE · cooldown ${configStrip.nearProbeCd}s`"
+            >near_probe <span :class="shadowNearProbeOn ? 'text-fuchsia-300' : 'text-white'">{{ configStrip.nearProbe }}</span>
+              <span v-if="shadowNearProbeOn" class="text-[#707E94]">({{ configStrip.nearProbeCd }}s)</span>
+            </span>
             <span class="text-[#A8B3C7]">notify <span class="text-white">{{ configStrip.notify }}</span></span>
             <span class="text-[#A8B3C7]" :title="configStrip.cycleTitle">周期 <span class="text-white">{{ configStrip.cycle }}</span></span>
             <span
@@ -1156,6 +1215,10 @@ const configStrip = computed(() => {
                 : `shadow_fill n=${qualityShadowCount ?? 0}`"
             >shadow {{ qualityShadowCount ?? 0 }}</span>
             <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-fuchsia-500/40 text-fuchsia-300"
+              :title="`near-probe shadow_fill n=${qualityProbeCount ?? 0}`"
+            >probe {{ qualityProbeCount ?? 0 }}</span>
+            <span
               class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-sky-500/40 text-sky-300"
               :title="`okx_public ${qualityStats.market_source?.okx_public ?? 0} / synthetic ${qualityStats.market_source?.synthetic ?? 0} / unknown ${qualityStats.market_source?.unknown ?? 0}`"
             >okx {{ qualityOkxSharePct }}</span>
@@ -1176,6 +1239,11 @@ const configStrip = computed(() => {
                   ? `last shadow_fill @ ${fmtTs(shadowStats.last_timestamp)}`
                   : 'no shadow_fill in lookback'"
               >shadow {{ shadowStats.count }}</span>
+              <span
+                v-if="shadowStats"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-fuchsia-500/40 text-fuchsia-300"
+                title="near-probe shadow_fill count in lookback"
+              >probe {{ shadowProbeCount }}</span>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
               <div>
@@ -1235,6 +1303,7 @@ const configStrip = computed(() => {
             >
               <span class="text-violet-300">Shadow stats ({{ shadowStats.hours }}h)</span>
               <span class="text-white tabular-nums">n={{ shadowStats.count }}</span>
+              <span class="text-fuchsia-300 tabular-nums">probe={{ shadowProbeCount }}</span>
               <span v-if="shadowStatsByAction" class="truncate" :title="shadowStatsByAction">{{ shadowStatsByAction }}</span>
               <span v-if="shadowStats.last_timestamp" class="text-[#707E94]">last {{ fmtTs(shadowStats.last_timestamp) }}</span>
               <span v-else class="text-[#707E94]">no fills</span>

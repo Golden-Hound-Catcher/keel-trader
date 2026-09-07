@@ -158,6 +158,11 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIn("shadow_mode", r.json())
         self.assertIsInstance(r.json()["shadow_mode"], bool)
         self.assertFalse(r.json()["shadow_mode"])
+        self.assertIn("shadow_near_probe", r.json())
+        self.assertIsInstance(r.json()["shadow_near_probe"], bool)
+        self.assertFalse(r.json()["shadow_near_probe"])
+        self.assertIn("shadow_near_probe_cooldown_seconds", r.json())
+        self.assertEqual(r.json()["shadow_near_probe_cooldown_seconds"], 900)
         self.assertIn("decision_policy", r.json())
         self.assertIsInstance(r.json()["decision_policy"], str)
         self.assertIn("okx_capability", r.json())
@@ -178,6 +183,10 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertFalse(r.json()["kill_switch"])
         self.assertIn("shadow_mode", r.json())
         self.assertFalse(r.json()["shadow_mode"])
+        self.assertIn("shadow_near_probe", r.json())
+        self.assertFalse(r.json()["shadow_near_probe"])
+        self.assertIn("shadow_near_probe_cooldown_seconds", r.json())
+        self.assertEqual(r.json()["shadow_near_probe_cooldown_seconds"], 900)
         self.assertIn("okx_capability", r.json())
         self.assertEqual(r.json()["okx_capability"], "none")
         self.assertEqual(r.json()["decision_policy"], self.client.get("/api/v1/status").json()["decision_policy"])
@@ -197,6 +206,27 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         finally:
             os.environ.pop("KEEL_SHADOW_MODE", None)
             refresh_settings()
+
+    def test_status_shadow_near_probe_fields(self):
+        os.environ["KEEL_SHADOW_NEAR_PROBE"] = "1"
+        os.environ["KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS"] = "60"
+        try:
+            refresh_settings()
+            app = create_app()
+            client = TestClient(app)
+            r = client.get("/api/v1/status")
+            self.assertEqual(r.status_code, 200)
+            self.assertTrue(r.json()["shadow_near_probe"])
+            self.assertEqual(r.json()["shadow_near_probe_cooldown_seconds"], 60)
+            r = client.get("/api/v1/config")
+            self.assertEqual(r.status_code, 200)
+            self.assertTrue(r.json()["shadow_near_probe"])
+            self.assertEqual(r.json()["shadow_near_probe_cooldown_seconds"], 60)
+        finally:
+            os.environ.pop("KEEL_SHADOW_NEAR_PROBE", None)
+            os.environ.pop("KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS", None)
+            refresh_settings()
+
 
     def test_status_kill_switch_on_when_armed(self):
         os.environ["KEEL_KILL_SWITCH"] = "1"
