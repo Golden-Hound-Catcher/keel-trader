@@ -232,11 +232,16 @@ PYTHONPATH=. python scripts/suggest_rule_params.py \
   --db data/keel_ledger.db --hours 168 --market-source okx_public \
   --hurdle-bps 10 --max-fire-rate 0.25 --top 5 \
   --out /tmp/keel_rule_suggest.json
+
+# Per-instrument (BTC/ETH/SOL often differ: below_hurdle vs max_missing)
+PYTHONPATH=. python scripts/suggest_rule_params.py \
+  --db data/keel_ledger.db --hours 168 --market-source okx_public \
+  --inst-id BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP --top 3
 ```
 
 **Grid (default):** `rsi_long_max ∈ {40,42,45,48}`, `rsi_short_min ∈ {52,55,58,60}`, `min_vol ∈ {0.35,0.5,0.7}`, `rsi_relax` on/off. Each combo replays `rule_based_decision` on export rows (same helpers as `compare_rule_params --db`).
 
-**Ranking:** (1) maximize full fires with `edge_hint_bps ≥ hurdle` (default **10**), (2) keep fire rate ≤ **25%** of cohort, (3) prefer fewer `volume_ok`-only misses. Script prints top 5 + a one-line manual `.env` recommendation — **apply by hand** after review; the tool never auto-writes config.
+**Ranking:** (1) maximize full fires with `edge_hint_bps ≥ hurdle` (default **10**), (2) keep fire rate ≤ **25%** of cohort, (3) prefer fewer `volume_ok`-only misses. Script prints top 5 + a one-line manual `.env` recommendation — **apply by hand** after review; the tool never auto-writes config. With `--inst-id` / `--all-instruments`, the grid runs **per symbol** and a combined summary ranks which instrument looks closest to fee-clearing fires.
 
 **Interpret vs 10 bps:** treat `fires_edge>=10bps` as the fee-aware signal count. If top rows show `fires=0` or only `OVER_CAP` floods, keep observing (or widen lookback) rather than forcing `short_min=40`. Optional `--from-ledger` JSONL works the same as compare. Cross-check a candidate with:
 
