@@ -54,7 +54,11 @@ def _resolve_ledger(
 
 
 def _has_recent_shadow_fill(ledger: Any, hours: float) -> bool:
-    """True when ledger has a shadow_fill event within the last ``hours``."""
+    """True when ledger has a shadow_fill event within the last ``hours``.
+
+    Includes Q3 near-probe fills (policy=shadow_near_probe) as well as
+    forced/manual shadow fills — both are valid rehearsal evidence.
+    """
     if ledger is None or hours <= 0:
         return False
     try:

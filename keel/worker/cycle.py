@@ -40,6 +40,7 @@ from keel.exchange.okx_rest import OkxRestAdapter
 from keel.exchange.paper import PaperAdapter, PaperExchange
 from keel.exchange.protocol import ExchangeProtocol, Ticker
 from keel.execution.orchestrator import ExecutionOrchestrator, ExecutionResult
+from keel.execution.near_probe import maybe_near_probe_decision
 from keel.factors.market_data import Candle, MarketSnapshot
 from keel.factors.technical import (
     calculate_atr,
@@ -596,10 +597,29 @@ def run_paper_cycle(
             )
         )
 
-        exec_result: ExecutionResult = orchestrator.execute_decision(
+        # Q3: optional near-signal → shadow_fill probe (kill+shadow+probe only).
+        # Policy decision stays WAIT in the ledger; execution may rehearse shadow.
+        exec_decision = decision
+        probed = maybe_near_probe_decision(
             decision,
+            snap,
+            kill_switch=settings.kill_switch,
+            shadow_mode=settings.shadow_mode,
+            probe_enabled=settings.shadow_near_probe,
+            max_missing=settings.shadow_near_probe_max_missing,
+            min_confidence=settings.shadow_near_probe_min_confidence,
+            cooldown_seconds=float(settings.shadow_near_probe_cooldown_seconds),
+            ledger=ledger,
+            now=now,
+        )
+        if probed is not None:
+            exec_decision = probed
+
+        exec_result: ExecutionResult = orchestrator.execute_decision(
+            exec_decision,
             daily_pnl=daily_pnl,
             kill_switch=settings.kill_switch,
+            shadow_mode=settings.shadow_mode,
         )
         result_row: dict[str, Any] = {
             "inst_id": inst_id,
@@ -616,6 +636,9 @@ def run_paper_cycle(
             "rsi": round(snap.rsi_14, 2),
             "trend": snap.trend_15m,
         }
+        if probed is not None:
+            result_row["shadow_near_probe"] = True
+            result_row["exec_action"] = exec_decision.action
         if getattr(decision, "signal_diag", None):
             result_row["signal_diag"] = decision.signal_diag
         results.append(result_row)

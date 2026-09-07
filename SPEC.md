@@ -163,6 +163,10 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_LEDGER_DB` | local path | SQLite file |
 | `KEEL_KILL_SWITCH` | `0` | `0` \| `1` / true\|false — deny all trading when on |
 | `KEEL_SHADOW_MODE` | `0` | `0` \| `1` — ledger shadow_fill instead of place_order; kill blocks real orders only |
+| `KEEL_SHADOW_NEAR_PROBE` | `0` | `0` \| `1` — Q3: convert strong WAIT near-signals to shadow_fill when kill+shadow on; never live |
+| `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS` | `900` | Per-instrument cooldown between probe shadow fills |
+| `KEEL_SHADOW_NEAR_PROBE_MAX_MISSING` | `2` | Max `signal_diag.missing` length (aligned with near-signal notify) |
+| `KEEL_SHADOW_NEAR_PROBE_MIN_CONFIDENCE` | `0` | Optional min decision confidence gate for probe |
 | `KEEL_MAX_NOTIONAL_PER_INSTRUMENT` | `2000` | USDT; existing + requested notional (margin×leverage); on `/config` |
 | `KEEL_MAX_CONTRACTS_PER_INSTRUMENT` | `50` | Contract/size units per instrument when size known; on `/config` |
 | `KEEL_INSTRUMENTS` | empty → defaults | Comma-separated OKX swap ids; empty → `DEFAULT_CRYPTO_INSTRUMENTS`; worker + `/config` instruments |
@@ -300,6 +304,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q3 shadow near-probe**: `KEEL_SHADOW_NEAR_PROBE` converts strong WAIT near-signals → shadow_fill when kill+shadow on (never live); cooldown/max_missing gates; `policy=shadow_near_probe` audit; arming counts probe fills; RUNBOOK/SPEC |
 | 2026-09-07 | **Q2.2 quality scorecard**: `GET /api/v1/stats/quality?hours=` compact observe health (market_source breakdown, wait/near_signal rates, shadow nest, cycles); Monitor Overview chips; RUNBOOK note |
 | 2026-09-07 | **Q2.1 ledger rule-param compare**: `scripts/export_decisions.py` + `KeelLedger.export_decisions`; `compare_rule_params.py --from-ledger` / `--db` replays RuleDecisionPolicy on observed okx_public calculus/factors (skip incomplete) |
 | 2026-09-07 | **Q2 decision-quality deepening**: stamp `calculus_data.market_source`; `GET /stats/decisions?market_source=`; `GET /stats/shadow`; Monitor shadow chip + market_source chip; `scripts/compare_rule_params.py` offline A/B thresholds |
@@ -367,6 +372,10 @@ After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` 
 ## Addendum: shadow execution
 
 `KEEL_SHADOW_MODE` (default off) loads into `settings.shadow_mode`. When on, `ExecutionOrchestrator` still runs validation + risk gates. **Kill-switch means no real exchange orders**; with shadow on, gates allow the shadow path so operators can rehearse while `KEEL_KILL_SWITCH=1`. Decisions that would place an order instead record a ledger `shadow_fill` event (decision details) and an optional synthetic trade marked `metadata.shadow=true` / `strategy_tag=keel-shadow`, returning `success=true` without calling exchange `place_order` (no OKX POST). Non-secret `shadow_mode` is echoed on status/config; Monitor Overview shows a read-only badge/banner when on. Arming warns (or blocks when `KEEL_ARMING_REQUIRE_SHADOW=1`) if no recent `shadow_fill` (see RUNBOOK).
+
+## Addendum: Q3 shadow near-signal probe
+
+`KEEL_SHADOW_NEAR_PROBE` (default **off**) optionally converts strong WAIT near-signals into shadow-only fills for arming rehearsal. Requires **all** of: kill-switch on, shadow mode on, probe on. Gate: `signal_diag.nearest` ∈ {long, short} and `len(missing) ≤ KEEL_SHADOW_NEAR_PROBE_MAX_MISSING` (default 2). Per-instrument cooldown via `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS`. Policy ledger rows stay WAIT; execution synthesizes BUY_LONG/SELL_SHORT through the existing shadow_fill path with `policy=shadow_near_probe` / `probe=true` / `strategy_tag=keel-shadow-near-probe`. **Never** calls exchange `place_order`. Probe fills count toward arming shadow rehearsal. `/stats/shadow` exposes `probe_count` + `by_policy`. See RUNBOOK.
 
 ## Addendum: first-live caps
 

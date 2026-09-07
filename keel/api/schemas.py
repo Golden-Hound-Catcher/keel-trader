@@ -110,6 +110,10 @@ class ConfigResponse(BaseModel):
     llm_model: str
     kill_switch: bool = False
     shadow_mode: bool = False
+    # Q3 near-signal shadow probe (kill+shadow only; never live orders).
+    shadow_near_probe: bool = False
+    shadow_near_probe_cooldown_seconds: int = 900
+    shadow_near_probe_max_missing: int = 2
     decision_policy: str = "rule"
     instruments: list[str] = Field(default_factory=list)
     notify_configured: bool = False
@@ -198,6 +202,8 @@ class ShadowStatsResponse(BaseModel):
     hours: int
     count: int = 0
     by_action: dict[str, int] = Field(default_factory=dict)
+    by_policy: dict[str, int] = Field(default_factory=dict)
+    probe_count: int = 0
     last_timestamp: float | None = None
 
 
@@ -206,6 +212,8 @@ class QualityShadowBlock(BaseModel):
 
     count: int = 0
     by_action: dict[str, int] = Field(default_factory=dict)
+    by_policy: dict[str, int] = Field(default_factory=dict)
+    probe_count: int = 0
     last_timestamp: float | None = None
 
 
