@@ -19,6 +19,7 @@ import {
   Gauge,
   Waves,
   ClipboardCheck,
+  Ghost,
 } from 'lucide-vue-next'
 
 const store = useMonitorStore()
@@ -379,6 +380,11 @@ const cycleErrorsTitle = computed(() => {
 /** Read-only: armed via KEEL_KILL_SWITCH (status API); no admin toggle. */
 const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
 
+/** Read-only: KEEL_SHADOW_MODE — ledger shadow fills, no exchange place_order. */
+const shadowModeOn = computed(() =>
+  Boolean(store.status?.shadow_mode ?? store.config?.shadow_mode),
+)
+
 /** Q1: OKX key capability badge (只读 / 可交易 / paper / 未知). */
 const okxCapability = computed(() => {
   const raw = (store.status?.okx_capability || store.config?.okx_capability || '').toLowerCase()
@@ -549,6 +555,7 @@ const configStrip = computed(() => {
   const maxNotional = c?.max_notional_per_instrument
   const maxContracts = c?.max_contracts_per_instrument
   const kill = c?.kill_switch ?? store.status?.kill_switch ?? false
+  const shadow = c?.shadow_mode ?? store.status?.shadow_mode ?? false
   const notify = c?.notify_configured
   const policy = c?.decision_policy || store.status?.decision_policy || '—'
   const intervalSec = cycleIntervalSeconds.value
@@ -565,6 +572,7 @@ const configStrip = computed(() => {
     maxNotional: maxNotional == null ? '—' : fmt(maxNotional, 0),
     maxContracts: maxContracts == null ? '—' : String(maxContracts),
     kill: kill ? 'ON' : 'off',
+    shadow: shadow ? 'ON' : 'off',
     notify: notify == null ? '—' : notify ? 'yes' : 'no',
     policy,
     cycle: formatCycleIntervalLabel(intervalSec),
@@ -602,6 +610,14 @@ const configStrip = computed(() => {
               >
                 <Ban class="w-3 h-3" />
                 KILL SWITCH ON
+              </span>
+              <span
+                v-if="shadowModeOn"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-extrabold bg-violet-500/15 text-violet-300 border border-violet-500/40 tracking-wide"
+                title="KEEL_SHADOW_MODE — decisions ledger shadow_fill; no exchange place_order"
+              >
+                <Ghost class="w-3 h-3" />
+                SHADOW MODE
               </span>
             </div>
             <p class="text-[10px] text-[#707E94] font-mono flex items-center gap-1.5">
@@ -680,6 +696,23 @@ const configStrip = computed(() => {
               </div>
               <div class="text-xs font-mono text-rose-200/80 mt-0.5">
                 交易已冻结 · risk gates deny all trading · env-only (KEEL_KILL_SWITCH) · no admin toggle
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="shadowModeOn"
+            class="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3 flex items-start gap-3"
+            role="status"
+            aria-live="polite"
+          >
+            <Ghost class="w-5 h-5 text-violet-300 shrink-0 mt-0.5" />
+            <div class="min-w-0">
+              <div class="text-sm font-mono font-extrabold text-violet-200 tracking-wide">
+                SHADOW MODE ON
+              </div>
+              <div class="text-xs font-mono text-violet-100/80 mt-0.5">
+                影子成交 · risk-pass decisions ledger shadow_fill · no OKX place_order · env-only (KEEL_SHADOW_MODE)
               </div>
             </div>
           </div>
@@ -905,7 +938,7 @@ const configStrip = computed(() => {
               v-if="armingReady && !armingBlockers.length"
               class="text-[10px] font-mono text-emerald-400/80 mt-1"
             >
-              Checklist green — operator must still set KEEL_KILL_SWITCH=0 manually (no UI toggle).
+              Checklist green — rehearse with KEEL_SHADOW_MODE=1, then set KEEL_KILL_SWITCH=0 manually (no UI toggle).
             </div>
           </div>
 
@@ -929,6 +962,7 @@ const configStrip = computed(() => {
             <span class="text-[#A8B3C7]">max_notional <span class="text-white">${{ configStrip.maxNotional }}</span></span>
             <span class="text-[#A8B3C7]">max_contracts <span class="text-white">{{ configStrip.maxContracts }}</span></span>
             <span class="text-[#A8B3C7]">kill <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
+            <span class="text-[#A8B3C7]">shadow <span :class="shadowModeOn ? 'text-violet-300' : 'text-white'">{{ configStrip.shadow }}</span></span>
             <span class="text-[#A8B3C7]">notify <span class="text-white">{{ configStrip.notify }}</span></span>
             <span class="text-[#A8B3C7]" :title="configStrip.cycleTitle">周期 <span class="text-white">{{ configStrip.cycle }}</span></span>
             <span

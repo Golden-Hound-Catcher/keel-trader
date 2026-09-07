@@ -58,6 +58,8 @@ export interface KeelStatus {
   }
   ledger_db: string
   kill_switch: boolean
+  /** Q1: shadow execution — ledger fills without place_order (KEEL_SHADOW_MODE). */
+  shadow_mode?: boolean
   /** Active decision policy name (rule|stub|llm) from build_decision_policy. */
   decision_policy: string
   last_cycle?: KeelLastCycle | null
@@ -81,6 +83,8 @@ export interface KeelConfig {
   max_contracts_per_instrument?: number
   llm_model: string
   kill_switch: boolean
+  /** Q1: shadow execution flag (same as status.shadow_mode). */
+  shadow_mode?: boolean
   /** Active decision policy name (same as status.decision_policy). */
   decision_policy: string
   instruments: string[]

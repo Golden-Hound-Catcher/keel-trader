@@ -186,6 +186,106 @@ class TestOrchestratorLedgerCoherence(unittest.TestCase):
                 os.environ["KEEL_KILL_SWITCH"] = prev
             refresh_settings()
 
+    def test_shadow_mode_no_place_order_writes_event(self):
+        """Shadow path must not call exchange.place_order; ledger shadow_fill."""
+        place_calls: list = []
+        real_place = self.exchange.place_order
+
+        def tracking_place(request):
+            place_calls.append(request)
+            return real_place(request)
+
+        self.exchange.place_order = tracking_place  # type: ignore[method-assign]
+        decision = Decision(
+            inst_id="BTC-USDT-SWAP",
+            action="BUY_LONG",
+            confidence=80,
+            entry_price=100.2,
+            take_profit=122.0,
+            stop_loss=90.0,
+            leverage=3,
+            margin_usdt=50.0,
+            reason="unit shadow",
+        )
+        result = self.orch.execute_decision(decision, shadow_mode=True)
+        self.assertTrue(result.success)
+        self.assertTrue(result.filled)
+        self.assertTrue(result.shadow)
+        self.assertTrue((result.order_id or "").startswith("shadow-"))
+        self.assertEqual(place_calls, [], "shadow must not call place_order")
+        events = self.ledger.get_events(event_type="shadow_fill")
+        self.assertGreaterEqual(len(events), 1)
+        self.assertEqual(events[0].data.get("action"), "BUY_LONG")
+        self.assertTrue(events[0].data.get("shadow"))
+        trades = self.ledger.get_trades()
+        self.assertEqual(len(trades), 1)
+        self.assertTrue(trades[0].metadata.get("shadow"))
+        self.assertEqual(trades[0].strategy_tag, "keel-shadow")
+
+    def test_shadow_mode_kill_switch_still_blocks(self):
+        orch = ExecutionOrchestrator(
+            exchange=self.exchange,
+            ledger=self.ledger,
+            risk_gates=[KillSwitchGate()],
+        )
+        place_calls: list = []
+
+        def boom(request):
+            place_calls.append(request)
+            raise AssertionError("place_order must not be called")
+
+        self.exchange.place_order = boom  # type: ignore[method-assign]
+        decision = Decision(
+            inst_id="BTC-USDT-SWAP",
+            action="BUY_LONG",
+            entry_price=100.2,
+            take_profit=122.0,
+            stop_loss=90.0,
+            margin_usdt=50.0,
+        )
+        result = orch.execute_decision(decision, kill_switch=True, shadow_mode=True)
+        self.assertFalse(result.success)
+        self.assertEqual(result.risk_gate_failed, "kill_switch")
+        self.assertFalse(result.shadow)
+        self.assertEqual(place_calls, [])
+        self.assertEqual(len(self.ledger.get_events(event_type="shadow_fill")), 0)
+
+    def test_shadow_mode_from_settings(self):
+        import os
+        from keel.config import refresh_settings
+
+        prev = os.environ.get("KEEL_SHADOW_MODE")
+        os.environ["KEEL_SHADOW_MODE"] = "1"
+        refresh_settings()
+        place_calls: list = []
+        real_place = self.exchange.place_order
+
+        def tracking_place(request):
+            place_calls.append(request)
+            return real_place(request)
+
+        self.exchange.place_order = tracking_place  # type: ignore[method-assign]
+        try:
+            decision = Decision(
+                inst_id="BTC-USDT-SWAP",
+                action="BUY_LONG",
+                entry_price=100.2,
+                take_profit=122.0,
+                stop_loss=90.0,
+                margin_usdt=50.0,
+            )
+            result = self.orch.execute_decision(decision)
+            self.assertTrue(result.success)
+            self.assertTrue(result.shadow)
+            self.assertEqual(place_calls, [])
+            self.assertGreaterEqual(len(self.ledger.get_events(event_type="shadow_fill")), 1)
+        finally:
+            if prev is None:
+                os.environ.pop("KEEL_SHADOW_MODE", None)
+            else:
+                os.environ["KEEL_SHADOW_MODE"] = prev
+            refresh_settings()
+
 
 if __name__ == "__main__":
     unittest.main()
