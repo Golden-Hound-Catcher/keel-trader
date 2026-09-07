@@ -4,6 +4,8 @@ Deterministic Stub / Rule decision policies for offline tests and paper cycles.
 No LLM calls. Rule v3+: RSI + trend + MACD + EMA stack + adaptive volume_ratio
 filters, soft RSI relax when the other four gates pass, and edge hints for
 near-probe observability.
+R5: real multi-TF trends (trend_15m/1h/4h); entry gate is 15m; optional hard
+1h alignment via KEEL_RULE_REQUIRE_1H_TREND (default 0 = soft confirm only).
 Q0: diagnose_rule_signal attaches structured near-signal gate diagnostics.
 """
 from __future__ import annotations
@@ -74,12 +76,17 @@ def _rule_thresholds() -> dict[str, float | bool]:
         "rsi_relax_enable": _env_bool("KEEL_RULE_RSI_RELAX_ENABLE", True),
         "rsi_relax_long_max": _env_float("KEEL_RULE_RSI_RELAX_LONG_MAX", 48.0),
         "rsi_relax_short_min": _env_float("KEEL_RULE_RSI_RELAX_SHORT_MIN", 52.0),
+        # R5: hard-require 1h trend same direction as 15m (default off = soft confirm).
+        "require_1h_trend": _env_bool("KEEL_RULE_REQUIRE_1H_TREND", False),
     }
 
 
 def _factor_reason(snapshot: MarketSnapshot, prefix: str) -> str:
+    t1h = getattr(snapshot, "trend_1h", "neutral") or "neutral"
+    t4h = getattr(snapshot, "trend_4h", "neutral") or "neutral"
     return (
-        f"{prefix} rsi={snapshot.rsi_14:.1f} trend={snapshot.trend_15m} "
+        f"{prefix} rsi={snapshot.rsi_14:.1f} "
+        f"trend15m={snapshot.trend_15m} trend1h={t1h} trend4h={t4h} "
         f"macd_h={snapshot.macd_histogram:.4f} "
         f"ema9={snapshot.ema_9:.4f} ema21={snapshot.ema_21:.4f} "
         f"vol={snapshot.volume_ratio:.2f}"
@@ -180,6 +187,8 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     Rule v3+ extras: ``volume_threshold``, ``volume_soft_pass``, ``volume_path``,
     ``volume_percentile``, ``rsi_soft_pass``, ``rsi_path``, ``near_ready``,
     ``atr_bps`` / ``expected_tp_bps`` / ``edge_hint_bps``.
+    R5: ``trend_15m`` / ``trend_1h`` / ``trend_4h``, ``trend_gate``
+    (``15m`` or ``15m+1h``), ``trend_1h_confirm``, ``require_1h_trend``.
     """
     th = _rule_thresholds()
     rsi_long_max = float(th["rsi_long_max"])
@@ -198,8 +207,30 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
 
     rsi_long_hard = snapshot.rsi_14 <= rsi_long_max
     rsi_short_hard = snapshot.rsi_14 >= rsi_short_min
-    trend_bullish = snapshot.trend_15m == "bullish"
-    trend_bearish = snapshot.trend_15m == "bearish"
+    require_1h = bool(th["require_1h_trend"])
+    trend_15m = str(snapshot.trend_15m or "neutral")
+    trend_1h = str(getattr(snapshot, "trend_1h", "neutral") or "neutral")
+    trend_4h = str(getattr(snapshot, "trend_4h", "neutral") or "neutral")
+    # Entry gate is always 15m; optional hard 1h same-direction confirmation.
+    trend_15m_bullish = trend_15m == "bullish"
+    trend_15m_bearish = trend_15m == "bearish"
+    trend_1h_confirm_long = trend_1h == "bullish"
+    trend_1h_confirm_short = trend_1h == "bearish"
+    if require_1h:
+        trend_bullish = trend_15m_bullish and trend_1h_confirm_long
+        trend_bearish = trend_15m_bearish and trend_1h_confirm_short
+        trend_gate = "15m+1h"
+    else:
+        trend_bullish = trend_15m_bullish
+        trend_bearish = trend_15m_bearish
+        trend_gate = "15m"
+    # Soft confirm flag: 1h matches directional 15m (audit only when require=0).
+    if trend_15m_bullish:
+        trend_1h_confirm = trend_1h_confirm_long
+    elif trend_15m_bearish:
+        trend_1h_confirm = trend_1h_confirm_short
+    else:
+        trend_1h_confirm = False
     macd_long_ok = snapshot.macd_histogram >= 0
     macd_short_ok = snapshot.macd_histogram <= 0
     ema_long_ok = snapshot.ema_9 >= snapshot.ema_21
@@ -293,7 +324,12 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         "ema_9": snapshot.ema_9,
         "ema_21": snapshot.ema_21,
         "macd_histogram": snapshot.macd_histogram,
-        "trend_15m": snapshot.trend_15m,
+        "trend_15m": trend_15m,
+        "trend_1h": trend_1h,
+        "trend_4h": trend_4h,
+        "trend_gate": trend_gate,
+        "trend_1h_confirm": trend_1h_confirm,
+        "require_1h_trend": require_1h,
     }
 
     if not data_ok:
@@ -346,8 +382,11 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     """
     Deterministic rule policy v3+ (no LLM).
 
-    Long: RSI ≤ long_max + bullish + MACD hist ≥ 0 + ema_9 ≥ ema_21 + volume_ok
-    Short: RSI ≥ short_min + bearish + MACD hist ≤ 0 + ema_9 ≤ ema_21 + volume_ok
+    Long: RSI ≤ long_max + bullish(15m[+1h]) + MACD hist ≥ 0 + ema_9 ≥ ema_21 + volume_ok
+    Short: RSI ≥ short_min + bearish(15m[+1h]) + MACD hist ≤ 0 + ema_9 ≤ ema_21 + volume_ok
+
+    Trend entry gate is ``trend_15m``; set ``KEEL_RULE_REQUIRE_1H_TREND=1`` to also
+    require ``trend_1h`` same direction (default 0 keeps soft confirm in signal_diag only).
 
     ``volume_ok`` (Rule v3): ratio ≥ min_vol (default 0.5), OR last-bar volume
     percentile ≥ min percentile (default 55), OR soft confirmation when the

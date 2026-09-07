@@ -474,3 +474,105 @@ class TestOkxPublicCandlesInCycle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMultiTfTrends(unittest.TestCase):
+    """R5: enrich classifies distinct trend_15m / trend_1h / trend_4h."""
+
+    def _bullish_closes(self, n: int, start: float = 100.0) -> list[float]:
+        # Strictly rising so EMA9 > EMA21 > EMA55 and price > EMA9.
+        return [start + i * 1.5 for i in range(n)]
+
+    def _bearish_closes(self, n: int, start: float = 200.0) -> list[float]:
+        return [start - i * 1.5 for i in range(n)]
+
+    def _candles_from_closes(self, closes: list[float], *, step: float = 900.0):
+        from keel.factors.market_data import Candle
+
+        out = []
+        for i, c in enumerate(closes):
+            out.append(
+                Candle(
+                    timestamp=1_700_000_000.0 + i * step,
+                    open=c * 0.999,
+                    high=c * 1.002,
+                    low=c * 0.998,
+                    close=c,
+                    volume=1000.0 + i,
+                )
+            )
+        return out
+
+    def test_enrich_distinct_multi_tf_trends(self):
+        from keel.worker.cycle import enrich_snapshot
+
+        # 15m rising (bullish), 1h falling (bearish), 4h flat-ish → neutral-ish
+        c15 = self._candles_from_closes(self._bullish_closes(64), step=900.0)
+        c1h = self._candles_from_closes(self._bearish_closes(64), step=3600.0)
+        # Mild oscillation → typically neutral under strict EMA alignment
+        flat = [150.0 + ((-1) ** i) * 0.2 for i in range(64)]
+        c4h = self._candles_from_closes(flat, step=14400.0)
+
+        snap = MarketSnapshot(
+            inst_id="SOL-USDT-SWAP",
+            name="SOL",
+            timestamp=c15[-1].timestamp,
+            candles_15m=c15,
+            candles_1h=c1h,
+            candles_4h=c4h,
+        )
+        enrich_snapshot(snap)
+        self.assertTrue(snap.data_valid)
+        self.assertEqual(snap.trend_15m, "bullish")
+        self.assertEqual(snap.trend_1h, "bearish")
+        # 4h oscillatory should not copy 15m/1h blindly
+        self.assertNotEqual(snap.trend_4h, snap.trend_15m)
+        self.assertIn(snap.trend_4h, ("bullish", "bearish", "neutral"))
+
+    def test_enrich_falls_back_when_higher_tf_missing(self):
+        from keel.worker.cycle import enrich_snapshot
+
+        c15 = self._candles_from_closes(self._bullish_closes(64), step=900.0)
+        snap = MarketSnapshot(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=c15[-1].timestamp,
+            candles_15m=c15,
+            candles_1h=[],
+            candles_4h=[],
+        )
+        enrich_snapshot(snap)
+        self.assertEqual(snap.trend_15m, "bullish")
+        # Empty higher TF → copy 15m (documented fallback)
+        self.assertEqual(snap.trend_1h, snap.trend_15m)
+        self.assertEqual(snap.trend_4h, snap.trend_1h)
+
+    def test_classify_trend_from_candles_helper(self):
+        from keel.worker.cycle import classify_trend_from_candles
+
+        bull = self._candles_from_closes(self._bullish_closes(64))
+        bear = self._candles_from_closes(self._bearish_closes(64))
+        self.assertEqual(classify_trend_from_candles(bull), "bullish")
+        self.assertEqual(classify_trend_from_candles(bear), "bearish")
+        self.assertEqual(classify_trend_from_candles([]), "neutral")
+
+    def test_synthetic_paper_path_sets_distinct_series(self):
+        """Paper/synthetic builds 1h/4h via subsample; enrich must not force-equal."""
+        from keel.worker.cycle import build_synthetic_candles, enrich_snapshot
+
+        c15 = build_synthetic_candles(145.0, count=64, drift=0.002, volatility=0.02)
+        c1h = c15[::4] or c15
+        c4h = c15[::16] or c15
+        snap = MarketSnapshot(
+            inst_id="SOL-USDT-SWAP",
+            name="SOL",
+            timestamp=c15[-1].timestamp,
+            candles_15m=c15,
+            candles_1h=c1h,
+            candles_4h=c4h,
+        )
+        enrich_snapshot(snap)
+        self.assertTrue(snap.data_valid)
+        # Values are independently classified (may or may not match numerically)
+        for t in (snap.trend_15m, snap.trend_1h, snap.trend_4h):
+            self.assertIn(t, ("bullish", "bearish", "neutral"))
