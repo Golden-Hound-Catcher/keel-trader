@@ -1,7 +1,7 @@
 """Read-only decision / cycle observability stats."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query
 
@@ -10,10 +10,65 @@ from keel.api.schemas import (
     DecisionStatsResponse,
     QualityShadowBlock,
     QualityStatsResponse,
+    ShadowMarkoutActionStats,
+    ShadowMarkoutBlock,
+    ShadowMarkoutHorizon,
     ShadowStatsResponse,
 )
 
 router = APIRouter()
+
+
+def _markout_block(raw: dict[str, Any] | None) -> ShadowMarkoutBlock | None:
+    if not isinstance(raw, dict):
+        return None
+    horizons_out: list[ShadowMarkoutHorizon] = []
+    for h in raw.get("horizons") or []:
+        if not isinstance(h, dict):
+            continue
+        by_action_raw = h.get("by_action") or {}
+        by_action: dict[str, ShadowMarkoutActionStats] = {}
+        if isinstance(by_action_raw, dict):
+            for act, stats in by_action_raw.items():
+                if not isinstance(stats, dict):
+                    continue
+                by_action[str(act)] = ShadowMarkoutActionStats(
+                    sample_count=int(stats.get("sample_count", 0)),
+                    avg_markout_bps=stats.get("avg_markout_bps"),
+                    median_markout_bps=stats.get("median_markout_bps"),
+                    win_rate=stats.get("win_rate"),
+                )
+        horizons_out.append(
+            ShadowMarkoutHorizon(
+                horizon_seconds=int(h.get("horizon_seconds", 0)),
+                sample_count=int(h.get("sample_count", 0)),
+                skipped=int(h.get("skipped", 0)),
+                avg_markout_bps=h.get("avg_markout_bps"),
+                median_markout_bps=h.get("median_markout_bps"),
+                win_rate=h.get("win_rate"),
+                probe_sample_count=int(h.get("probe_sample_count", 0)),
+                probe_avg_markout_bps=h.get("probe_avg_markout_bps"),
+                probe_median_markout_bps=h.get("probe_median_markout_bps"),
+                probe_win_rate=h.get("probe_win_rate"),
+                by_action=by_action,
+            )
+        )
+    return ShadowMarkoutBlock(
+        price_source=str(raw.get("price_source") or "factor_snapshots"),
+        horizons=horizons_out,
+    )
+
+
+def _shadow_response(hours: int, raw: dict[str, Any]) -> ShadowStatsResponse:
+    return ShadowStatsResponse(
+        hours=hours,
+        count=int(raw.get("count", 0)),
+        by_action=dict(raw.get("by_action") or {}),
+        by_policy=dict(raw.get("by_policy") or {}),
+        probe_count=int(raw.get("probe_count", 0)),
+        last_timestamp=raw.get("last_timestamp"),
+        markout=_markout_block(raw.get("markout")),
+    )
 
 
 @router.get("/stats/decisions", response_model=DecisionStatsResponse)
@@ -44,17 +99,20 @@ def get_decision_stats(
 def get_shadow_stats(
     hours: int = Query(default=24, ge=1, le=168),
 ) -> ShadowStatsResponse:
-    """Counts of shadow_fill events over the last ``hours`` (max 168)."""
+    """Counts + offline markout of shadow_fill events over the last ``hours``."""
     ledger = get_ledger()
-    raw = ledger.get_shadow_stats(hours=float(hours))
-    return ShadowStatsResponse(
-        hours=hours,
-        count=int(raw.get("count", 0)),
-        by_action=dict(raw.get("by_action") or {}),
-        by_policy=dict(raw.get("by_policy") or {}),
-        probe_count=int(raw.get("probe_count", 0)),
-        last_timestamp=raw.get("last_timestamp"),
-    )
+    raw = ledger.get_shadow_stats(hours=float(hours), include_markout=True)
+    return _shadow_response(hours, raw)
+
+
+@router.get("/stats/shadow_markout", response_model=ShadowStatsResponse)
+def get_shadow_markout_stats(
+    hours: int = Query(default=24, ge=1, le=168),
+) -> ShadowStatsResponse:
+    """Sibling alias focused on markout; same payload as ``/stats/shadow``."""
+    ledger = get_ledger()
+    raw = ledger.get_shadow_markout(hours=float(hours))
+    return _shadow_response(hours, raw)
 
 
 @router.get("/stats/quality", response_model=QualityStatsResponse)

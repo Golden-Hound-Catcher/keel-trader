@@ -199,6 +199,38 @@ class DecisionStatsResponse(BaseModel):
     market_source: str = "any"
 
 
+class ShadowMarkoutActionStats(BaseModel):
+    """Per-action markout aggregates within one horizon."""
+
+    sample_count: int = 0
+    avg_markout_bps: float | None = None
+    median_markout_bps: float | None = None
+    win_rate: float | None = None
+
+
+class ShadowMarkoutHorizon(BaseModel):
+    """Markout outcome stats for one wall-clock horizon after fill."""
+
+    horizon_seconds: int
+    sample_count: int = 0
+    skipped: int = 0
+    avg_markout_bps: float | None = None
+    median_markout_bps: float | None = None
+    win_rate: float | None = None
+    probe_sample_count: int = 0
+    probe_avg_markout_bps: float | None = None
+    probe_median_markout_bps: float | None = None
+    probe_win_rate: float | None = None
+    by_action: dict[str, ShadowMarkoutActionStats] = Field(default_factory=dict)
+
+
+class ShadowMarkoutBlock(BaseModel):
+    """Offline shadow fill markout nest (factor_snapshots / entry_price)."""
+
+    price_source: str = "factor_snapshots"
+    horizons: list[ShadowMarkoutHorizon] = Field(default_factory=list)
+
+
 class ShadowStatsResponse(BaseModel):
     """Aggregated shadow_fill rehearsal stats (read-only)."""
 
@@ -208,6 +240,8 @@ class ShadowStatsResponse(BaseModel):
     by_policy: dict[str, int] = Field(default_factory=dict)
     probe_count: int = 0
     last_timestamp: float | None = None
+    # Q3.2: optional markout nest (absent on older builds / soft-fail clients).
+    markout: ShadowMarkoutBlock | None = None
 
 
 class QualityShadowBlock(BaseModel):

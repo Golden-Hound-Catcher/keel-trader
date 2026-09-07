@@ -211,6 +211,32 @@ export interface KeelDecisionStats {
 }
 
 /** Soft-fail Overview shadow rehearsal stats from GET /api/v1/stats/shadow. */
+export interface KeelShadowMarkoutAction {
+  sample_count: number
+  avg_markout_bps?: number | null
+  median_markout_bps?: number | null
+  win_rate?: number | null
+}
+
+export interface KeelShadowMarkoutHorizon {
+  horizon_seconds: number
+  sample_count: number
+  skipped: number
+  avg_markout_bps?: number | null
+  median_markout_bps?: number | null
+  win_rate?: number | null
+  probe_sample_count?: number
+  probe_avg_markout_bps?: number | null
+  probe_median_markout_bps?: number | null
+  probe_win_rate?: number | null
+  by_action?: Record<string, KeelShadowMarkoutAction>
+}
+
+export interface KeelShadowMarkout {
+  price_source?: string
+  horizons: KeelShadowMarkoutHorizon[]
+}
+
 export interface KeelShadowStats {
   hours: number
   count: number
@@ -219,6 +245,8 @@ export interface KeelShadowStats {
   /** Q3 near-probe fills in lookback. */
   probe_count?: number
   last_timestamp?: number | null
+  /** Q3.2 offline markout nest (soft-fail if older API). */
+  markout?: KeelShadowMarkout | null
 }
 
 /** Soft-fail Overview quality scorecard from GET /api/v1/stats/quality. */

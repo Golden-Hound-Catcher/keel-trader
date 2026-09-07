@@ -439,17 +439,35 @@ class KeelLedger:
             "market_source": ms_filter or "any",
         }
 
-    def get_shadow_stats(self, hours: float = 24.0) -> dict[str, Any]:
+    def get_shadow_stats(
+        self,
+        hours: float = 24.0,
+        *,
+        include_markout: bool = True,
+        markout_horizons: list[int] | tuple[int, ...] | None = None,
+    ) -> dict[str, Any]:
         """
         Aggregate shadow_fill rehearsal events for the last ``hours`` window.
 
         Returns count, by_action (from event data.action), last_timestamp,
         plus probe_count / by_policy so Monitor can distinguish Q3 near-probe
         fills (policy=shadow_near_probe) from forced/manual shadow fills.
+
+        When ``include_markout`` (default True), also attaches offline markout
+        aggregates (avg/median bps, win_rate by horizon) via factor_snapshots.
         """
+        from keel.ledger.shadow_markout import compute_shadow_markout
+
         hours_f = max(0.0, float(hours))
-        since = time.time() - hours_f * 3600.0
         conn = self._get_conn()
+        if include_markout:
+            return compute_shadow_markout(
+                conn,
+                hours=hours_f,
+                horizons=markout_horizons,
+            )
+
+        since = time.time() - hours_f * 3600.0
         rows = conn.execute(
             "SELECT timestamp, data FROM events "
             "WHERE timestamp >= ? AND event_type = ? "
@@ -492,6 +510,20 @@ class KeelLedger:
             "probe_count": probe_count,
             "last_timestamp": last_ts,
         }
+
+    def get_shadow_markout(
+        self,
+        hours: float = 24.0,
+        horizons: list[int] | tuple[int, ...] | None = None,
+    ) -> dict[str, Any]:
+        """Q3.2 offline shadow fill markout aggregates (read-only)."""
+        from keel.ledger.shadow_markout import compute_shadow_markout
+
+        return compute_shadow_markout(
+            self._get_conn(),
+            hours=max(0.0, float(hours)),
+            horizons=horizons,
+        )
 
     def get_quality_stats(self, hours: float = 24.0) -> dict[str, Any]:
         """
@@ -580,7 +612,8 @@ class KeelLedger:
             (sum(durations) / len(durations)) if durations else None
         )
 
-        shadow = self.get_shadow_stats(hours=hours_f)
+        # Counts only — markout is heavier and exposed on /stats/shadow.
+        shadow = self.get_shadow_stats(hours=hours_f, include_markout=False)
 
         return {
             "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
@@ -592,6 +625,8 @@ class KeelLedger:
             "shadow": {
                 "count": int(shadow.get("count", 0)),
                 "by_action": dict(shadow.get("by_action") or {}),
+                "by_policy": dict(shadow.get("by_policy") or {}),
+                "probe_count": int(shadow.get("probe_count", 0)),
                 "last_timestamp": shadow.get("last_timestamp"),
             },
             "cycle_count": cycle_count,
