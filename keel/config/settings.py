@@ -79,6 +79,11 @@ class Settings:
     # Arming: require recent shadow_fill rehearsal (hours / hard require).
     arming_shadow_hours: float = 24.0
     arming_require_shadow: bool = False
+    # Q3: convert strong WAIT near-signals into shadow fills (kill+shadow only).
+    shadow_near_probe: bool = False
+    shadow_near_probe_cooldown_seconds: int = 900
+    shadow_near_probe_max_missing: int = 2
+    shadow_near_probe_min_confidence: float = 0.0
 
     # Trader cycle interval (KEEL_CYCLE_INTERVAL_SECONDS / KEEL_OBSERVE_PRESET); default 900
     cycle_interval_seconds: int = 900
@@ -379,6 +384,10 @@ def get_settings() -> Settings:
         shadow_mode=_env_bool("KEEL_SHADOW_MODE", False),
         arming_shadow_hours=_env_float("KEEL_ARMING_SHADOW_HOURS", 24.0),
         arming_require_shadow=_env_bool("KEEL_ARMING_REQUIRE_SHADOW", False),
+        shadow_near_probe=_env_bool("KEEL_SHADOW_NEAR_PROBE", False),
+        shadow_near_probe_cooldown_seconds=_env_int("KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS", 900),
+        shadow_near_probe_max_missing=_env_int("KEEL_SHADOW_NEAR_PROBE_MAX_MISSING", 2),
+        shadow_near_probe_min_confidence=_env_float("KEEL_SHADOW_NEAR_PROBE_MIN_CONFIDENCE", 0.0),
         cycle_interval_seconds=cycle_interval_seconds,
         observe_preset=observe_preset,
         instruments=_env_instruments(),

@@ -19,6 +19,11 @@ from keel.exchange.protocol import ExchangeProtocol, OrderRequest, OrderResult
 from keel.risk.gates import GateContext, check_all_gates, gate_action_for_decision, RiskGate
 from keel.ledger import KeelLedger, TradeRecord
 from keel.domain.decision import Decision, DecisionAction, validate_decision
+from keel.execution.near_probe import (
+    PROBE_POLICY,
+    PROBE_STRATEGY_TAG,
+    is_probe_decision,
+)
 
 
 @dataclass
@@ -264,6 +269,7 @@ class ExecutionOrchestrator:
     ) -> ExecutionResult:
         """Ledger a shadow fill without calling exchange place_order."""
         order_id = f"shadow-{int(time.time() * 1000)}"
+        probe = is_probe_decision(decision)
         event_data = {
             "order_id": order_id,
             "action": decision.action,
@@ -277,11 +283,27 @@ class ExecutionOrchestrator:
             "reason": decision.reason,
             "shadow": True,
         }
+        if probe:
+            event_data["policy"] = PROBE_POLICY
+            event_data["probe"] = True
         self._ledger.record_event(
             "shadow_fill",
             inst_id=decision.inst_id,
             data=event_data,
         )
+        meta = {
+            "order_id": order_id,
+            "leverage": decision.leverage,
+            "margin_usdt": decision.margin_usdt,
+            "take_profit": decision.take_profit,
+            "stop_loss": decision.stop_loss,
+            "shadow": True,
+        }
+        strategy_tag = "keel-shadow"
+        if probe:
+            meta["policy"] = PROBE_POLICY
+            meta["probe"] = True
+            strategy_tag = PROBE_STRATEGY_TAG
         self._ledger.record_trade(
             TradeRecord(
                 timestamp=time.time(),
@@ -290,16 +312,9 @@ class ExecutionOrchestrator:
                 direction="long" if decision.action == "BUY_LONG" else "short",
                 size=size,
                 price=entry_price,
-                strategy_tag="keel-shadow",
+                strategy_tag=strategy_tag,
                 reason=decision.reason,
-                metadata={
-                    "order_id": order_id,
-                    "leverage": decision.leverage,
-                    "margin_usdt": decision.margin_usdt,
-                    "take_profit": decision.take_profit,
-                    "stop_loss": decision.stop_loss,
-                    "shadow": True,
-                },
+                metadata=meta,
             )
         )
         return ExecutionResult(

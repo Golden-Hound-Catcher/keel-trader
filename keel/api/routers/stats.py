@@ -51,6 +51,8 @@ def get_shadow_stats(
         hours=hours,
         count=int(raw.get("count", 0)),
         by_action=dict(raw.get("by_action") or {}),
+        by_policy=dict(raw.get("by_policy") or {}),
+        probe_count=int(raw.get("probe_count", 0)),
         last_timestamp=raw.get("last_timestamp"),
     )
 
@@ -73,6 +75,8 @@ def get_quality_stats(
         shadow=QualityShadowBlock(
             count=int(shadow_raw.get("count", 0)),
             by_action=dict(shadow_raw.get("by_action") or {}),
+            by_policy=dict(shadow_raw.get("by_policy") or {}),
+            probe_count=int(shadow_raw.get("probe_count", 0)),
             last_timestamp=shadow_raw.get("last_timestamp"),
         ),
         cycle_count=int(raw.get("cycle_count", 0)),

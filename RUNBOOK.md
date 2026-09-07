@@ -311,3 +311,31 @@ See also §Live（无模拟盘 key） below.
 
 **在清 kill-switch 之前**先用 shadow 验收整条 decision→risk→ledger 路径（可与 kill=1 同开），确认没有真实下单。
 
+### Q3 Near-signal shadow probe（`KEEL_SHADOW_NEAR_PROBE`）
+
+观察窗口里 WAIT≈99%、near_signal 很多，但自然触发的 BUY/SELL 极少时，可用 **near-signal shadow probe** 把**强近信号**转成影子成交，给 arming checklist 积累 rehearsal 证据——**永不下真实单**。
+
+| 项 | 行为 |
+|----|------|
+| 启用条件 | `KEEL_KILL_SWITCH=1` **且** `KEEL_SHADOW_MODE=1` **且** `KEEL_SHADOW_NEAR_PROBE=1`（缺一不可；默认 probe=off） |
+| 触发 | 策略决策仍为 `WAIT`，但 `signal_diag.nearest`∈{long,short} 且 `len(missing)≤KEEL_SHADOW_NEAR_PROBE_MAX_MISSING`（默认 2，与 notify near-signal 阈值一致） |
+| 动作 | 合成 `BUY_LONG`/`SELL_SHORT` → 既有 `shadow_fill` 路径；ledger `policy=shadow_near_probe` / `probe=true`；`strategy_tag=keel-shadow-near-probe` |
+| Cooldown | 每 instrument `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS`（默认 900）内不重复 probe |
+| 安全 | 无 kill 或无 shadow → **不** probe、**不** live order；policy 决策仍记 WAIT |
+| Arming | probe 产生的 `shadow_fill` **计入** shadow 排练证据（与 forced/manual 同属 `shadow_fill`） |
+| 统计 | `/stats/shadow` 含 `probe_count` + `by_policy`，可与 forced 区分 |
+
+**启用示例**（观察态，勿清 kill）：
+
+```bash
+# .env / process env — do not commit secrets
+KEEL_KILL_SWITCH=1
+KEEL_SHADOW_MODE=1
+KEEL_SHADOW_NEAR_PROBE=1
+# optional:
+# KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS=900
+# KEEL_SHADOW_NEAR_PROBE_MAX_MISSING=2
+```
+
+重启 worker 后看 ledger `shadow_fill`（`data.policy=shadow_near_probe`）与 `GET /api/v1/stats/shadow` 的 `probe_count`。用完将 `KEEL_SHADOW_NEAR_PROBE=0`。
+

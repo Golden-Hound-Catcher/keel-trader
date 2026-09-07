@@ -443,7 +443,9 @@ class KeelLedger:
         """
         Aggregate shadow_fill rehearsal events for the last ``hours`` window.
 
-        Returns count, by_action (from event data.action), and last_timestamp.
+        Returns count, by_action (from event data.action), last_timestamp,
+        plus probe_count / by_policy so Monitor can distinguish Q3 near-probe
+        fills (policy=shadow_near_probe) from forced/manual shadow fills.
         """
         hours_f = max(0.0, float(hours))
         since = time.time() - hours_f * 3600.0
@@ -455,25 +457,39 @@ class KeelLedger:
             (since, "shadow_fill"),
         ).fetchall()
         by_action: dict[str, int] = {}
+        by_policy: dict[str, int] = {}
+        probe_count = 0
         last_ts: float | None = None
         for row in rows:
             ts = float(row["timestamp"])
             if last_ts is None or ts > last_ts:
                 last_ts = ts
             action = "UNKNOWN"
+            policy = "manual"
+            payload = None
             raw = row["data"]
             if raw:
                 try:
                     payload = json.loads(raw)
                 except (TypeError, json.JSONDecodeError):
                     payload = None
-                if isinstance(payload, dict) and payload.get("action"):
+            if isinstance(payload, dict):
+                if payload.get("action"):
                     action = str(payload["action"])
+                if payload.get("policy"):
+                    policy = str(payload["policy"])
+                elif payload.get("probe") is True:
+                    policy = "shadow_near_probe"
+                if policy == "shadow_near_probe" or payload.get("probe") is True:
+                    probe_count += 1
             by_action[action] = by_action.get(action, 0) + 1
+            by_policy[policy] = by_policy.get(policy, 0) + 1
         return {
             "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
             "count": len(rows),
             "by_action": by_action,
+            "by_policy": by_policy,
+            "probe_count": probe_count,
             "last_timestamp": last_ts,
         }
 
