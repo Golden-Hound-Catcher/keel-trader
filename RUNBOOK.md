@@ -162,7 +162,7 @@ curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" | python -m json.t
 
 Response fields (`/stats/decisions`): `decision_count`, `by_action`, `by_policy`, `wait_rate` (0–1), `risk_deny_events` (`risk_gate_blocked` count), `cycle_count` (`worker_cycle_summary`), `avg_cycle_duration_ms`, `market_source` filter echo (`any`|`okx_public`|`synthetic`).
 
-Shadow stats (`/stats/shadow`): `count`, `by_action`, `by_policy`, `probe_count`, `last_timestamp` for `shadow_fill` events, plus nested **`markout`** (Q3.2 offline outcome): per-horizon (`60`/`300`/`900`s) `avg`/`median` `markout_bps`, `win_rate` (markout>0), probe-only subset, optional `by_action`. Later price from `factor_snapshots` (fallback `decisions.entry_price`); fills without a later price are `skipped`. Sibling: `GET /api/v1/stats/shadow_markout?hours=` (same payload). Read-only; never places orders.
+Shadow stats (`/stats/shadow`): `count`, `by_action`, `by_policy`, `probe_count`, `last_timestamp` for `shadow_fill` events, plus nested **`markout`** (Q3.2/Q3.3 offline outcome): per-horizon (`60`/`300`/`900`s) gross `avg`/`median` `markout_bps` + `win_rate` (markout>0), fee-aware `avg_net_open_markout_bps` / `avg_net_roundtrip_markout_bps` (+ median/probe/`win_rate_net_roundtrip`), optional `by_action`. Top-level **`fee_model`** (`source` live|fallback|override, `maker_bps`/`taker_bps`, `role`, `open_fee_bps`, `round_trip_fee_bps`, `funding_note`). Later price from `factor_snapshots` (fallback `decisions.entry_price`); fills without a later price are `skipped`. Sibling: `GET /api/v1/stats/shadow_markout?hours=` (same payload). Read-only; never places orders.
 
 Quality scorecard (`/stats/quality`): single glance for observe health — `market_source` breakdown (`okx_public` / `synthetic` / `unknown`), `decision_count`, `wait_rate`, `by_action`, `near_signal_rate` (fraction of WAIT with `signal_diag.nearest` in `{long,short}`), nested `shadow` (`count` / `by_action` / `last_timestamp`), `cycle_count`, `avg_cycle_duration_ms`. Read-only; does not enable trading.
 
@@ -339,11 +339,11 @@ KEEL_SHADOW_NEAR_PROBE=1
 
 重启 worker 后看 ledger `shadow_fill`（`data.policy=shadow_near_probe`）与 `GET /api/v1/stats/shadow` 的 `probe_count`。用完将 `KEEL_SHADOW_NEAR_PROBE=0`。
 
-Monitor / status：`GET /api/v1/status`（与 `/config`）暴露 `shadow_near_probe` + cooldown；Overview 显示 NEAR PROBE chip 与 quality/shadow 条的 `probe_count`。Q3.2：Overview soft-fail chip `mk win% / ±bps`（probe markout；旧 API 无 `markout` 时隐藏）。
+Monitor / status：`GET /api/v1/status`（与 `/config`）暴露 `shadow_near_probe` + cooldown；Overview 显示 NEAR PROBE chip 与 quality/shadow 条的 `probe_count`。Q3.2/Q3.3：Overview soft-fail chip `mk netRT win% / ±bps`（优先 **net roundtrip**；旧 API 无 `markout`/net 字段时回退 gross 或隐藏）。
 
-### Q3.2 Shadow markout（离线盈亏探针）
+### Q3.2 / Q3.3 Shadow markout（离线盈亏 + OKX 官方费率）
 
-影子成交后，用 ledger 内后续 `factor_snapshots.price`（或 `decisions.entry_price`）计算简单 markout，衡量「若当时成交，稍后是否赚钱」——**只读、不下单**。
+影子成交后，用 ledger 内后续 `factor_snapshots.price`（或 `decisions.entry_price`）计算简单 markout，衡量「若当时成交，稍后是否赚钱」——**只读、不下单**。Q3.3 按 OKX 官方文档扣交易费（非 naive 固定 haircut）。
 
 ```bash
 curl -s "http://127.0.0.1:8080/api/v1/stats/shadow?hours=24" | python -m json.tool
@@ -352,7 +352,15 @@ curl -s "http://127.0.0.1:8080/api/v1/stats/shadow_markout?hours=24" | python -m
 ```
 
 - Horizons：60s / 300s / 900s（≈1 默认 cycle）
-- `BUY_LONG`：(later−fill)/fill×1e4 bps；`SELL_SHORT`：(fill−later)/fill×1e4
+- `BUY_LONG`：(later−fill)/fill×1e4 bps；`SELL_SHORT`：(fill−later)/fill×1e4（**gross**；字段名 `avg_markout_bps` 保持兼容）
+- **Fees（USDT-margined SWAP）**：优先 live `GET /api/v5/account/trade-fee?instType=SWAP` 的 **`makerU`/`takerU`**（不是 crypto-margined `maker`/`taker`）。文档：
+  - [Get fee rates](https://www.okx.com/docs-v5/en/#trading-account-rest-api-get-fee-rates)
+  - [makerU/takerU 变更说明](https://www.okx.com/help/okx-will-make-changes-to-the-get-fee-rates-interface)
+  - [合约手续费计算](https://www.okx.com/help/how-to-calculate-the-contract-transaction-fee) / [fee schedule](https://www.okx.com/fees)
+- Fallback = OKX **Regular** USDT-margined：maker **0.0200% (2 bps)**，taker **0.0500% (5 bps)**；~1h cache；缺 key / 调用失败 soft-fail。
+- `KEEL_SHADOW_FEE_ROLE=taker|maker`（默认 **taker**）；可选 `KEEL_SHADOW_MAKER_FEE_BPS` / `KEEL_SHADOW_TAKER_FEE_BPS`（`source=override`）。
+- `net_open_bps = gross − open_fee_bps`；`net_roundtrip_bps = gross − 2×role`（负 maker = rebate，保留符号）。
+- **Funding（独立）**：持仓跨结算才收；标准 UTC 边界常为 00/08/16。v1：fill→horizon **跨越**边界且能拉到 public `/api/v5/public/funding-rate` 才应用一次，否则 `funding_applied=false`（不编造）。短 horizon 通常为 0。参见 OKX funding FAQ / 合约费用说明。
 - 缺后续价 → 计入 `skipped`，不进 sample
-- Monitor：Decision quality 旁 `mk …` chip（有 probe sample 时）
+- Monitor：Decision quality 旁 `mk netRT …` chip（有 probe sample 时优先 net roundtrip）
 

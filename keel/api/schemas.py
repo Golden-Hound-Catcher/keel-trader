@@ -203,9 +203,17 @@ class ShadowMarkoutActionStats(BaseModel):
     """Per-action markout aggregates within one horizon."""
 
     sample_count: int = 0
+    # Gross mid markout (fee-unaware; back-compat).
     avg_markout_bps: float | None = None
     median_markout_bps: float | None = None
     win_rate: float | None = None
+    # Q3.3 fee-aware nets.
+    avg_net_open_markout_bps: float | None = None
+    median_net_open_markout_bps: float | None = None
+    win_rate_net_open: float | None = None
+    avg_net_roundtrip_markout_bps: float | None = None
+    median_net_roundtrip_markout_bps: float | None = None
+    win_rate_net_roundtrip: float | None = None
 
 
 class ShadowMarkoutHorizon(BaseModel):
@@ -214,13 +222,27 @@ class ShadowMarkoutHorizon(BaseModel):
     horizon_seconds: int
     sample_count: int = 0
     skipped: int = 0
+    # Gross (back-compat name avg_markout_bps).
     avg_markout_bps: float | None = None
     median_markout_bps: float | None = None
     win_rate: float | None = None
+    avg_net_open_markout_bps: float | None = None
+    median_net_open_markout_bps: float | None = None
+    win_rate_net_open: float | None = None
+    avg_net_roundtrip_markout_bps: float | None = None
+    median_net_roundtrip_markout_bps: float | None = None
+    win_rate_net_roundtrip: float | None = None
     probe_sample_count: int = 0
     probe_avg_markout_bps: float | None = None
     probe_median_markout_bps: float | None = None
     probe_win_rate: float | None = None
+    probe_avg_net_open_markout_bps: float | None = None
+    probe_median_net_open_markout_bps: float | None = None
+    probe_win_rate_net_open: float | None = None
+    probe_avg_net_roundtrip_markout_bps: float | None = None
+    probe_median_net_roundtrip_markout_bps: float | None = None
+    probe_win_rate_net_roundtrip: float | None = None
+    funding_applied_count: int = 0
     by_action: dict[str, ShadowMarkoutActionStats] = Field(default_factory=dict)
 
 
@@ -229,6 +251,22 @@ class ShadowMarkoutBlock(BaseModel):
 
     price_source: str = "factor_snapshots"
     horizons: list[ShadowMarkoutHorizon] = Field(default_factory=list)
+
+
+class ShadowFeeModel(BaseModel):
+    """OKX-official fee model used for net markout (Q3.3)."""
+
+    source: str = "fallback"  # live|fallback|override
+    inst_type: str = "SWAP"
+    margin: str = "USDT"
+    level: str | None = None
+    maker_bps: float = 2.0
+    taker_bps: float = 5.0
+    role: str = "taker"
+    open_fee_bps: float = 5.0
+    round_trip_fee_bps: float = 10.0
+    funding_note: str = ""
+    funding_applied: bool = False
 
 
 class ShadowStatsResponse(BaseModel):
@@ -240,6 +278,8 @@ class ShadowStatsResponse(BaseModel):
     by_policy: dict[str, int] = Field(default_factory=dict)
     probe_count: int = 0
     last_timestamp: float | None = None
+    # Q3.3: OKX fee model for net markout (soft-fail if older clients ignore).
+    fee_model: ShadowFeeModel | None = None
     # Q3.2: optional markout nest (absent on older builds / soft-fail clients).
     markout: ShadowMarkoutBlock | None = None
 

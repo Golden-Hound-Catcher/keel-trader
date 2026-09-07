@@ -1,9 +1,17 @@
 """
-Q3.2 shadow fill markout — offline outcome stats from ledger data.
+Q3.2 / Q3.3 shadow fill markout — offline outcome stats from ledger data.
 
 For each ``shadow_fill`` event, compare fill price to a later mid/last from
 ``factor_snapshots`` (preferred) or subsequent ``decisions.entry_price``.
 Horizons are pragmatic wall-clock offsets (e.g. 60s / 300s / 900s ≈ 1 cycle).
+
+Q3.3 adds OKX-official fee-aware nets:
+  - Keep ``avg_markout_bps`` as **gross** mid markout (back-compat).
+  - Add ``avg_net_open_markout_bps`` / ``avg_net_roundtrip_markout_bps``
+    (and median / probe / win_rate variants).
+  - Trading fees from live ``makerU``/``takerU`` or Regular fallback / env override.
+  - Optional funding when fill→horizon crosses 00/08/16 UTC (else skip).
+
 Read-only; never places orders or clears kill-switch.
 """
 from __future__ import annotations
@@ -11,6 +19,13 @@ from __future__ import annotations
 import json
 import statistics
 from typing import Any, Sequence
+
+from keel.exchange.okx_fees import (
+    build_fee_model,
+    crosses_standard_funding_boundary,
+    fetch_public_funding_rate,
+    funding_markout_bps,
+)
 
 # Default horizons: 1m, 5m, ~1 default cycle (15m).
 DEFAULT_MARKOUT_HORIZONS_SECONDS: tuple[int, ...] = (60, 300, 900)
@@ -138,11 +153,43 @@ def _empty_horizon(horizon: int) -> dict[str, Any]:
         "avg_markout_bps": None,
         "median_markout_bps": None,
         "win_rate": None,
+        "avg_net_open_markout_bps": None,
+        "median_net_open_markout_bps": None,
+        "win_rate_net_open": None,
+        "avg_net_roundtrip_markout_bps": None,
+        "median_net_roundtrip_markout_bps": None,
+        "win_rate_net_roundtrip": None,
         "probe_sample_count": 0,
         "probe_avg_markout_bps": None,
         "probe_median_markout_bps": None,
         "probe_win_rate": None,
+        "probe_avg_net_open_markout_bps": None,
+        "probe_median_net_open_markout_bps": None,
+        "probe_win_rate_net_open": None,
+        "probe_avg_net_roundtrip_markout_bps": None,
+        "probe_median_net_roundtrip_markout_bps": None,
+        "probe_win_rate_net_roundtrip": None,
+        "funding_applied_count": 0,
         "by_action": {},
+    }
+
+
+def _action_stats(
+    gross: Sequence[float],
+    net_open: Sequence[float],
+    net_rt: Sequence[float],
+) -> dict[str, Any]:
+    return {
+        "sample_count": len(gross),
+        "avg_markout_bps": _avg(gross),
+        "median_markout_bps": _median(gross),
+        "win_rate": _win_rate(gross),
+        "avg_net_open_markout_bps": _avg(net_open),
+        "median_net_open_markout_bps": _median(net_open),
+        "win_rate_net_open": _win_rate(net_open),
+        "avg_net_roundtrip_markout_bps": _avg(net_rt),
+        "median_net_roundtrip_markout_bps": _median(net_rt),
+        "win_rate_net_roundtrip": _win_rate(net_rt),
     }
 
 
@@ -152,14 +199,31 @@ def compute_shadow_markout(
     hours: float = 24.0,
     horizons: Sequence[int] | None = None,
     now: float | None = None,
+    settings: Any | None = None,
+    fee_transport: Any | None = None,
+    funding_transport: Any | None = None,
+    apply_funding: bool = True,
 ) -> dict[str, Any]:
     """
     Aggregate markout stats for shadow_fill events in the lookback window.
 
     Offline-safe: reads only ``events`` + ``factor_snapshots`` / ``decisions``.
     Fills without a later price are counted in ``skipped`` per horizon.
+
+    Net formulas (Q3.3):
+      net_open_bps = gross_bps - open_fee_bps (± funding if applied)
+      net_roundtrip_bps = gross_bps - round_trip_fee_bps (± funding)
+    Win = value > 0. Gross fields remain mid-only (fee-unaware).
     """
     import time as _time
+
+    if settings is None:
+        try:
+            from keel.config import get_settings
+
+            settings = get_settings()
+        except Exception:
+            settings = None
 
     hours_f = max(0.0, float(hours))
     now_ts = float(now if now is not None else _time.time())
@@ -171,6 +235,10 @@ def compute_shadow_markout(
     if not horizon_list:
         horizon_list = list(DEFAULT_MARKOUT_HORIZONS_SECONDS)
 
+    fee_model = build_fee_model(settings, transport=fee_transport)
+    open_fee_bps = float(fee_model["open_fee_bps"])
+    rt_fee_bps = float(fee_model["round_trip_fee_bps"])
+
     rows = conn.execute(
         "SELECT timestamp, inst_id, data FROM events "
         "WHERE timestamp >= ? AND event_type = ? "
@@ -178,11 +246,18 @@ def compute_shadow_markout(
         (since, "shadow_fill"),
     ).fetchall()
 
-    # Per-horizon accumulators.
-    all_bps: dict[int, list[float]] = {h: [] for h in horizon_list}
-    probe_bps: dict[int, list[float]] = {h: [] for h in horizon_list}
+    # Per-horizon accumulators (gross + nets).
+    all_gross: dict[int, list[float]] = {h: [] for h in horizon_list}
+    all_net_open: dict[int, list[float]] = {h: [] for h in horizon_list}
+    all_net_rt: dict[int, list[float]] = {h: [] for h in horizon_list}
+    probe_gross: dict[int, list[float]] = {h: [] for h in horizon_list}
+    probe_net_open: dict[int, list[float]] = {h: [] for h in horizon_list}
+    probe_net_rt: dict[int, list[float]] = {h: [] for h in horizon_list}
     skipped: dict[int, int] = {h: 0 for h in horizon_list}
-    by_action_bps: dict[int, dict[str, list[float]]] = {h: {} for h in horizon_list}
+    funding_applied_count: dict[int, int] = {h: 0 for h in horizon_list}
+    by_action_gross: dict[int, dict[str, list[float]]] = {h: {} for h in horizon_list}
+    by_action_net_open: dict[int, dict[str, list[float]]] = {h: {} for h in horizon_list}
+    by_action_net_rt: dict[int, dict[str, list[float]]] = {h: {} for h in horizon_list}
     sources_used: set[str] = set()
 
     fill_count = 0
@@ -190,6 +265,11 @@ def compute_shadow_markout(
     by_action: dict[str, int] = {}
     by_policy: dict[str, int] = {}
     last_ts: float | None = None
+
+    funding_rates: dict[str, float | None] = {}
+    funding_any_applied = False
+    funding_any_crossed = False
+    funding_fetch_failed = False
 
     for row in rows:
         fill_ts = float(row["timestamp"])
@@ -231,28 +311,72 @@ def compute_shadow_markout(
                 continue
             later_ts, later_price, source = found
             sources_used.add(source)
-            bps = markout_bps(action, fill_price_f, later_price)
-            if bps is None:
+            gross = markout_bps(action, fill_price_f, later_price)
+            if gross is None:
                 skipped[h] += 1
                 continue
-            all_bps[h].append(bps)
+
+            funding_adj = 0.0
+            if apply_funding and crosses_standard_funding_boundary(fill_ts, later_ts):
+                funding_any_crossed = True
+                if inst_id not in funding_rates:
+                    funding_rates[inst_id] = fetch_public_funding_rate(
+                        inst_id, transport=funding_transport
+                    )
+                    if funding_rates[inst_id] is None:
+                        funding_fetch_failed = True
+                rate = funding_rates.get(inst_id)
+                if rate is not None:
+                    funding_adj = funding_markout_bps(action, rate)
+                    funding_applied_count[h] += 1
+                    funding_any_applied = True
+
+            net_open = gross - open_fee_bps + funding_adj
+            net_rt = gross - rt_fee_bps + funding_adj
+
+            all_gross[h].append(gross)
+            all_net_open[h].append(net_open)
+            all_net_rt[h].append(net_rt)
             if is_probe:
-                probe_bps[h].append(bps)
-            by_action_bps[h].setdefault(action, []).append(bps)
-            _ = later_ts  # available for future per-fill debug; aggregate only now
+                probe_gross[h].append(gross)
+                probe_net_open[h].append(net_open)
+                probe_net_rt[h].append(net_rt)
+            by_action_gross[h].setdefault(action, []).append(gross)
+            by_action_net_open[h].setdefault(action, []).append(net_open)
+            by_action_net_rt[h].setdefault(action, []).append(net_rt)
+
+    # Refine funding_note for this response.
+    if funding_any_applied:
+        fee_model["funding_note"] = (
+            "Applied at most one standard UTC funding (00/08/16) when fill→horizon "
+            "crossed a boundary and a public funding rate was available. "
+            "Funding is separate from trading fees."
+        )
+    elif funding_any_crossed and funding_fetch_failed:
+        fee_model["funding_note"] = (
+            "Fill→horizon crossed a standard UTC funding boundary but public "
+            "funding rate was unavailable; funding_applied=false (not invented). "
+            "Funding is separate from trading fees."
+        )
+    else:
+        fee_model["funding_note"] = (
+            "No standard UTC funding boundary (00/08/16) crossed in sampled "
+            "fill→horizon windows (short horizons usually 0); funding_applied=false. "
+            "Funding is separate from trading fees."
+        )
+    fee_model["funding_applied"] = bool(funding_any_applied)
 
     horizons_out: list[dict[str, Any]] = []
     for h in horizon_list:
-        vals = all_bps[h]
-        pvals = probe_bps[h]
+        vals = all_gross[h]
+        pvals = probe_gross[h]
         action_stats: dict[str, dict[str, Any]] = {}
-        for act, act_vals in by_action_bps[h].items():
-            action_stats[act] = {
-                "sample_count": len(act_vals),
-                "avg_markout_bps": _avg(act_vals),
-                "median_markout_bps": _median(act_vals),
-                "win_rate": _win_rate(act_vals),
-            }
+        for act in by_action_gross[h]:
+            action_stats[act] = _action_stats(
+                by_action_gross[h][act],
+                by_action_net_open[h].get(act, []),
+                by_action_net_rt[h].get(act, []),
+            )
         horizons_out.append(
             {
                 "horizon_seconds": int(h),
@@ -261,10 +385,23 @@ def compute_shadow_markout(
                 "avg_markout_bps": _avg(vals),
                 "median_markout_bps": _median(vals),
                 "win_rate": _win_rate(vals),
+                "avg_net_open_markout_bps": _avg(all_net_open[h]),
+                "median_net_open_markout_bps": _median(all_net_open[h]),
+                "win_rate_net_open": _win_rate(all_net_open[h]),
+                "avg_net_roundtrip_markout_bps": _avg(all_net_rt[h]),
+                "median_net_roundtrip_markout_bps": _median(all_net_rt[h]),
+                "win_rate_net_roundtrip": _win_rate(all_net_rt[h]),
                 "probe_sample_count": len(pvals),
                 "probe_avg_markout_bps": _avg(pvals),
                 "probe_median_markout_bps": _median(pvals),
                 "probe_win_rate": _win_rate(pvals),
+                "probe_avg_net_open_markout_bps": _avg(probe_net_open[h]),
+                "probe_median_net_open_markout_bps": _median(probe_net_open[h]),
+                "probe_win_rate_net_open": _win_rate(probe_net_open[h]),
+                "probe_avg_net_roundtrip_markout_bps": _avg(probe_net_rt[h]),
+                "probe_median_net_roundtrip_markout_bps": _median(probe_net_rt[h]),
+                "probe_win_rate_net_roundtrip": _win_rate(probe_net_rt[h]),
+                "funding_applied_count": int(funding_applied_count[h]),
                 "by_action": action_stats,
             }
         )
@@ -276,6 +413,7 @@ def compute_shadow_markout(
         "by_action": by_action,
         "by_policy": by_policy,
         "last_timestamp": last_ts,
+        "fee_model": fee_model,
         "markout": {
             "price_source": (
                 ",".join(sorted(sources_used)) if sources_used else "factor_snapshots"

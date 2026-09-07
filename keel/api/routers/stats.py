@@ -10,6 +10,7 @@ from keel.api.schemas import (
     DecisionStatsResponse,
     QualityShadowBlock,
     QualityStatsResponse,
+    ShadowFeeModel,
     ShadowMarkoutActionStats,
     ShadowMarkoutBlock,
     ShadowMarkoutHorizon,
@@ -17,6 +18,39 @@ from keel.api.schemas import (
 )
 
 router = APIRouter()
+
+
+def _fee_model(raw: dict[str, Any] | None) -> ShadowFeeModel | None:
+    if not isinstance(raw, dict):
+        return None
+    return ShadowFeeModel(
+        source=str(raw.get("source") or "fallback"),
+        inst_type=str(raw.get("inst_type") or "SWAP"),
+        margin=str(raw.get("margin") or "USDT"),
+        level=raw.get("level"),
+        maker_bps=float(raw.get("maker_bps", 2.0)),
+        taker_bps=float(raw.get("taker_bps", 5.0)),
+        role=str(raw.get("role") or "taker"),
+        open_fee_bps=float(raw.get("open_fee_bps", 5.0)),
+        round_trip_fee_bps=float(raw.get("round_trip_fee_bps", 10.0)),
+        funding_note=str(raw.get("funding_note") or ""),
+        funding_applied=bool(raw.get("funding_applied", False)),
+    )
+
+
+def _action_stats(stats: dict[str, Any]) -> ShadowMarkoutActionStats:
+    return ShadowMarkoutActionStats(
+        sample_count=int(stats.get("sample_count", 0)),
+        avg_markout_bps=stats.get("avg_markout_bps"),
+        median_markout_bps=stats.get("median_markout_bps"),
+        win_rate=stats.get("win_rate"),
+        avg_net_open_markout_bps=stats.get("avg_net_open_markout_bps"),
+        median_net_open_markout_bps=stats.get("median_net_open_markout_bps"),
+        win_rate_net_open=stats.get("win_rate_net_open"),
+        avg_net_roundtrip_markout_bps=stats.get("avg_net_roundtrip_markout_bps"),
+        median_net_roundtrip_markout_bps=stats.get("median_net_roundtrip_markout_bps"),
+        win_rate_net_roundtrip=stats.get("win_rate_net_roundtrip"),
+    )
 
 
 def _markout_block(raw: dict[str, Any] | None) -> ShadowMarkoutBlock | None:
@@ -32,12 +66,7 @@ def _markout_block(raw: dict[str, Any] | None) -> ShadowMarkoutBlock | None:
             for act, stats in by_action_raw.items():
                 if not isinstance(stats, dict):
                     continue
-                by_action[str(act)] = ShadowMarkoutActionStats(
-                    sample_count=int(stats.get("sample_count", 0)),
-                    avg_markout_bps=stats.get("avg_markout_bps"),
-                    median_markout_bps=stats.get("median_markout_bps"),
-                    win_rate=stats.get("win_rate"),
-                )
+                by_action[str(act)] = _action_stats(stats)
         horizons_out.append(
             ShadowMarkoutHorizon(
                 horizon_seconds=int(h.get("horizon_seconds", 0)),
@@ -46,10 +75,29 @@ def _markout_block(raw: dict[str, Any] | None) -> ShadowMarkoutBlock | None:
                 avg_markout_bps=h.get("avg_markout_bps"),
                 median_markout_bps=h.get("median_markout_bps"),
                 win_rate=h.get("win_rate"),
+                avg_net_open_markout_bps=h.get("avg_net_open_markout_bps"),
+                median_net_open_markout_bps=h.get("median_net_open_markout_bps"),
+                win_rate_net_open=h.get("win_rate_net_open"),
+                avg_net_roundtrip_markout_bps=h.get("avg_net_roundtrip_markout_bps"),
+                median_net_roundtrip_markout_bps=h.get("median_net_roundtrip_markout_bps"),
+                win_rate_net_roundtrip=h.get("win_rate_net_roundtrip"),
                 probe_sample_count=int(h.get("probe_sample_count", 0)),
                 probe_avg_markout_bps=h.get("probe_avg_markout_bps"),
                 probe_median_markout_bps=h.get("probe_median_markout_bps"),
                 probe_win_rate=h.get("probe_win_rate"),
+                probe_avg_net_open_markout_bps=h.get("probe_avg_net_open_markout_bps"),
+                probe_median_net_open_markout_bps=h.get(
+                    "probe_median_net_open_markout_bps"
+                ),
+                probe_win_rate_net_open=h.get("probe_win_rate_net_open"),
+                probe_avg_net_roundtrip_markout_bps=h.get(
+                    "probe_avg_net_roundtrip_markout_bps"
+                ),
+                probe_median_net_roundtrip_markout_bps=h.get(
+                    "probe_median_net_roundtrip_markout_bps"
+                ),
+                probe_win_rate_net_roundtrip=h.get("probe_win_rate_net_roundtrip"),
+                funding_applied_count=int(h.get("funding_applied_count", 0)),
                 by_action=by_action,
             )
         )
@@ -67,6 +115,7 @@ def _shadow_response(hours: int, raw: dict[str, Any]) -> ShadowStatsResponse:
         by_policy=dict(raw.get("by_policy") or {}),
         probe_count=int(raw.get("probe_count", 0)),
         last_timestamp=raw.get("last_timestamp"),
+        fee_model=_fee_model(raw.get("fee_model") if isinstance(raw.get("fee_model"), dict) else None),
         markout=_markout_block(raw.get("markout")),
     )
 

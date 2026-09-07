@@ -129,7 +129,7 @@ Base: `keel.api.app`
 | GET | `/api/v1/events` | Raw ledger events (`?event_type=` / `?inst_id=` optional) |
 | GET | `/api/v1/factors/{inst_id}` | Latest factor snapshot (`?live=1` → OKX public candles) |
 | GET | `/api/v1/stats/decisions` | Decision quality aggregates (`?hours=`, optional `market_source=okx_public|synthetic|any`) |
-| GET | `/api/v1/stats/shadow` | Shadow_fill counts + Q3.2 offline markout (`?hours=`; by_action/by_policy/probe_count + markout horizons) |
+| GET | `/api/v1/stats/shadow` | Shadow_fill counts + Q3.2/Q3.3 offline markout (`?hours=`; by_action/by_policy/probe_count + fee_model + gross/net markout horizons) |
 | GET | `/api/v1/stats/shadow_markout` | Sibling alias of `/stats/shadow` (same markout payload) |
 | GET | `/api/v1/stats/quality` | Observation quality scorecard (`?hours=`): market_source breakdown, wait/near_signal rates, shadow nest, cycle timing |
 | GET | `/api/v1/signals/nearest` | Q0 near-signal radar: latest decision per watch instrument + `signal_diag` summary (`?hours=`) |
@@ -152,32 +152,35 @@ Prefer `KEEL_*` names. Demo default.
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `KEEL_OKX_ENV` | `demo` | `demo` \| `live` |
+| `KEEL_OKX_ENV` | `demo` | `demo` | `live` |
 | `KEEL_OKX_API_KEY` | empty | With secret+passphrase → OKX adapter |
 | `KEEL_OKX_SECRET_KEY` | empty | |
 | `KEEL_OKX_PASSPHRASE` | empty | |
 | `KEEL_FORCE_PAPER` | `0` | Force `PaperExchange` |
-| `KEEL_POLICY` | `stub` | `stub` \| `rule` \| `llm` |
+| `KEEL_POLICY` | `stub` | `stub` | `rule` | `llm` |
 | `KEEL_LLM_BASE_URL` | — | OpenAI-compatible |
 | `KEEL_LLM_API_KEY` | — | |
 | `KEEL_LLM_MODEL` | — | |
 | `KEEL_LEDGER_DB` | local path | SQLite file |
-| `KEEL_KILL_SWITCH` | `0` | `0` \| `1` / true\|false — deny all trading when on |
-| `KEEL_SHADOW_MODE` | `0` | `0` \| `1` — ledger shadow_fill instead of place_order; kill blocks real orders only |
-| `KEEL_SHADOW_NEAR_PROBE` | `0` | `0` \| `1` — Q3: convert strong WAIT near-signals to shadow_fill when kill+shadow on; never live |
+| `KEEL_KILL_SWITCH` | `0` | `0` | `1` / true\|false — deny all trading when on |
+| `KEEL_SHADOW_MODE` | `0` | `0` | `1` — ledger shadow_fill instead of place_order; kill blocks real orders only |
+| `KEEL_SHADOW_NEAR_PROBE` | `0` | `0` | `1` — Q3: convert strong WAIT near-signals to shadow_fill when kill+shadow on; never live |
 | `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS` | `900` | Per-instrument cooldown between probe shadow fills |
 | `KEEL_SHADOW_NEAR_PROBE_MAX_MISSING` | `2` | Max `signal_diag.missing` length (aligned with near-signal notify) |
 | `KEEL_SHADOW_NEAR_PROBE_MIN_CONFIDENCE` | `0` | Optional min decision confidence gate for probe |
+| `KEEL_SHADOW_FEE_ROLE` | `taker` | `taker` | `maker` — fee leg for net markout (shadow assumes immediate fill) |
+| `KEEL_SHADOW_MAKER_FEE_BPS` | _(unset)_ | Optional override maker bps (positive=cost, negative=rebate) → source=override |
+| `KEEL_SHADOW_TAKER_FEE_BPS` | _(unset)_ | Optional override taker bps → source=override |
 | `KEEL_MAX_NOTIONAL_PER_INSTRUMENT` | `2000` | USDT; existing + requested notional (margin×leverage); on `/config` |
 | `KEEL_MAX_CONTRACTS_PER_INSTRUMENT` | `50` | Contract/size units per instrument when size known; on `/config` |
 | `KEEL_INSTRUMENTS` | empty → defaults | Comma-separated OKX swap ids; empty → `DEFAULT_CRYPTO_INSTRUMENTS`; worker + `/config` instruments |
-| `KEEL_DECISION_POLICY` | `rule` | `rule` \| `stub` \| `llm` — exposed as `decision_policy` on `/status` + `/config` |
+| `KEEL_DECISION_POLICY` | `rule` | `rule` | `stub` | `llm` — exposed as `decision_policy` on `/status` + `/config` |
 | `KEEL_CYCLE_INTERVAL_SECONDS` | `900` | Trader cycle interval; clamped `[60, 86400]`; wins over observe preset when set |
 | `KEEL_OBSERVE_PRESET` | unset | Q0 cadence: `default`=900 / `fast`=300 / `slow`=1800; exposed as `observe_preset` on `/config` |
 | `KEEL_API_TOKEN` | empty | Optional bearer for `/api/v1/*`; empty → no auth |
 | `KEEL_NOTIFY_WEBHOOK_URL` | empty | Empty → NullNotifier (no network); else POST cycle summary |
 | `KEEL_NOTIFY_ALERTS_ONLY` | `0` | When true, skip notify unless payload `alert` (deny/error **or** near-signal / BUY|SELL) |
-| `KEEL_NOTIFY_FORMAT` | `keel` | `keel` `{"event","payload"}` \| `discord` `{"content": text}` ≤1900 |
+| `KEEL_NOTIFY_FORMAT` | `keel` | `keel` `{"event","payload"}` | `discord` `{"content": text}` ≤1900 |
 
 Secrets live in `.env` (`chmod 600`) or process env only. **Do not** add parallel encrypted secret stores in v1.
 
@@ -305,6 +308,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q3.3 fee-aware shadow markout**: OKX `makerU`/`takerU` (or Regular 2/5 bps fallback) nets on `/stats/shadow*`; `fee_model` + net open/RT fields; optional funding at 00/08/16 UTC; Monitor prefers netRT; RUNBOOK/SPEC cite OKX fee docs |
 | 2026-09-07 | **Q3.2 shadow markout**: offline markout vs later factor_snapshots on `/stats/shadow` (+ `/stats/shadow_markout`); avg/median bps + win_rate by horizon; Monitor probe mk chip; RUNBOOK/SPEC |
 | 2026-09-07 | **Q3 shadow near-probe**: `KEEL_SHADOW_NEAR_PROBE` converts strong WAIT near-signals → shadow_fill when kill+shadow on (never live); cooldown/max_missing gates; `policy=shadow_near_probe` audit; arming counts probe fills; RUNBOOK/SPEC |
 | 2026-09-07 | **Q2.2 quality scorecard**: `GET /api/v1/stats/quality?hours=` compact observe health (market_source breakdown, wait/near_signal rates, shadow nest, cycles); Monitor Overview chips; RUNBOOK note |
@@ -383,6 +387,17 @@ After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` 
 ## Addendum: Q3.2 shadow markout
 
 Read-only outcome stats for ledger `shadow_fill` events. For each fill, look up a later price from `factor_snapshots` (preferred) or `decisions.entry_price` at horizons 60s / 300s / 900s. Directional markout in bps; aggregates include avg/median, win_rate (markout>0), probe-only subset, optional by_action. Unavailable later prices are skipped (counted). Exposed on `GET /api/v1/stats/shadow?hours=` nested `markout` and sibling `/stats/shadow_markout`. Never places orders or clears kill-switch. Monitor soft-fails if nest absent.
+
+## Addendum: Q3.3 OKX fee-aware shadow markout
+
+Extends Q3.2 with official OKX trading-fee awareness (not a naive fixed haircut):
+
+- Prefer live `GET /api/v5/account/trade-fee?instType=SWAP` and use **`makerU`/`takerU`** for USDT-margined swaps (e.g. `BTC-USDT-SWAP`); crypto-margined `maker`/`taker` are wrong for these instruments. See OKX [Get fee rates](https://www.okx.com/docs-v5/en/#trading-account-rest-api-get-fee-rates) and [makerU/takerU announcement](https://www.okx.com/help/okx-will-make-changes-to-the-get-fee-rates-interface).
+- Cache ~1h; soft-fail → **Regular** USDT-margined futures/swap schedule: maker **0.0200% (2 bps)**, taker **0.0500% (5 bps)** ([fee schedule](https://www.okx.com/fees), [how to calculate](https://www.okx.com/help/how-to-calculate-the-contract-transaction-fee)).
+- `KEEL_SHADOW_FEE_ROLE` default **taker**; optional `KEEL_SHADOW_*_FEE_BPS` overrides (`source=override`). Round-trip = 2 × role (negative maker = rebate, sign preserved).
+- Keep `avg_markout_bps` as **gross**; add `avg_net_open_markout_bps` / `avg_net_roundtrip_markout_bps` (+ median/probe/`win_rate_net_roundtrip`). Top-level `fee_model`.
+- Funding is separate (position × funding rate at settlement). v1: if fill→horizon crosses standard UTC 00/08/16 and public `/api/v5/public/funding-rate` is available, apply once; else `funding_applied=false` (do not invent). Short horizons usually 0.
+- Monitor chip prefers **net roundtrip** when present. Never places orders or clears kill-switch.
 
 ## Addendum: first-live caps
 
