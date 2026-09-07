@@ -293,11 +293,23 @@ def estimate_near_probe_edge_bps(
     """
     Conservative expected-edge estimate in bps from near-signal geometry.
 
-    Uses ATR/price as move scale and an EV vs probe TP/SL (2.2 / 1.0 ATR)
-    with win probability ≈ gate_completeness × confidence/100.
+    Prefers ``signal_diag.edge_hint_bps`` when present and finite (Rule v3+
+    attaches ATR-based hints). Falls back to the crude ATR/price × EV estimator
+    (probe TP/SL 2.2 / 1.0 ATR, win prob ≈ gate_completeness × confidence/100).
 
     Returns ``None`` when not estimable (caller should fail closed when hurdle > 0).
     """
+    # Prefer policy-attached edge hint when finite (incl. 0.0 — fail closed).
+    if isinstance(diag, dict) and "edge_hint_bps" in diag:
+        raw_hint = diag.get("edge_hint_bps")
+        if raw_hint is not None:
+            try:
+                hint = float(raw_hint)
+            except (TypeError, ValueError):
+                hint = float("nan")
+            if hint == hint and hint not in (float("inf"), float("-inf")):  # finite
+                return float(max(0.0, hint))
+
     if snapshot is None:
         return None
     try:
