@@ -12,6 +12,7 @@ from keel.api.schemas import (
     DailyPnlResponse,
     DecisionItem,
     DecisionStatsResponse,
+    NearestSignalsResponse,
     DecisionsResponse,
     EventItem,
     FactorsResponse,
@@ -233,6 +234,11 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("/api/v1/pnl/daily", paths)
         self.assertIn("/api/v1/stats/decisions", paths)
         self.assertIn("DecisionStatsResponse", comps)
+        self.assertIn("/api/v1/signals/nearest", paths)
+        self.assertIn("NearestSignalsResponse", comps)
+        ns_props = comps["NearestSignalsResponse"]["properties"]
+        self.assertIn("summary", ns_props)
+        self.assertIn("signals", ns_props)
         di_props = comps["DecisionItem"]["properties"]
         self.assertIn("policy_name", di_props)
         self.assertIn("prompt_modules", di_props)
@@ -287,6 +293,27 @@ class TestApiSchemas(unittest.TestCase):
         self.assertEqual(cfg.cycle_interval_seconds, 900)
         self.assertEqual(cfg.observe_preset, "fast")
         self.assertEqual(cfg.scheduler_jobs, ["trader"])
+
+
+    def test_nearest_signals_response_model(self):
+        m = NearestSignalsResponse(
+            hours=24,
+            count=1,
+            summary={"waiting": 1, "long_nearest": 1, "short_nearest": 0, "fired_long": 0, "fired_short": 0},
+            signals=[
+                {
+                    "inst_id": "BTC-USDT-SWAP",
+                    "action": "WAIT",
+                    "timestamp": 1.0,
+                    "nearest": "long",
+                    "missing": ["volume_ok"],
+                    "rsi_14": 30.0,
+                }
+            ],
+        )
+        self.assertEqual(m.count, 1)
+        self.assertEqual(m.summary.long_nearest, 1)
+        self.assertEqual(m.signals[0].nearest, "long")
 
     def test_daily_pnl_response_model(self):
         m = DailyPnlResponse(date="2026-09-04", realized_pnl=12.5)

@@ -132,6 +132,37 @@ export interface KeelDecision {
   prompt_modules?: string[] | null
 }
 
+
+export interface KeelNearestSignalItem {
+  inst_id: string
+  action: string
+  timestamp: string | number
+  nearest?: string | null
+  missing?: string[]
+  rsi_14?: number | null
+  trend_15m?: string | null
+  volume_ratio?: number | null
+  ema_9?: number | null
+  ema_21?: number | null
+  macd_histogram?: number | null
+}
+
+export interface KeelNearestSignalsSummary {
+  waiting: number
+  long_nearest: number
+  short_nearest: number
+  fired_long: number
+  fired_short: number
+}
+
+/** Soft-fail Overview radar card from GET /api/v1/signals/nearest. */
+export interface KeelNearestSignals {
+  hours: number
+  count: number
+  summary: KeelNearestSignalsSummary
+  signals: KeelNearestSignalItem[]
+}
+
 export interface KeelDecisionStats {
   hours: number
   decision_count: number

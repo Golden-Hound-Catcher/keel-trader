@@ -128,6 +128,8 @@ Base: `keel.api.app`
 | GET | `/api/v1/trades` | Recent trade/fill events (`?inst_id=` optional) |
 | GET | `/api/v1/events` | Raw ledger events (`?event_type=` / `?inst_id=` optional) |
 | GET | `/api/v1/factors/{inst_id}` | Latest factor snapshot (`?live=1` → OKX public candles) |
+| GET | `/api/v1/stats/decisions` | Decision quality aggregates (`?hours=`, default 24) |
+| GET | `/api/v1/signals/nearest` | Q0 near-signal radar: latest decision per watch instrument + `signal_diag` summary (`?hours=`) |
 
 **Stability**
 
@@ -293,6 +295,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q0 near-signal radar**: `GET /api/v1/signals/nearest` + Overview「近信号雷达」card (latest per-inst `signal_diag`, soft-fail) |
 | 2026-09-07 | **Q0 observation productization**: rule `signal_diag` (nearest/missing gates) in calculus_data + Decisions UX; `KEEL_OBSERVE_PRESET` cadence (default/fast/slow) on `/config`; live kill-switch observation docs |
 | 2026-09-07 | Monitor/API expose candle quality: Factors `data_quality_reason`, `last_cycle.market_source` (okx_public|synthetic|mixed|unknown) |
 | 2026-09-07 | Worker cycle uses OKX **public candles** on live/demo REST (synthetic fallback); rule policy v2 adds EMA stack + volume_ratio filters (optional `KEEL_RULE_*` knobs) |

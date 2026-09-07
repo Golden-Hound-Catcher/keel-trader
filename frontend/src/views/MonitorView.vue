@@ -258,6 +258,38 @@ const decisionStatsByPolicy = computed(() => {
     .join(' · ')
 })
 
+const nearestSignals = computed(() => store.nearestSignals)
+const nearestSummary = computed(() => nearestSignals.value?.summary ?? null)
+const nearestFiredTotal = computed(() => {
+  const s = nearestSummary.value
+  if (!s) return 0
+  return (s.fired_long || 0) + (s.fired_short || 0)
+})
+function radarNearestLabel(nearest: string | null | undefined, action: string): string {
+  const a = (action || '').toUpperCase()
+  if (a === 'BUY_LONG') return 'fired long'
+  if (a === 'SELL_SHORT') return 'fired short'
+  const n = (nearest || 'none').toLowerCase()
+  if (n === 'long') return 'near long'
+  if (n === 'short') return 'near short'
+  return 'none'
+}
+function radarNearestClass(nearest: string | null | undefined, action: string): string {
+  const a = (action || '').toUpperCase()
+  if (a === 'BUY_LONG') return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+  if (a === 'SELL_SHORT') return 'bg-rose-500/20 text-rose-300 border-rose-500/50'
+  const n = (nearest || '').toLowerCase()
+  if (n === 'long') return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+  if (n === 'short') return 'bg-rose-500/15 text-rose-400 border-rose-500/40'
+  return 'bg-zinc-500/10 text-[#A8B3C7] border-zinc-500/30'
+}
+function radarMissing(s: { missing?: string[] | null }): string[] {
+  const raw = s.missing
+  if (!Array.isArray(raw)) return []
+  return raw.map((x) => String(x)).filter(Boolean).slice(0, 3)
+}
+
+
 function modulesPreview(mods: string[] | null | undefined): string {
   if (!mods || !mods.length) return ''
   const s = mods.join(',')
@@ -931,6 +963,57 @@ const configStrip = computed(() => {
               </div>
             </div>
           </div>
+
+          <div
+            v-if="nearestSignals"
+            class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <h2 class="text-xs font-mono font-bold text-white uppercase">
+                近信号雷达
+                <span class="text-[#707E94] font-normal normal-case">({{ nearestSignals.hours }}h)</span>
+              </h2>
+              <div class="flex flex-wrap items-center gap-2 text-[10px] font-mono">
+                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-500/30 text-[#A8B3C7]" title="WAIT">
+                  WAIT <span class="text-white tabular-nums">{{ nearestSummary?.waiting ?? 0 }}</span>
+                </span>
+                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-emerald-500/40 text-emerald-400" title="近多">
+                  近多 <span class="tabular-nums">{{ nearestSummary?.long_nearest ?? 0 }}</span>
+                </span>
+                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-rose-500/40 text-rose-400" title="近空">
+                  近空 <span class="tabular-nums">{{ nearestSummary?.short_nearest ?? 0 }}</span>
+                </span>
+                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-cyan-500/40 text-cyan-400" title="已触发 long+short">
+                  已触发 <span class="tabular-nums">{{ nearestFiredTotal }}</span>
+                </span>
+              </div>
+            </div>
+            <div v-if="!nearestSignals.signals.length" class="text-xs font-mono text-[#707E94] py-4 text-center border border-dashed border-[#1A2232] rounded-lg">
+              No recent signal_diag decisions in lookback
+            </div>
+            <ul v-else class="space-y-2 max-h-72 overflow-y-auto">
+              <li
+                v-for="s in nearestSignals.signals"
+                :key="s.inst_id"
+                class="flex flex-wrap items-center gap-2 text-xs font-mono border-b border-[#1A2232]/60 pb-2"
+              >
+                <span class="text-white font-bold min-w-[8rem]">{{ s.inst_id }}</span>
+                <span
+                  class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                  :class="radarNearestClass(s.nearest, s.action)"
+                  :title="`${s.action} · nearest ${s.nearest || '—'}`"
+                >{{ radarNearestLabel(s.nearest, s.action) }}</span>
+                <span
+                  v-for="gate in radarMissing(s)"
+                  :key="`${s.inst_id}-${gate}`"
+                  class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400/90 border border-amber-500/30"
+                  :title="`missing: ${gate}`"
+                >{{ gate }}</span>
+                <span class="ml-auto text-[10px] text-[#707E94]">{{ fmtTs(s.timestamp) }}</span>
+              </li>
+            </ul>
+          </div>
+
 
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">

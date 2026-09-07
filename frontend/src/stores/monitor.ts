@@ -18,6 +18,7 @@ import {
   type KeelConfig,
   type KeelDailyPnl,
   type KeelDecisionStats,
+  type KeelNearestSignals,
 } from '../types/keel'
 
 export const useMonitorStore = defineStore('monitor', () => {
@@ -29,6 +30,8 @@ export const useMonitorStore = defineStore('monitor', () => {
   const dailyPnl = ref<KeelDailyPnl | null>(null)
   /** Soft-fail Overview card; null when endpoint missing or fetch failed. */
   const decisionStats = ref<KeelDecisionStats | null>(null)
+  /** Soft-fail Overview near-signal radar; null when endpoint missing or fetch failed. */
+  const nearestSignals = ref<KeelNearestSignals | null>(null)
   const balance = ref<KeelBalance | null>(null)
   const positions = ref<KeelPosition[]>([])
   const positionsSource = ref<string>('')
@@ -161,6 +164,14 @@ export const useMonitorStore = defineStore('monitor', () => {
         decisionStats.value = stats
       } catch {
         decisionStats.value = null
+      }
+
+      // Soft-fail: near-signal radar (Q0 observation)
+      try {
+        const radar = await keelFetch<KeelNearestSignals>('/api/v1/signals/nearest?hours=24')
+        nearestSignals.value = radar
+      } catch {
+        nearestSignals.value = null
       }
 
       // Refresh tab-only filtered lists without touching Overview unfiltered refs
@@ -358,6 +369,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     config,
     dailyPnl,
     decisionStats,
+    nearestSignals,
     balance,
     positions,
     positionsSource,

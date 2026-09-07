@@ -418,6 +418,126 @@ class KeelLedger:
             "avg_cycle_duration_ms": avg_ms,
         }
 
+
+    def get_nearest_signals(
+        self,
+        hours: float = 24.0,
+        instrument_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Latest decision per instrument within ``hours``, with signal_diag summary.
+
+        When ``instrument_ids`` is set, only those inst_ids are considered
+        (configured/watch list). Returns rows + summary counts for radar UX.
+        """
+        hours_f = max(0.0, float(hours))
+        since = time.time() - hours_f * 3600.0
+        conn = self._get_conn()
+
+        params: list[Any] = [since]
+        inst_filter = ""
+        if instrument_ids is not None:
+            ids = [str(i) for i in instrument_ids if i]
+            if not ids:
+                return {
+                    "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
+                    "signals": [],
+                    "summary": {
+                        "waiting": 0,
+                        "long_nearest": 0,
+                        "short_nearest": 0,
+                        "fired_long": 0,
+                        "fired_short": 0,
+                    },
+                }
+            placeholders = ",".join("?" for _ in ids)
+            inst_filter = f" AND inst_id IN ({placeholders})"
+            params.extend(ids)
+
+        # Latest row per inst_id in window (tie-break: highest id).
+        sql = f"""
+            SELECT d.* FROM decisions d
+            INNER JOIN (
+                SELECT inst_id, MAX(timestamp) AS max_ts
+                FROM decisions
+                WHERE timestamp >= ?{inst_filter}
+                GROUP BY inst_id
+            ) latest
+              ON d.inst_id = latest.inst_id AND d.timestamp = latest.max_ts
+            ORDER BY d.inst_id ASC
+        """
+        rows = conn.execute(sql, params).fetchall()
+
+        # Deduplicate if multiple rows share same max timestamp.
+        by_inst: dict[str, sqlite3.Row] = {}
+        for row in rows:
+            iid = str(row["inst_id"])
+            prev = by_inst.get(iid)
+            if prev is None or int(row["id"] or 0) > int(prev["id"] or 0):
+                by_inst[iid] = row
+
+        metric_keys = (
+            "rsi_14",
+            "trend_15m",
+            "volume_ratio",
+            "ema_9",
+            "ema_21",
+            "macd_histogram",
+        )
+        signals: list[dict[str, Any]] = []
+        waiting = long_nearest = short_nearest = fired_long = fired_short = 0
+
+        for iid in sorted(by_inst.keys()):
+            rec = self._row_to_decision(by_inst[iid])
+            calc = rec.calculus_data if isinstance(rec.calculus_data, dict) else {}
+            diag = calc.get("signal_diag") if isinstance(calc, dict) else None
+            if not isinstance(diag, dict):
+                diag = {}
+
+            nearest_raw = diag.get("nearest")
+            nearest = str(nearest_raw) if nearest_raw is not None and str(nearest_raw) else None
+            missing_raw = diag.get("missing")
+            missing: list[str] = []
+            if isinstance(missing_raw, list):
+                missing = [str(x) for x in missing_raw if x is not None and str(x)]
+
+            item: dict[str, Any] = {
+                "inst_id": rec.inst_id,
+                "action": rec.action,
+                "timestamp": float(rec.timestamp),
+                "nearest": nearest,
+                "missing": missing,
+            }
+            for k in metric_keys:
+                val = diag.get(k)
+                item[k] = val if val is not None else None
+
+            action_u = (rec.action or "").upper()
+            if action_u == "WAIT":
+                waiting += 1
+                if nearest == "long":
+                    long_nearest += 1
+                elif nearest == "short":
+                    short_nearest += 1
+            elif action_u == "BUY_LONG":
+                fired_long += 1
+            elif action_u == "SELL_SHORT":
+                fired_short += 1
+
+            signals.append(item)
+
+        return {
+            "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
+            "signals": signals,
+            "summary": {
+                "waiting": waiting,
+                "long_nearest": long_nearest,
+                "short_nearest": short_nearest,
+                "fired_long": fired_long,
+                "fired_short": fired_short,
+            },
+        }
+
     def get_latest_decision(self, inst_id: str, max_age_seconds: int = 300) -> DecisionRecord | None:
         """Get the most recent decision for an instrument if it's still fresh."""
         cutoff = time.time() - max_age_seconds
