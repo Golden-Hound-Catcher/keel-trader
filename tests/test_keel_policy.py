@@ -331,17 +331,23 @@ class TestRulePolicyV2(unittest.TestCase):
 
     def test_env_rsi_threshold_override(self):
         import os
-        snap = self._snap(rsi_14=45.0)  # above default 42 → WAIT
-        self.assertEqual(rule_based_decision(snap).action, "WAIT")
-        prev = os.environ.get("KEEL_RULE_RSI_LONG_MAX")
+        # Above hard default 45 and soft-relax 48 → WAIT unless threshold raised.
+        prev = {
+            k: os.environ.get(k)
+            for k in ("KEEL_RULE_RSI_LONG_MAX", "KEEL_RULE_RSI_RELAX_ENABLE")
+        }
         try:
+            os.environ["KEEL_RULE_RSI_RELAX_ENABLE"] = "0"
+            snap = self._snap(rsi_14=49.0)
+            self.assertEqual(rule_based_decision(snap).action, "WAIT")
             os.environ["KEEL_RULE_RSI_LONG_MAX"] = "50"
             self.assertEqual(rule_based_decision(snap).action, "BUY_LONG")
         finally:
-            if prev is None:
-                os.environ.pop("KEEL_RULE_RSI_LONG_MAX", None)
-            else:
-                os.environ["KEEL_RULE_RSI_LONG_MAX"] = prev
+            for k, v in prev.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
 
 class TestDiagnoseRuleSignal(unittest.TestCase):
@@ -508,6 +514,11 @@ class TestRulePolicyV3VolumeEdge(unittest.TestCase):
             "KEEL_RULE_VOLUME_SOFT_FLOOR",
             "KEEL_RULE_RSI_SOFT_LONG_MAX",
             "KEEL_RULE_RSI_SOFT_SHORT_MIN",
+            "KEEL_RULE_RSI_RELAX_ENABLE",
+            "KEEL_RULE_RSI_RELAX_LONG_MAX",
+            "KEEL_RULE_RSI_RELAX_SHORT_MIN",
+            "KEEL_RULE_RSI_LONG_MAX",
+            "KEEL_RULE_RSI_SHORT_MIN",
         )
         for k in keys:
             self._prev[k] = os.environ.get(k)
@@ -563,7 +574,7 @@ class TestRulePolicyV3VolumeEdge(unittest.TestCase):
             KEEL_RULE_RSI_SOFT_LONG_MAX="35",
         )
         try:
-            # RSI 40 passes hard long band (≤42) but not soft extreme (≤35)
+            # RSI 40 passes hard long band (≤45) but not soft extreme (≤35)
             d = rule_based_decision(self._snap(rsi_14=40.0, volume_ratio=0.40))
             self.assertEqual(d.action, "WAIT")
             self.assertIn("volume_ok", d.signal_diag["missing"])
@@ -609,6 +620,79 @@ class TestRulePolicyV3VolumeEdge(unittest.TestCase):
                 )
             )
             self.assertEqual(d.action, "SELL_SHORT")
+        finally:
+            self._restore()
+
+    def test_default_rsi_bands_widened(self):
+        """Defaults 45/55: RSI 44 long stack fires; RSI 56 short stack fires."""
+        self._env(
+            KEEL_RULE_MIN_VOLUME_PERCENTILE="0",
+            KEEL_RULE_VOLUME_SOFT_ENABLE="0",
+            KEEL_RULE_RSI_RELAX_ENABLE="0",
+        )
+        try:
+            d_long = rule_based_decision(self._snap(rsi_14=44.0, volume_ratio=0.6))
+            self.assertEqual(d_long.action, "BUY_LONG")
+            self.assertEqual(d_long.signal_diag["rsi_path"], "hard")
+            d_short = rule_based_decision(
+                self._snap(
+                    rsi_14=56.0,
+                    trend_15m="bearish",
+                    macd_histogram=-5.0,
+                    ema_9=64800.0,
+                    ema_21=65100.0,
+                    volume_ratio=0.6,
+                )
+            )
+            self.assertEqual(d_short.action, "SELL_SHORT")
+        finally:
+            self._restore()
+
+    def test_soft_rsi_relax_fires_when_other_four_ok(self):
+        """RSI 47 > hard 45 but ≤ relax 48 + other four → BUY_LONG via soft."""
+        self._env(
+            KEEL_RULE_MIN_VOLUME_PERCENTILE="0",
+            KEEL_RULE_VOLUME_SOFT_ENABLE="0",
+            KEEL_RULE_RSI_RELAX_ENABLE="1",
+            KEEL_RULE_RSI_RELAX_LONG_MAX="48",
+        )
+        try:
+            d = rule_based_decision(self._snap(rsi_14=47.0, volume_ratio=0.8))
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertTrue(d.signal_diag["rsi_soft_pass"])
+            self.assertEqual(d.signal_diag["rsi_path"], "soft")
+            self.assertTrue(d.signal_diag["rsi_long_ok"])
+        finally:
+            self._restore()
+
+    def test_soft_rsi_relax_disabled_blocks(self):
+        self._env(
+            KEEL_RULE_MIN_VOLUME_PERCENTILE="0",
+            KEEL_RULE_VOLUME_SOFT_ENABLE="0",
+            KEEL_RULE_RSI_RELAX_ENABLE="0",
+        )
+        try:
+            d = rule_based_decision(self._snap(rsi_14=47.0, volume_ratio=0.8))
+            self.assertEqual(d.action, "WAIT")
+            self.assertIn("rsi_long_ok", d.signal_diag["missing"])
+            self.assertEqual(d.signal_diag["rsi_path"], "fail")
+        finally:
+            self._restore()
+
+    def test_soft_rsi_does_not_fire_without_other_four(self):
+        """RSI in soft band alone must not spam — need trend/macd/ema/volume."""
+        self._env(
+            KEEL_RULE_MIN_VOLUME_PERCENTILE="0",
+            KEEL_RULE_VOLUME_SOFT_ENABLE="0",
+            KEEL_RULE_RSI_RELAX_ENABLE="1",
+            KEEL_RULE_RSI_RELAX_LONG_MAX="48",
+        )
+        try:
+            d = rule_based_decision(
+                self._snap(rsi_14=47.0, macd_histogram=-1.0, volume_ratio=0.8)
+            )
+            self.assertEqual(d.action, "WAIT")
+            self.assertFalse(d.signal_diag["rsi_soft_pass"])
         finally:
             self._restore()
 

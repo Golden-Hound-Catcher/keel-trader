@@ -539,6 +539,56 @@ class TestNearProbeEdgeHurdle(unittest.TestCase):
         self.assertFalse(edge_clears_hurdle(None, 10.0))
         self.assertTrue(edge_clears_hurdle(None, 0.0))  # hurdle 0 disables
 
+    def test_prefers_edge_hint_bps_over_crude_estimator(self):
+        """When signal_diag.edge_hint_bps is finite, use it (even if crude would differ)."""
+        # Weak geometry: crude estimator ≈ 4.8 bps with missing=1, conf=40, atr=2/price=100
+        # Hint says 25 → prefer hint.
+        edge = estimate_near_probe_edge_bps(
+            {"nearest": "long", "missing": ["volume_ok"], "edge_hint_bps": 25.0},
+            _snap(price=100.0, atr_14=2.0),
+            decision_confidence=40.0,
+        )
+        self.assertAlmostEqual(edge, 25.0)
+        self.assertTrue(edge_clears_hurdle(edge, 10.0))
+
+    def test_edge_hint_zero_fail_closed(self):
+        edge = estimate_near_probe_edge_bps(
+            {"nearest": "long", "missing": ["volume_ok"], "edge_hint_bps": 0.0},
+            _snap(price=100.0, atr_14=5.0),  # crude would be large
+            decision_confidence=80.0,
+        )
+        self.assertEqual(edge, 0.0)
+        self.assertFalse(edge_clears_hurdle(edge, 10.0))
+
+    def test_edge_hint_nan_falls_back(self):
+        edge = estimate_near_probe_edge_bps(
+            {"nearest": "long", "missing": [], "edge_hint_bps": float("nan")},
+            _snap(price=100.0, atr_14=5.0),
+            decision_confidence=80.0,
+        )
+        # Fallback crude: atr_bps=500, missing=0, conf=0.8 → p=0.8, EV=1.56 → 780
+        self.assertIsNotNone(edge)
+        self.assertGreater(edge, 10.0)
+
+    def test_edge_hint_clears_hurdle_emits_probe(self):
+        """Weak ATR geometry would fail; diag hint ≥10 clears default RT hurdle."""
+        wait = _wait_near("long", missing=["volume_ok"], confidence=40.0)
+        assert wait.signal_diag is not None
+        wait.signal_diag["edge_hint_bps"] = 12.5
+        out = maybe_near_probe_decision(
+            wait,
+            _snap(price=100.0, atr_14=2.0),  # crude ~4.8 < 10
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=True,
+            cooldown_seconds=0,
+            settings=refresh_settings(),
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out.action, "BUY_LONG")
+        self.assertAlmostEqual(out.signal_diag["edge_bps"], 12.5)
+
     def test_below_hurdle_no_shadow_fill(self):
         # Weak near: atr_bps=200, missing=1 → completeness=0.8, conf=0.4
         # p=0.32, EV_atr=3.2*0.32-1=0.024 → edge≈4.8 < default RT 10

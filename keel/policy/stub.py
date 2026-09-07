@@ -1,8 +1,9 @@
 """
 Deterministic Stub / Rule decision policies for offline tests and paper cycles.
 
-No LLM calls. Rule v3: RSI + trend + MACD + EMA stack + adaptive volume_ratio
-filters, with edge hints for near-probe observability.
+No LLM calls. Rule v3+: RSI + trend + MACD + EMA stack + adaptive volume_ratio
+filters, soft RSI relax when the other four gates pass, and edge hints for
+near-probe observability.
 Q0: diagnose_rule_signal attaches structured near-signal gate diagnostics.
 """
 from __future__ import annotations
@@ -43,25 +44,36 @@ def _env_bool(key: str, default: bool) -> bool:
 
 def _rule_thresholds() -> dict[str, float | bool]:
     """
-    Rule v3 thresholds (env-overridable, backward-compatible KEEL_RULE_*).
+    Rule v3+ thresholds (env-overridable, backward-compatible KEEL_RULE_*).
 
     Default ``KEEL_RULE_MIN_VOLUME_RATIO`` lowered 1.0 → 0.5: live okx_public
     relative volume is right-skewed (p50≈0.36–0.40, p90≈0.86), so ≥1.0 almost
     never passed and dominated missing-gate histograms (~85%+). 0.5 sits above
     the median (filters dead bars) without requiring an above-average spike.
+
+    After v3, okx_public missing shifts to RSI side gates (esp. ``rsi_short_ok``):
+    observed RSI sits mid-band (p50≈45–46, max often <50), so hard short ≥58
+    almost never clears. Defaults widen modestly 42/58 → 45/55, and a soft RSI
+    relax path (other four gates + slightly looser band) mirrors volume soft
+    confirm without flooding every bar.
     """
     return {
-        "rsi_long_max": _env_float("KEEL_RULE_RSI_LONG_MAX", 42.0),
-        "rsi_short_min": _env_float("KEEL_RULE_RSI_SHORT_MIN", 58.0),
+        # Hard RSI bands (mean-reversion): modestly widened after v3 RSI bottleneck.
+        "rsi_long_max": _env_float("KEEL_RULE_RSI_LONG_MAX", 45.0),
+        "rsi_short_min": _env_float("KEEL_RULE_RSI_SHORT_MIN", 55.0),
         # Hard volume floor (relative volume vs 20-bar mean).
         "min_vol": _env_float("KEEL_RULE_MIN_VOLUME_RATIO", 0.5),
         # Adaptive: also pass when last-bar percentile rank ≥ this (0 disables).
         "min_vol_percentile": _env_float("KEEL_RULE_MIN_VOLUME_PERCENTILE", 55.0),
-        # Soft confirmation when other 4 gates + strong RSI extreme.
+        # Soft volume confirmation when other 4 gates + strong RSI extreme.
         "vol_soft_enable": _env_bool("KEEL_RULE_VOLUME_SOFT_ENABLE", True),
         "vol_soft_floor": _env_float("KEEL_RULE_VOLUME_SOFT_FLOOR", 0.35),
         "rsi_soft_long_max": _env_float("KEEL_RULE_RSI_SOFT_LONG_MAX", 35.0),
         "rsi_soft_short_min": _env_float("KEEL_RULE_RSI_SOFT_SHORT_MIN", 65.0),
+        # Soft RSI relax: other 4 (trend/macd/ema/volume) + looser RSI band.
+        "rsi_relax_enable": _env_bool("KEEL_RULE_RSI_RELAX_ENABLE", True),
+        "rsi_relax_long_max": _env_float("KEEL_RULE_RSI_RELAX_LONG_MAX", 48.0),
+        "rsi_relax_short_min": _env_float("KEEL_RULE_RSI_RELAX_SHORT_MIN", 52.0),
     }
 
 
@@ -165,9 +177,9 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     for the side closest to firing (fewer failed gates). Used by
     ``rule_based_decision`` (DRY) and unit-tested with crafted snapshots.
 
-    Rule v3 extras: ``volume_threshold``, ``volume_soft_pass``, ``volume_path``,
-    ``volume_percentile``, ``near_ready``, ``atr_bps`` / ``expected_tp_bps`` /
-    ``edge_hint_bps``.
+    Rule v3+ extras: ``volume_threshold``, ``volume_soft_pass``, ``volume_path``,
+    ``volume_percentile``, ``rsi_soft_pass``, ``rsi_path``, ``near_ready``,
+    ``atr_bps`` / ``expected_tp_bps`` / ``edge_hint_bps``.
     """
     th = _rule_thresholds()
     rsi_long_max = float(th["rsi_long_max"])
@@ -178,11 +190,14 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     soft_floor = float(th["vol_soft_floor"])
     rsi_soft_long_max = float(th["rsi_soft_long_max"])
     rsi_soft_short_min = float(th["rsi_soft_short_min"])
+    rsi_relax_enable = bool(th["rsi_relax_enable"])
+    rsi_relax_long_max = float(th["rsi_relax_long_max"])
+    rsi_relax_short_min = float(th["rsi_relax_short_min"])
 
     data_ok = bool(snapshot.data_valid) and snapshot.price > 0 and snapshot.atr_14 > 0
 
-    rsi_long_ok = snapshot.rsi_14 <= rsi_long_max
-    rsi_short_ok = snapshot.rsi_14 >= rsi_short_min
+    rsi_long_hard = snapshot.rsi_14 <= rsi_long_max
+    rsi_short_hard = snapshot.rsi_14 >= rsi_short_min
     trend_bullish = snapshot.trend_15m == "bullish"
     trend_bearish = snapshot.trend_15m == "bearish"
     macd_long_ok = snapshot.macd_histogram >= 0
@@ -190,9 +205,10 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     ema_long_ok = snapshot.ema_9 >= snapshot.ema_21
     ema_short_ok = snapshot.ema_9 <= snapshot.ema_21
 
-    long_four = rsi_long_ok and trend_bullish and macd_long_ok and ema_long_ok
-    short_four = rsi_short_ok and trend_bearish and macd_short_ok and ema_short_ok
-    # Soft RSI extreme: tighter than the hard RSI band.
+    # Volume soft uses *hard* RSI in the other-four (same as pre-relax).
+    long_four = rsi_long_hard and trend_bullish and macd_long_ok and ema_long_ok
+    short_four = rsi_short_hard and trend_bearish and macd_short_ok and ema_short_ok
+    # Soft RSI extreme: tighter than the hard RSI band (for volume soft).
     rsi_extreme_long = snapshot.rsi_14 <= rsi_soft_long_max
     rsi_extreme_short = snapshot.rsi_14 >= rsi_soft_short_min
 
@@ -223,6 +239,32 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     best = min(candidates, key=lambda c: (_path_rank.get(c[3], 9), -int(c[0])))
     volume_ok, volume_threshold, volume_soft_pass, volume_path = best
 
+    # Soft RSI relax (after volume): other four without RSI + looser band.
+    # Mirrors volume soft confirm but loosens RSI when trend/macd/ema/volume align.
+    long_other4 = trend_bullish and macd_long_ok and ema_long_ok and volume_ok
+    short_other4 = trend_bearish and macd_short_ok and ema_short_ok and volume_ok
+    rsi_long_soft = (
+        rsi_relax_enable
+        and long_other4
+        and snapshot.rsi_14 <= rsi_relax_long_max
+    )
+    rsi_short_soft = (
+        rsi_relax_enable
+        and short_other4
+        and snapshot.rsi_14 >= rsi_relax_short_min
+    )
+    rsi_long_ok = rsi_long_hard or rsi_long_soft
+    rsi_short_ok = rsi_short_hard or rsi_short_soft
+    if rsi_long_hard or rsi_short_hard:
+        rsi_path = "hard"
+        rsi_soft_pass = False
+    elif rsi_long_soft or rsi_short_soft:
+        rsi_path = "soft"
+        rsi_soft_pass = True
+    else:
+        rsi_path = "fail"
+        rsi_soft_pass = False
+
     vol_pct = getattr(snapshot, "volume_percentile", None)
     try:
         vol_pct_out: float | None = float(vol_pct) if vol_pct is not None else None
@@ -246,6 +288,8 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         "volume_soft_pass": volume_soft_pass,
         "volume_path": volume_path,
         "volume_percentile": vol_pct_out,
+        "rsi_soft_pass": rsi_soft_pass,
+        "rsi_path": rsi_path,
         "ema_9": snapshot.ema_9,
         "ema_21": snapshot.ema_21,
         "macd_histogram": snapshot.macd_histogram,
@@ -278,18 +322,29 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
 
     gates["nearest"] = nearest
     gates["missing"] = missing
-    # Staged near_ready: only volume blocks, but ratio clears soft floor (no trade by itself).
-    gates["near_ready"] = (
+    # Staged near_ready: only volume blocks (soft floor) OR only RSI blocks within relax band.
+    near_vol = (
         missing == ["volume_ok"]
         and float(snapshot.volume_ratio or 0.0) >= soft_floor
     )
+    near_rsi_long = (
+        missing == ["rsi_long_ok"]
+        and rsi_relax_enable
+        and snapshot.rsi_14 <= rsi_relax_long_max
+    )
+    near_rsi_short = (
+        missing == ["rsi_short_ok"]
+        and rsi_relax_enable
+        and snapshot.rsi_14 >= rsi_relax_short_min
+    )
+    gates["near_ready"] = near_vol or near_rsi_long or near_rsi_short
     gates.update(_edge_hints(snapshot, len(missing)))
     return gates
 
 
 def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     """
-    Deterministic rule policy v3 (no LLM).
+    Deterministic rule policy v3+ (no LLM).
 
     Long: RSI ≤ long_max + bullish + MACD hist ≥ 0 + ema_9 ≥ ema_21 + volume_ok
     Short: RSI ≥ short_min + bearish + MACD hist ≤ 0 + ema_9 ≤ ema_21 + volume_ok
@@ -297,6 +352,9 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     ``volume_ok`` (Rule v3): ratio ≥ min_vol (default 0.5), OR last-bar volume
     percentile ≥ min percentile (default 55), OR soft confirmation when the
     other four gates pass with a strong RSI extreme and ratio ≥ soft floor.
+
+    ``rsi_*_ok`` soft relax (v3+): when trend+macd+ema+volume already pass,
+    RSI may clear via a slightly looser band (default long ≤48 / short ≥52).
 
     Produces valid RR >= 2 geometry when a signal fires so the risk/execution
     path is exercised end-to-end. Offline-testable via crafted MarketSnapshot.

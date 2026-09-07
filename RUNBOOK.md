@@ -175,8 +175,8 @@ PYTHONPATH=. python scripts/compare_policies_paper.py
 # prints action histogram for stub and rule; exit 0
 
 PYTHONPATH=. python scripts/compare_rule_params.py \
-  --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 0.5 \
-  --rsi-long-max-b 42 --rsi-short-min-b 58 --min-vol-b 1.0
+  --rsi-long-max-a 45 --rsi-short-min-a 55 --min-vol-a 0.5 \
+  --rsi-long-max-b 45 --rsi-short-min-b 40 --min-vol-b 0.5
 # same synthetic paper snaps; prints action + near_signal_rate + missing-gate histograms; exit 0
 
 # Q2.1 — export observed ledger decisions (local SQLite, no OKX keys)
@@ -187,23 +187,25 @@ PYTHONPATH=. python scripts/export_decisions.py \
 # Replay RuleDecisionPolicy A/B thresholds on that cohort (preferred over synthetic):
 PYTHONPATH=. python scripts/compare_rule_params.py \
   --from-ledger /tmp/keel_decisions.jsonl \
-  --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 0.5 \
-  --rsi-long-max-b 42 --rsi-short-min-b 58 --min-vol-b 1.0
+  --rsi-long-max-a 45 --rsi-short-min-a 55 --min-vol-a 0.5 \
+  --rsi-long-max-b 45 --rsi-short-min-b 40 --min-vol-b 0.5
 
 # Or one-shot from DB (default market_source=okx_public):
 PYTHONPATH=. python scripts/compare_rule_params.py \
   --db data/keel_ledger.db --hours 168 --market-source okx_public \
-  --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 0.5 \
-  --rsi-long-max-b 42 --rsi-short-min-b 58 --min-vol-b 1.0
+  --rsi-long-max-a 45 --rsi-short-min-a 55 --min-vol-a 0.5 \
+  --rsi-long-max-b 45 --rsi-short-min-b 40 --min-vol-b 0.5
 # Replays stored factor_snapshots / signal_diag; skips incomplete rows (skipped_incomplete=N).
-# Prints missing_gates[A|B] so you can verify volume_ok no longer dominates ~85%+.
+# Prints missing_gates[A|B]; tuned B (short_min=40) can show occasional non-WAIT on oversold-bear cohorts.
 ```
 
-### Phase R — Rule v3 volume edge (observe knobs)
+### Phase R — Rule v3+ volume / RSI edge (observe knobs)
 
 `volume_ratio` semantics (unchanged market truth): **last 15m bar volume / mean(last 20 bars)**. 1.0 = average bar; live okx_public is right-skewed (p50≈0.36–0.40, p90≈0.86), so the old default `KEEL_RULE_MIN_VOLUME_RATIO=1.0` blocked most near-signals.
 
-Rule v3 defaults (override via `.env`, do not commit secrets):
+After volume floor 0.5, okx_public missing shifts to **RSI side gates** (esp. `rsi_short_ok`): observed RSI sits mid-band (p50≈45–46), so hard short ≥58 rarely cleared.
+
+Rule v3+ defaults (override via `.env`, do not commit secrets):
 
 | Knob | Default | Role |
 |------|---------|------|
@@ -212,8 +214,11 @@ Rule v3 defaults (override via `.env`, do not commit secrets):
 | `KEEL_RULE_VOLUME_SOFT_ENABLE` | **1** | Soft confirm when other 4 gates + strong RSI extreme |
 | `KEEL_RULE_VOLUME_SOFT_FLOOR` | **0.35** | Soft floor (~p50) |
 | `KEEL_RULE_RSI_SOFT_LONG_MAX` / `_SHORT_MIN` | **35 / 65** | Stronger RSI band for soft volume |
+| `KEEL_RULE_RSI_LONG_MAX` / `_SHORT_MIN` | **45 / 55** | Hard RSI bands (was 42 / 58) |
+| `KEEL_RULE_RSI_RELAX_ENABLE` | **1** | Soft RSI when trend+macd+ema+volume already pass |
+| `KEEL_RULE_RSI_RELAX_LONG_MAX` / `_SHORT_MIN` | **48 / 52** | Slightly looser RSI band for soft path |
 
-`signal_diag` now includes `volume_threshold`, `volume_path` (`hard|percentile|soft|fail`), `volume_soft_pass`, `near_ready`, plus `atr_bps` / `expected_tp_bps` / `edge_hint_bps` for probe observability. **Near-probe fee hurdle (taker RT ≈ 10 bps) is unchanged.** Kill-switch / no live orders unchanged.
+`signal_diag` includes `volume_threshold`, `volume_path` (`hard|percentile|soft|fail`), `volume_soft_pass`, `rsi_path` / `rsi_soft_pass`, `near_ready`, plus `atr_bps` / `expected_tp_bps` / `edge_hint_bps`. Near-probe prefers `edge_hint_bps` when finite, else crude ATR EV; **fee hurdle (taker RT ≈ 10 bps) unchanged.** Kill-switch / no live orders unchanged.
 
 ---
 
