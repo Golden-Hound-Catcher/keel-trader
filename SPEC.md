@@ -129,7 +129,8 @@ Base: `keel.api.app`
 | GET | `/api/v1/events` | Raw ledger events (`?event_type=` / `?inst_id=` optional) |
 | GET | `/api/v1/factors/{inst_id}` | Latest factor snapshot (`?live=1` → OKX public candles) |
 | GET | `/api/v1/stats/decisions` | Decision quality aggregates (`?hours=`, optional `market_source=okx_public|synthetic|any`) |
-| GET | `/api/v1/stats/shadow` | Shadow_fill rehearsal counts (`?hours=`; by_action + last_timestamp) |
+| GET | `/api/v1/stats/shadow` | Shadow_fill counts + Q3.2 offline markout (`?hours=`; by_action/by_policy/probe_count + markout horizons) |
+| GET | `/api/v1/stats/shadow_markout` | Sibling alias of `/stats/shadow` (same markout payload) |
 | GET | `/api/v1/stats/quality` | Observation quality scorecard (`?hours=`): market_source breakdown, wait/near_signal rates, shadow nest, cycle timing |
 | GET | `/api/v1/signals/nearest` | Q0 near-signal radar: latest decision per watch instrument + `signal_diag` summary (`?hours=`) |
 
@@ -304,6 +305,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q3.2 shadow markout**: offline markout vs later factor_snapshots on `/stats/shadow` (+ `/stats/shadow_markout`); avg/median bps + win_rate by horizon; Monitor probe mk chip; RUNBOOK/SPEC |
 | 2026-09-07 | **Q3 shadow near-probe**: `KEEL_SHADOW_NEAR_PROBE` converts strong WAIT near-signals → shadow_fill when kill+shadow on (never live); cooldown/max_missing gates; `policy=shadow_near_probe` audit; arming counts probe fills; RUNBOOK/SPEC |
 | 2026-09-07 | **Q2.2 quality scorecard**: `GET /api/v1/stats/quality?hours=` compact observe health (market_source breakdown, wait/near_signal rates, shadow nest, cycles); Monitor Overview chips; RUNBOOK note |
 | 2026-09-07 | **Q2.1 ledger rule-param compare**: `scripts/export_decisions.py` + `KeelLedger.export_decisions`; `compare_rule_params.py --from-ledger` / `--db` replays RuleDecisionPolicy on observed okx_public calculus/factors (skip incomplete) |
@@ -376,6 +378,11 @@ After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` 
 ## Addendum: Q3 shadow near-signal probe
 
 `KEEL_SHADOW_NEAR_PROBE` (default **off**) optionally converts strong WAIT near-signals into shadow-only fills for arming rehearsal. Requires **all** of: kill-switch on, shadow mode on, probe on. Gate: `signal_diag.nearest` ∈ {long, short} and `len(missing) ≤ KEEL_SHADOW_NEAR_PROBE_MAX_MISSING` (default 2). Per-instrument cooldown via `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS`. Policy ledger rows stay WAIT; execution synthesizes BUY_LONG/SELL_SHORT through the existing shadow_fill path with `policy=shadow_near_probe` / `probe=true` / `strategy_tag=keel-shadow-near-probe`. **Never** calls exchange `place_order`. Probe fills count toward arming shadow rehearsal. `/stats/shadow` exposes `probe_count` + `by_policy`. See RUNBOOK.
+
+
+## Addendum: Q3.2 shadow markout
+
+Read-only outcome stats for ledger `shadow_fill` events. For each fill, look up a later price from `factor_snapshots` (preferred) or `decisions.entry_price` at horizons 60s / 300s / 900s. Directional markout in bps; aggregates include avg/median, win_rate (markout>0), probe-only subset, optional by_action. Unavailable later prices are skipped (counted). Exposed on `GET /api/v1/stats/shadow?hours=` nested `markout` and sibling `/stats/shadow_markout`. Never places orders or clears kill-switch. Monitor soft-fails if nest absent.
 
 ## Addendum: first-live caps
 

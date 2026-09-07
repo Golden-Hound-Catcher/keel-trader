@@ -319,6 +319,38 @@ const shadowProbeCount = computed(() => {
   const n = shadowStats.value?.probe_count
   return typeof n === 'number' && Number.isFinite(n) ? n : 0
 })
+/** Q3.2 probe markout chip — prefer 300s then 900s/60s; soft-fail if nest absent. */
+const shadowProbeMarkoutChip = computed(() => {
+  const horizons = shadowStats.value?.markout?.horizons
+  if (!Array.isArray(horizons) || !horizons.length) return null
+  const prefer = [300, 900, 60]
+  let best = null
+  for (const sec of prefer) {
+    const h = horizons.find((x) => x && Number(x.horizon_seconds) === sec)
+    if (h && typeof h.probe_sample_count === 'number' && h.probe_sample_count > 0) {
+      best = h
+      break
+    }
+  }
+  if (!best) {
+    best = horizons.find((x) => x && Number(x.probe_sample_count || 0) > 0) || null
+  }
+  if (!best) return null
+  const wr = best.probe_win_rate
+  const avg = best.probe_avg_markout_bps
+  const wrLabel =
+    typeof wr === 'number' && Number.isFinite(wr) ? `${(wr * 100).toFixed(0)}%` : '—'
+  const avgLabel =
+    typeof avg === 'number' && Number.isFinite(avg)
+      ? `${avg >= 0 ? '+' : ''}${avg.toFixed(1)}bps`
+      : '—'
+  return {
+    horizon: Number(best.horizon_seconds),
+    samples: Number(best.probe_sample_count || 0),
+    wrLabel,
+    avgLabel,
+  }
+})
 function radarNearestLabel(nearest: string | null | undefined, action: string): string {
   const a = (action || '').toUpperCase()
   if (a === 'BUY_LONG') return 'fired long'
@@ -1244,6 +1276,11 @@ const configStrip = computed(() => {
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-fuchsia-500/40 text-fuchsia-300"
                 title="near-probe shadow_fill count in lookback"
               >probe {{ shadowProbeCount }}</span>
+              <span
+                v-if="shadowProbeMarkoutChip"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/40 text-amber-300"
+                :title="`probe markout @ ${shadowProbeMarkoutChip.horizon}s · n=${shadowProbeMarkoutChip.samples} · offline factor_snapshots`"
+              >mk {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }}</span>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
               <div>
@@ -1304,6 +1341,11 @@ const configStrip = computed(() => {
               <span class="text-violet-300">Shadow stats ({{ shadowStats.hours }}h)</span>
               <span class="text-white tabular-nums">n={{ shadowStats.count }}</span>
               <span class="text-fuchsia-300 tabular-nums">probe={{ shadowProbeCount }}</span>
+              <span
+                v-if="shadowProbeMarkoutChip"
+                class="text-amber-300/90 tabular-nums"
+                :title="`probe markout @ ${shadowProbeMarkoutChip.horizon}s · n=${shadowProbeMarkoutChip.samples} · win_rate / avg (offline factor_snapshots)`"
+              >probe mk {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }} ({{ shadowProbeMarkoutChip.horizon }}s)</span>
               <span v-if="shadowStatsByAction" class="truncate" :title="shadowStatsByAction">{{ shadowStatsByAction }}</span>
               <span v-if="shadowStats.last_timestamp" class="text-[#707E94]">last {{ fmtTs(shadowStats.last_timestamp) }}</span>
               <span v-else class="text-[#707E94]">no fills</span>

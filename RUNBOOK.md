@@ -162,7 +162,7 @@ curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" | python -m json.t
 
 Response fields (`/stats/decisions`): `decision_count`, `by_action`, `by_policy`, `wait_rate` (0–1), `risk_deny_events` (`risk_gate_blocked` count), `cycle_count` (`worker_cycle_summary`), `avg_cycle_duration_ms`, `market_source` filter echo (`any`|`okx_public`|`synthetic`).
 
-Shadow stats (`/stats/shadow`): `count`, `by_action`, `last_timestamp` for `shadow_fill` events.
+Shadow stats (`/stats/shadow`): `count`, `by_action`, `by_policy`, `probe_count`, `last_timestamp` for `shadow_fill` events, plus nested **`markout`** (Q3.2 offline outcome): per-horizon (`60`/`300`/`900`s) `avg`/`median` `markout_bps`, `win_rate` (markout>0), probe-only subset, optional `by_action`. Later price from `factor_snapshots` (fallback `decisions.entry_price`); fills without a later price are `skipped`. Sibling: `GET /api/v1/stats/shadow_markout?hours=` (same payload). Read-only; never places orders.
 
 Quality scorecard (`/stats/quality`): single glance for observe health — `market_source` breakdown (`okx_public` / `synthetic` / `unknown`), `decision_count`, `wait_rate`, `by_action`, `near_signal_rate` (fraction of WAIT with `signal_diag.nearest` in `{long,short}`), nested `shadow` (`count` / `by_action` / `last_timestamp`), `cycle_count`, `avg_cycle_duration_ms`. Read-only; does not enable trading.
 
@@ -323,7 +323,7 @@ See also §Live（无模拟盘 key） below.
 | Cooldown | 每 instrument `KEEL_SHADOW_NEAR_PROBE_COOLDOWN_SECONDS`（默认 900）内不重复 probe |
 | 安全 | 无 kill 或无 shadow → **不** probe、**不** live order；policy 决策仍记 WAIT |
 | Arming | probe 产生的 `shadow_fill` **计入** shadow 排练证据（与 forced/manual 同属 `shadow_fill`） |
-| 统计 | `/stats/shadow` 含 `probe_count` + `by_policy`，可与 forced 区分 |
+| 统计 | `/stats/shadow` 含 `probe_count` + `by_policy`，可与 forced 区分；**Q3.2** 另含 `markout`（probe win_rate / avg bps by horizon） |
 
 **启用示例**（观察态，勿清 kill）：
 
@@ -339,5 +339,20 @@ KEEL_SHADOW_NEAR_PROBE=1
 
 重启 worker 后看 ledger `shadow_fill`（`data.policy=shadow_near_probe`）与 `GET /api/v1/stats/shadow` 的 `probe_count`。用完将 `KEEL_SHADOW_NEAR_PROBE=0`。
 
-Monitor / status：`GET /api/v1/status`（与 `/config`）暴露 `shadow_near_probe` + cooldown；Overview 显示 NEAR PROBE chip 与 quality/shadow 条的 `probe_count`。
+Monitor / status：`GET /api/v1/status`（与 `/config`）暴露 `shadow_near_probe` + cooldown；Overview 显示 NEAR PROBE chip 与 quality/shadow 条的 `probe_count`。Q3.2：Overview soft-fail chip `mk win% / ±bps`（probe markout；旧 API 无 `markout` 时隐藏）。
+
+### Q3.2 Shadow markout（离线盈亏探针）
+
+影子成交后，用 ledger 内后续 `factor_snapshots.price`（或 `decisions.entry_price`）计算简单 markout，衡量「若当时成交，稍后是否赚钱」——**只读、不下单**。
+
+```bash
+curl -s "http://127.0.0.1:8080/api/v1/stats/shadow?hours=24" | python -m json.tool
+# 或 sibling
+curl -s "http://127.0.0.1:8080/api/v1/stats/shadow_markout?hours=24" | python -m json.tool
+```
+
+- Horizons：60s / 300s / 900s（≈1 默认 cycle）
+- `BUY_LONG`：(later−fill)/fill×1e4 bps；`SELL_SHORT`：(fill−later)/fill×1e4
+- 缺后续价 → 计入 `skipped`，不进 sample
+- Monitor：Decision quality 旁 `mk …` chip（有 probe sample 时）
 
