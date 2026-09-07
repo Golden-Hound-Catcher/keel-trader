@@ -306,7 +306,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 ---
 
-## 15b. Phase E0/E1/E2A — full-gate measurement + trend-follow variant (gen-2)
+## 15b. Phase E0/E1/E2A/E2B — full-gate measurement + trend-follow variant (gen-2)
 
 **E0 freeze:** do not re-enable `KEEL_SHADOW_NEAR_PROBE`, do not lower the ~10 bps fee hurdle, do not clear kill from near-probe evidence, do not add near-probe tweaks.
 
@@ -314,10 +314,13 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 **E2A (trend-follow variant):** Opt-in `KEEL_RULE_VARIANT=trend_follow` (default `mean_revert` preserves bit-for-bit existing rule). Under TF: hard-require 15m+1h same direction; RSI long = not overbought (`rsi_14 ≤ KEEL_RULE_TF_RSI_LONG_MAX`, default 68); RSI short = not oversold (`rsi_14 ≥ KEEL_RULE_TF_RSI_SHORT_MIN`, default 32); MACD/EMA/volume unchanged. Policy name stays `rule`. `signal_diag.rule_variant` + status/config `rule_variant`. Flip only in local `.env`; E0 freeze still active. Success = `full_gate_fires > 0` under TF while kill+shadow. See RUNBOOK.
 
+**E2B (TF volume soft + MACD lag):** Under `trend_follow` only: (1) volume soft path when soft enable + trend+macd+ema align + `volume_ratio ≥ soft_floor` → `volume_path=soft_tf` (no RSI extreme; hard/percentile unchanged; mean_revert soft still needs RSI extreme); (2) `KEEL_RULE_TF_MACD_LAG_BPS` default 3.0 (clamp 0–15) — long OK if `hist≥0` OR `(hist/price)*1e4 ≥ -lag`, short symmetric; `lag=0` = strict; audit `macd_lag_bps` / `macd_lag_ok`. Policy name stays `rule`. E0 freeze unchanged. See RUNBOOK.
+
 ## 16. Changelog
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **E2B TF volume soft + MACD lag**: TF `volume_path=soft_tf` (trend+macd+ema, no RSI extreme); `KEEL_RULE_TF_MACD_LAG_BPS` default 3.0; `macd_lag_*` audit; MR unchanged; E0 freeze unchanged |
 | 2026-09-07 | **E2A trend-follow rule variant**: `KEEL_RULE_VARIANT=mean_revert\|trend_follow`; TF forces 15m+1h + RSI not-OB/OS (68/32); policy name stays `rule`; status/config `rule_variant`; E0 freeze unchanged |
 | 2026-09-07 | **E1 full-gate fires**: track BUY_LONG/SELL_SHORT with `signal_diag.missing==[]` (rule); `/stats/quality` exposes `full_gate_fires` + `economic_evidence`; `scripts/full_gate_markout.py` / `--full-gate-only`; Monitor chips; E0 freeze keeps near_probe off / 10bps hurdle / kill uncleared |
 | 2026-09-07 | **Per-instrument quality/economic**: `/stats/quality` + `/stats/shadow` (+ arming/`first_live` economic) optional `by_instrument` maps for BTC/ETH/SOL diagnosis; Monitor soft-fail chips; aggregate gates unchanged; never clears kill |

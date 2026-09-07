@@ -20,6 +20,10 @@ E2A: opt-in ``KEEL_RULE_VARIANT=trend_follow`` (default ``mean_revert``) —
 force 15m+1h same-direction trend gates; RSI side gates become "not
 overbought/oversold" (TF defaults 68/32) instead of mean-reversion extremes.
 Policy name stays ``rule`` so E1 full_gate detection still counts fires.
+E2B (trend_follow only): volume soft path without RSI extreme when
+trend+macd+ema align (``volume_path=soft_tf``); small MACD histogram lag
+tolerance via ``KEEL_RULE_TF_MACD_LAG_BPS`` (default 3.0, clamp 0–15).
+mean_revert volume soft + strict MACD sign unchanged.
 """
 from __future__ import annotations
 
@@ -39,6 +43,10 @@ _1H_EDGE_BOOST_DEFAULT = 1.25
 _1H_EDGE_BOOST_MIN = 1.0
 _1H_EDGE_BOOST_MAX = 2.0
 _1H_EDGE_BOOST_CAP_BPS = 5.0
+# E2B: TF MACD lag tolerance (hist_bps within ±lag still OK).
+_TF_MACD_LAG_BPS_DEFAULT = 3.0
+_TF_MACD_LAG_BPS_MIN = 0.0
+_TF_MACD_LAG_BPS_MAX = 15.0
 # R7/R8: near-signal edge_hint geometry (distance-to-threshold + ATR).
 # R8 defaults: slightly higher near p + softer penalty fracs so low-ATR
 # (≈18–40 bps) can still clear the 10 bps probe hurdle when residuals are modest.
@@ -186,6 +194,8 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         # R6: multiplicative edge_hint boost when 1h confirms nearest side (default 1.25x).
         "edge_1h_boost": _env_float("KEEL_RULE_1H_EDGE_BOOST", _1H_EDGE_BOOST_DEFAULT),
         "rule_variant": variant,
+        # E2B: TF-only MACD lag (0 under mean_revert).
+        "tf_macd_lag_bps": 0.0,
     }
     if variant == "trend_follow":
         # E2A: RSI = not overbought (long) / not oversold (short); force 15m+1h.
@@ -194,6 +204,10 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         th["require_1h_trend"] = True
         # Mean-reversion soft RSI relax does not apply under trend-follow.
         th["rsi_relax_enable"] = False
+        # E2B: small adverse MACD hist tolerance (bps of price).
+        th["tf_macd_lag_bps"] = _clamp_tf_macd_lag_bps(
+            _env_float("KEEL_RULE_TF_MACD_LAG_BPS", _TF_MACD_LAG_BPS_DEFAULT)
+        )
     return th
 
 
@@ -430,6 +444,17 @@ def _clamp_1h_edge_boost(raw: float) -> float:
     return max(_1H_EDGE_BOOST_MIN, min(_1H_EDGE_BOOST_MAX, m))
 
 
+def _clamp_tf_macd_lag_bps(raw: float) -> float:
+    """Clamp KEEL_RULE_TF_MACD_LAG_BPS into [0, 15] (E2B)."""
+    try:
+        m = float(raw)
+    except (TypeError, ValueError):
+        m = _TF_MACD_LAG_BPS_DEFAULT
+    if m != m:  # NaN
+        return _TF_MACD_LAG_BPS_DEFAULT
+    return max(_TF_MACD_LAG_BPS_MIN, min(_TF_MACD_LAG_BPS_MAX, m))
+
+
 def apply_1h_edge_boost(
     hints: dict[str, float | None],
     *,
@@ -508,12 +533,17 @@ def _volume_gate(
     soft_floor: float,
     other_four_ok: bool,
     rsi_extreme: bool,
+    soft_tf_three_ok: bool = False,
 ) -> tuple[bool, float, bool, str]:
     """
     Evaluate volume_ok with hard / adaptive / soft paths.
 
     Returns (volume_ok, threshold_used, soft_pass, path).
-    path ∈ {hard, percentile, soft, fail}.
+    path ∈ {hard, percentile, soft_tf, soft, fail}.
+
+    E2B: ``soft_tf`` (trend_follow only) passes when trend+macd+ema align and
+    ratio ≥ soft_floor — no RSI extreme required. mean_revert still uses
+    ``soft`` (other-four + RSI extreme).
     """
     ratio = float(snapshot.volume_ratio or 0.0)
     pct = getattr(snapshot, "volume_percentile", None)
@@ -527,6 +557,10 @@ def _volume_gate(
 
     if min_vol_percentile > 0 and pct_f is not None and pct_f >= min_vol_percentile:
         return True, float(min_vol_percentile), False, "percentile"
+
+    # E2B TF soft: three directional gates + soft floor (no RSI extreme).
+    if soft_enable and soft_tf_three_ok and ratio >= soft_floor:
+        return True, float(soft_floor), True, "soft_tf"
 
     if (
         soft_enable
@@ -558,6 +592,8 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     E2A: ``rule_variant`` (``mean_revert``|``trend_follow``); TF forces
     ``require_1h_trend`` and redefines RSI side gates (keys still
     ``rsi_long_ok`` / ``rsi_short_ok``).
+    E2B: TF ``volume_path=soft_tf`` (trend+macd+ema, no RSI extreme);
+    ``macd_lag_bps`` / ``macd_lag_ok`` for TF MACD hist lag tolerance.
     R7/R8: ``edge_hint_mode`` (``full``|``near``|``none``) plus
     ``edge_hint_sized_ev`` / ``edge_hint_distance_penalty_bps`` /
     ``edge_hint_distance_components`` / ``edge_hint_penalty_scale_bps``
@@ -604,8 +640,24 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         trend_1h_confirm = trend_1h_confirm_short
     else:
         trend_1h_confirm = False
-    macd_long_ok = snapshot.macd_histogram >= 0
-    macd_short_ok = snapshot.macd_histogram <= 0
+    # E2B: TF MACD lag — allow small adverse hist (bps of price); MR strict.
+    variant = str(th.get("rule_variant") or "mean_revert")
+    is_tf = variant == "trend_follow"
+    macd_lag_bps = float(th.get("tf_macd_lag_bps") or 0.0)
+    hist = float(snapshot.macd_histogram)
+    price = float(snapshot.price or 0.0)
+    hist_bps = (hist / price) * 1e4 if price > 0 else 0.0
+    macd_long_strict = hist >= 0
+    macd_short_strict = hist <= 0
+    if is_tf and macd_lag_bps > 0:
+        macd_long_ok = macd_long_strict or hist_bps >= -macd_lag_bps
+        macd_short_ok = macd_short_strict or hist_bps <= macd_lag_bps
+    else:
+        macd_long_ok = macd_long_strict
+        macd_short_ok = macd_short_strict
+    macd_lag_ok = (macd_long_ok and not macd_long_strict) or (
+        macd_short_ok and not macd_short_strict
+    )
     ema_long_ok = snapshot.ema_9 >= snapshot.ema_21
     ema_short_ok = snapshot.ema_9 <= snapshot.ema_21
 
@@ -615,6 +667,9 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     # Soft RSI extreme: tighter than the hard RSI band (for volume soft).
     rsi_extreme_long = snapshot.rsi_14 <= rsi_soft_long_max
     rsi_extreme_short = snapshot.rsi_14 >= rsi_soft_short_min
+    # E2B TF soft volume: trend+macd+ema only (no RSI extreme).
+    tf_three_long = trend_bullish and macd_long_ok and ema_long_ok
+    tf_three_short = trend_bearish and macd_short_ok and ema_short_ok
 
     # Hard/percentile paths ignore side context; soft path needs other-4 + RSI extreme.
     # Try long soft context first, then short (identical for hard/percentile).
@@ -627,6 +682,7 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
             soft_floor=soft_floor,
             other_four_ok=long_four,
             rsi_extreme=rsi_extreme_long,
+            soft_tf_three_ok=is_tf and tf_three_long,
         ),
         _volume_gate(
             snapshot,
@@ -636,10 +692,11 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
             soft_floor=soft_floor,
             other_four_ok=short_four,
             rsi_extreme=rsi_extreme_short,
+            soft_tf_three_ok=is_tf and tf_three_short,
         ),
     ]
-    # Prefer hard > percentile > soft > fail for diagnostics.
-    _path_rank = {"hard": 0, "percentile": 1, "soft": 2, "fail": 3}
+    # Prefer hard > percentile > soft(_tf) > fail for diagnostics.
+    _path_rank = {"hard": 0, "percentile": 1, "soft_tf": 2, "soft": 2, "fail": 3}
     best = min(candidates, key=lambda c: (_path_rank.get(c[3], 9), -int(c[0])))
     volume_ok, volume_threshold, volume_soft_pass, volume_path = best
 
@@ -683,6 +740,8 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         "trend_bearish": trend_bearish,
         "macd_long_ok": macd_long_ok,
         "macd_short_ok": macd_short_ok,
+        "macd_lag_bps": macd_lag_bps,
+        "macd_lag_ok": macd_lag_ok,
         "ema_long_ok": ema_long_ok,
         "ema_short_ok": ema_short_ok,
         "volume_ok": volume_ok,
@@ -805,6 +864,8 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     leaves room in low-ATR regimes); hurdle unchanged.
     E2A: ``KEEL_RULE_VARIANT=trend_follow`` forces 15m+1h and uses TF RSI
     bands (not-overbought / not-oversold); default ``mean_revert`` is unchanged.
+    E2B (TF only): volume soft via trend+macd+ema (``soft_tf``, no RSI extreme);
+    MACD lag ``KEEL_RULE_TF_MACD_LAG_BPS`` (default 3.0) for small adverse hist.
     """
     diag = diagnose_rule_signal(snapshot)
 

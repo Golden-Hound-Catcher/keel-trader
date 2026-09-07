@@ -1584,3 +1584,240 @@ class TestE2ATrendFollowVariant(unittest.TestCase):
             self.assertEqual(RuleDecisionPolicy().name, "rule")
         finally:
             self._restore_env(prev)
+
+class TestE2BTrendFollowVolumeMacdLag(unittest.TestCase):
+    """E2B: TF soft_tf volume (no RSI extreme) + MACD lag bps."""
+
+    _KEYS = (
+        "KEEL_RULE_VARIANT",
+        "KEEL_RULE_TF_RSI_LONG_MAX",
+        "KEEL_RULE_TF_RSI_SHORT_MIN",
+        "KEEL_RULE_TF_MACD_LAG_BPS",
+        "KEEL_RULE_REQUIRE_1H_TREND",
+        "KEEL_RULE_RSI_RELAX_ENABLE",
+        "KEEL_RULE_MIN_VOLUME_RATIO",
+        "KEEL_RULE_MIN_VOLUME_PERCENTILE",
+        "KEEL_RULE_VOLUME_SOFT_ENABLE",
+        "KEEL_RULE_VOLUME_SOFT_FLOOR",
+        "KEEL_RULE_RSI_SOFT_LONG_MAX",
+        "KEEL_RULE_RSI_SOFT_SHORT_MIN",
+        "KEEL_RULE_RSI_LONG_MAX",
+        "KEEL_RULE_RSI_SHORT_MIN",
+    )
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=1.0,
+            price=65000.0,
+            atr_14=500.0,
+            rsi_14=50.0,
+            trend_15m="bullish",
+            trend_1h="bullish",
+            trend_4h="neutral",
+            macd_histogram=10.0,
+            ema_9=65100.0,
+            ema_21=64900.0,
+            volume_ratio=1.2,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def _save(self):
+        import os
+
+        return {k: os.environ.get(k) for k in self._KEYS}
+
+    def _restore(self, prev):
+        import os
+
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _enable_tf_soft(self, *, macd_lag="3.0"):
+        import os
+
+        os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
+        os.environ["KEEL_RULE_MIN_VOLUME_RATIO"] = "1.0"
+        os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+        os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "1"
+        os.environ["KEEL_RULE_VOLUME_SOFT_FLOOR"] = "0.35"
+        os.environ["KEEL_RULE_TF_MACD_LAG_BPS"] = str(macd_lag)
+        os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
+
+    def test_tf_soft_volume_mid_rsi_fires(self):
+        """TF: mid RSI + vol above soft floor + trend/macd/ema → soft_tf full gate."""
+        prev = self._save()
+        try:
+            self._enable_tf_soft()
+            d = rule_based_decision(self._snap(rsi_14=50.0, volume_ratio=0.40))
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertTrue(d.signal_diag["volume_ok"])
+            self.assertTrue(d.signal_diag["volume_soft_pass"])
+            self.assertEqual(d.signal_diag["volume_path"], "soft_tf")
+            self.assertEqual(d.signal_diag["rule_variant"], "trend_follow")
+        finally:
+            self._restore(prev)
+
+    def test_tf_soft_volume_short_mid_rsi(self):
+        prev = self._save()
+        try:
+            self._enable_tf_soft()
+            d = rule_based_decision(
+                self._snap(
+                    rsi_14=50.0,
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    macd_histogram=-5.0,
+                    ema_9=64800.0,
+                    ema_21=65100.0,
+                    volume_ratio=0.40,
+                )
+            )
+            self.assertEqual(d.action, "SELL_SHORT")
+            self.assertEqual(d.signal_diag["volume_path"], "soft_tf")
+        finally:
+            self._restore(prev)
+
+    def test_mr_soft_volume_still_needs_rsi_extreme(self):
+        """mean_revert: mid-band RSI that passes hard band still needs extreme for soft."""
+        import os
+
+        prev = self._save()
+        try:
+            for k in self._KEYS:
+                os.environ.pop(k, None)
+            os.environ["KEEL_RULE_MIN_VOLUME_RATIO"] = "1.0"
+            os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+            os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "1"
+            os.environ["KEEL_RULE_VOLUME_SOFT_FLOOR"] = "0.35"
+            os.environ["KEEL_RULE_RSI_SOFT_LONG_MAX"] = "35"
+            # RSI 40 passes hard long (≤45) but not soft extreme (≤35)
+            d = rule_based_decision(self._snap(rsi_14=40.0, volume_ratio=0.40))
+            self.assertEqual(d.action, "WAIT")
+            self.assertIn("volume_ok", d.signal_diag["missing"])
+            self.assertNotEqual(d.signal_diag.get("volume_path"), "soft_tf")
+            self.assertEqual(d.signal_diag["rule_variant"], "mean_revert")
+        finally:
+            self._restore(prev)
+
+    def test_tf_macd_lag_allows_small_adverse_hist_short(self):
+        """TF short: slightly positive hist within lag bps → macd_short_ok via lag."""
+        prev = self._save()
+        try:
+            self._enable_tf_soft(macd_lag="3.0")
+            # hist_bps = 10/65000*1e4 ≈ 1.54 ≤ 3.0 → lag OK for short
+            d = rule_based_decision(
+                self._snap(
+                    rsi_14=50.0,
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    macd_histogram=10.0,
+                    ema_9=64800.0,
+                    ema_21=65100.0,
+                    volume_ratio=1.2,
+                )
+            )
+            self.assertEqual(d.action, "SELL_SHORT")
+            self.assertTrue(d.signal_diag["macd_short_ok"])
+            self.assertTrue(d.signal_diag["macd_lag_ok"])
+            self.assertAlmostEqual(d.signal_diag["macd_lag_bps"], 3.0)
+            self.assertEqual(d.signal_diag["missing"], [])
+        finally:
+            self._restore(prev)
+
+    def test_tf_macd_lag_allows_small_adverse_hist_long(self):
+        prev = self._save()
+        try:
+            self._enable_tf_soft(macd_lag="3.0")
+            # hist_bps = -10/65000*1e4 ≈ -1.54 ≥ -3.0 → lag OK for long
+            d = rule_based_decision(
+                self._snap(rsi_14=50.0, macd_histogram=-10.0, volume_ratio=1.2)
+            )
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertTrue(d.signal_diag["macd_long_ok"])
+            self.assertTrue(d.signal_diag["macd_lag_ok"])
+        finally:
+            self._restore(prev)
+
+    def test_tf_macd_lag_zero_restores_strict(self):
+        prev = self._save()
+        try:
+            self._enable_tf_soft(macd_lag="0")
+            d = rule_based_decision(
+                self._snap(
+                    rsi_14=50.0,
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    macd_histogram=10.0,
+                    ema_9=64800.0,
+                    ema_21=65100.0,
+                    volume_ratio=1.2,
+                )
+            )
+            self.assertEqual(d.action, "WAIT")
+            self.assertFalse(d.signal_diag["macd_short_ok"])
+            self.assertFalse(d.signal_diag["macd_lag_ok"])
+            self.assertAlmostEqual(d.signal_diag["macd_lag_bps"], 0.0)
+            self.assertIn("macd_short_ok", d.signal_diag["missing"])
+        finally:
+            self._restore(prev)
+
+    def test_tf_macd_lag_too_large_still_fails(self):
+        """Adverse hist beyond lag still blocks."""
+        prev = self._save()
+        try:
+            self._enable_tf_soft(macd_lag="3.0")
+            # hist_bps = 50/65000*1e4 ≈ 7.69 > 3.0
+            d = rule_based_decision(
+                self._snap(
+                    rsi_14=50.0,
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    macd_histogram=50.0,
+                    ema_9=64800.0,
+                    ema_21=65100.0,
+                    volume_ratio=1.2,
+                )
+            )
+            self.assertEqual(d.action, "WAIT")
+            self.assertFalse(d.signal_diag["macd_short_ok"])
+            self.assertFalse(d.signal_diag["macd_lag_ok"])
+        finally:
+            self._restore(prev)
+
+    def test_mr_macd_strict_ignores_lag_env(self):
+        """mean_revert ignores KEEL_RULE_TF_MACD_LAG_BPS (strict hist sign)."""
+        import os
+
+        prev = self._save()
+        try:
+            for k in self._KEYS:
+                os.environ.pop(k, None)
+            os.environ["KEEL_RULE_TF_MACD_LAG_BPS"] = "15"
+            os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+            os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
+            # Short stack but positive hist — MR must WAIT even with lag env set.
+            d = rule_based_decision(
+                self._snap(
+                    rsi_14=65.0,
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    macd_histogram=10.0,
+                    ema_9=64800.0,
+                    ema_21=65100.0,
+                    volume_ratio=1.2,
+                )
+            )
+            self.assertEqual(d.action, "WAIT")
+            self.assertFalse(d.signal_diag["macd_short_ok"])
+            self.assertAlmostEqual(d.signal_diag["macd_lag_bps"], 0.0)
+            self.assertFalse(d.signal_diag["macd_lag_ok"])
+        finally:
+            self._restore(prev)
