@@ -224,6 +224,7 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("notify_format", config_props)
         self.assertIn("exchange_mode", config_props)
         self.assertIn("cycle_interval_seconds", config_props)
+        self.assertIn("observe_preset", config_props)
         self.assertIn("scheduler_jobs", config_props)
         self.assertNotIn("legacy_scheduler_jobs", config_props)
         self.assertIn("decision_policy", config_props)
@@ -235,6 +236,7 @@ class TestApiSchemas(unittest.TestCase):
         di_props = comps["DecisionItem"]["properties"]
         self.assertIn("policy_name", di_props)
         self.assertIn("prompt_modules", di_props)
+        self.assertIn("signal_diag", di_props)
         self.assertIn("/ready", paths)
         self.assertIn("ReadyResponse", comps)
         ready_props = comps["ReadyResponse"]["properties"]
@@ -272,6 +274,7 @@ class TestApiSchemas(unittest.TestCase):
             notify_format="keel",
             exchange_mode="paper",
             cycle_interval_seconds=900,
+            observe_preset="fast",
             scheduler_jobs=["trader"],
         )
         self.assertFalse(cfg.kill_switch)
@@ -282,6 +285,7 @@ class TestApiSchemas(unittest.TestCase):
         self.assertTrue(cfg.notify_configured)
         self.assertEqual(cfg.exchange_mode, "paper")
         self.assertEqual(cfg.cycle_interval_seconds, 900)
+        self.assertEqual(cfg.observe_preset, "fast")
         self.assertEqual(cfg.scheduler_jobs, ["trader"])
 
     def test_daily_pnl_response_model(self):

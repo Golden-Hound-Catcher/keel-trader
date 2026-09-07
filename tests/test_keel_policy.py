@@ -327,5 +327,86 @@ class TestRulePolicyV2(unittest.TestCase):
             else:
                 os.environ["KEEL_RULE_RSI_LONG_MAX"] = prev
 
+
+class TestDiagnoseRuleSignal(unittest.TestCase):
+    """Q0 near-signal gate diagnostics (crafted snapshots)."""
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=1.0,
+            price=65000.0,
+            atr_14=500.0,
+            rsi_14=35.0,
+            trend_15m="bullish",
+            macd_histogram=10.0,
+            ema_9=65100.0,
+            ema_21=64900.0,
+            volume_ratio=1.2,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def test_long_fire_nearest_empty_missing(self):
+        from keel.policy import diagnose_rule_signal
+
+        diag = diagnose_rule_signal(self._snap())
+        self.assertTrue(diag["data_valid"])
+        self.assertEqual(diag["nearest"], "long")
+        self.assertEqual(diag["missing"], [])
+        self.assertTrue(diag["rsi_long_ok"])
+        self.assertTrue(diag["ema_long_ok"])
+
+    def test_wait_ema_fails_nearest_long_lists_ema(self):
+        from keel.policy import diagnose_rule_signal
+
+        diag = diagnose_rule_signal(self._snap(ema_9=64800.0, ema_21=65100.0))
+        self.assertEqual(diag["nearest"], "long")
+        self.assertIn("ema_long_ok", diag["missing"])
+        self.assertFalse(diag["ema_long_ok"])
+        # Long still closer (only EMA fails) vs short (many gates fail).
+        self.assertLess(len(diag["missing"]), 5)
+
+    def test_wait_volume_only_missing(self):
+        from keel.policy import diagnose_rule_signal
+
+        diag = diagnose_rule_signal(self._snap(volume_ratio=0.5))
+        self.assertEqual(diag["nearest"], "long")
+        self.assertEqual(diag["missing"], ["volume_ok"])
+
+    def test_short_near_when_bearish_stack_almost(self):
+        from keel.policy import diagnose_rule_signal
+
+        # Short-ish: only volume fails for short; long has many fails.
+        diag = diagnose_rule_signal(
+            self._snap(
+                rsi_14=65.0,
+                trend_15m="bearish",
+                macd_histogram=-5.0,
+                ema_9=64800.0,
+                ema_21=65100.0,
+                volume_ratio=0.5,
+            )
+        )
+        self.assertEqual(diag["nearest"], "short")
+        self.assertEqual(diag["missing"], ["volume_ok"])
+
+    def test_invalid_data_nearest_none(self):
+        from keel.policy import diagnose_rule_signal
+
+        diag = diagnose_rule_signal(self._snap(data_valid=False))
+        self.assertFalse(diag["data_valid"])
+        self.assertEqual(diag["nearest"], "none")
+        self.assertEqual(diag["missing"], ["data_valid"])
+
+    def test_rule_based_decision_attaches_signal_diag(self):
+        d = rule_based_decision(self._snap(volume_ratio=0.5))
+        self.assertEqual(d.action, "WAIT")
+        self.assertIsInstance(d.signal_diag, dict)
+        self.assertEqual(d.signal_diag["nearest"], "long")
+        self.assertIn("volume_ok", d.signal_diag["missing"])
+
 if __name__ == "__main__":
     unittest.main()

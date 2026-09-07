@@ -569,6 +569,11 @@ def run_paper_cycle(
                     "trend_15m": snap.trend_15m,
                     "policy_name": audit_policy,
                     "prompt_modules": audit_modules,
+                    **(
+                        {"signal_diag": decision.signal_diag}
+                        if getattr(decision, "signal_diag", None)
+                        else {}
+                    ),
                 },
             )
         )

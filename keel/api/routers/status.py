@@ -70,5 +70,6 @@ def config() -> ConfigResponse:
         notify_format=settings.notify_format,
         exchange_mode=settings.exchange_mode,
         cycle_interval_seconds=settings.cycle_interval_seconds,
+        observe_preset=settings.observe_preset,
         scheduler_jobs=list(settings.scheduler_jobs),
     )

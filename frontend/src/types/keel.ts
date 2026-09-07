@@ -75,8 +75,10 @@ export interface KeelConfig {
   notify_alerts_only?: boolean
   notify_format?: string
   exchange_mode: string
-  /** Trader cycle interval in seconds (KEEL_CYCLE_INTERVAL_SECONDS). */
+  /** Trader cycle interval in seconds (KEEL_CYCLE_INTERVAL_SECONDS / observe preset). */
   cycle_interval_seconds: number
+  /** Q0 observe cadence preset: default|fast|slow when KEEL_OBSERVE_PRESET set. */
+  observe_preset?: string | null
   scheduler_jobs?: string[]
 }
 
@@ -124,6 +126,8 @@ export interface KeelDecision {
   stop_loss?: number
   reason?: string
   calculus_data?: Record<string, unknown>
+  /** Q0 near-signal gate diagnostics (also under calculus_data.signal_diag). */
+  signal_diag?: Record<string, unknown> | null
   policy_name?: string
   prompt_modules?: string[] | null
 }

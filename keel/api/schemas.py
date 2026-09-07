@@ -94,6 +94,7 @@ class ConfigResponse(BaseModel):
     notify_format: str = "keel"
     exchange_mode: str = "paper"
     cycle_interval_seconds: int = 900
+    observe_preset: str | None = None
     scheduler_jobs: list[str] = Field(default_factory=lambda: ["trader"])
 
 
@@ -141,6 +142,7 @@ class DecisionItem(BaseModel):
     stop_loss: float | None = None
     reason: str = ""
     calculus_data: dict[str, Any] | None = None
+    signal_diag: dict[str, Any] | None = None
     policy_name: str = ""
     prompt_modules: list[str] | None = None
 
