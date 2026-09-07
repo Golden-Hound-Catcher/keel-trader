@@ -37,6 +37,8 @@ class GateContext:
     existing_margin_for_asset: float = 0.0
     cooldown_until: float = 0.0
     kill_switch_active: bool = False
+    # When true, kill-switch allows shadow rehearsal (no real place_order).
+    shadow_mode: bool = False
     # Requested order notional in USDT (typically margin_usdt * leverage).
     notional: float = 0.0
     existing_notional_for_asset: float = 0.0
@@ -212,9 +214,11 @@ class CooldownGate(RiskGate):
 
 
 class KillSwitchGate(RiskGate):
-    """Emergency kill switch — blocks all gate actions when armed.
+    """Emergency kill switch — blocks real exchange orders when armed.
 
     Armed via ``KEEL_KILL_SWITCH`` (settings) and/or ``GateContext.kill_switch_active``.
+    When ``GateContext.shadow_mode`` is True, the gate passes so shadow rehearsal
+    can ledger ``shadow_fill``; kill still means no real ``place_order``.
     Decision ``WAIT`` never reaches gates (orchestrator short-circuit).
     """
 
@@ -229,6 +233,14 @@ class KillSwitchGate(RiskGate):
         return "kill_switch"
 
     def check(self, ctx: GateContext) -> GateResult:
+        # Kill-switch = no real orders; shadow rehearsal still records.
+        if ctx.shadow_mode:
+            return GateResult(
+                passed=True,
+                gate_name=self.name,
+                reason="shadow rehearsal — kill-switch does not block shadow_fill",
+                details={"kill_switch": self._active or ctx.kill_switch_active, "shadow_mode": True},
+            )
         if self._active or ctx.kill_switch_active:
             return GateResult(
                 passed=False,
@@ -252,11 +264,16 @@ class MaxNotionalGate(RiskGate):
         max_contracts: int | None = None,
     ):
         settings = get_settings()
+        # Prefer effective caps (live tighter when env=live and not shadow).
         self._max_notional = (
-            settings.max_notional_per_instrument if max_notional is None else max_notional
+            settings.effective_max_notional_per_instrument
+            if max_notional is None
+            else max_notional
         )
         self._max_contracts = (
-            settings.max_contracts_per_instrument if max_contracts is None else max_contracts
+            settings.effective_max_contracts_per_instrument
+            if max_contracts is None
+            else max_contracts
         )
 
     @property

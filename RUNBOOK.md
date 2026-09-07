@@ -104,7 +104,7 @@ Paper 门禁脚本 **不能**替代 demo（demo 需要操作员本机 key）。C
 | `GET /health` | 进程存活；返回 `status=ok`、版本、demo/live 环境标签 |
 | `GET /ready` | 账本可读且 worker **未** stale；`worker_stale` = 距上次 cycle 超过 `max(2×interval, interval+300)`（默认 interval 900s → 1800s） |
 | `KEEL_KILL_SWITCH=1` | 紧急熔断：风控拒绝一切交易动作（BUY/SELL/scale/close）；`WAIT` 仍可通过 |
-| `KEEL_SHADOW_MODE=1` | 影子成交：风控通过后 ledger `shadow_fill`，**不**调用 `place_order`；kill-switch 仍优先 |
+| `KEEL_SHADOW_MODE=1` | 影子成交：风控通过后 ledger `shadow_fill`，**不**调用 `place_order`；kill-switch 只拦真实下单，shadow 仍可记录 |
 | `KEEL_MAX_NOTIONAL_PER_INSTRUMENT` | 单标的名义价值上限（默认 2000 USDT） |
 | `KEEL_MAX_CONTRACTS_PER_INSTRUMENT` | 单标的合约张数上限（默认 50） |
 | `KEEL_MAX_POSITIONS` / `KEEL_MAX_DAILY_LOSS` / `KEEL_MAX_ASSET_MARGIN` | 持仓数、日亏、单标保证金门禁 |
@@ -249,20 +249,22 @@ See also §Live（无模拟盘 key） below.
 
 | 字段 | 含义 |
 |------|------|
-| `ready_to_arm` | `true` 仅当：keys 已配 + `okx_capability=trade` + 风险限额健全（`max_notional` / `max_daily_loss` > 0）+ env 为 live/demo |
+| `ready_to_arm` | `true` 仅当：keys 已配 + `okx_capability=trade` + 风险限额健全（`max_notional` / `max_daily_loss` > 0；live 另检 `KEEL_LIVE_MAX_*`）+ env 为 live/demo +（可选）近期有 shadow 排练 |
 | `kill_switch` | 当前 env 状态（echo） |
 | `capability` | 同上 probe 结果 |
-| `blockers` | 未就绪的人类可读原因 |
-| `warnings` | 非阻断提示（如 tiny equity、demo、worker_stale、market_source≠okx_public） |
+| `blockers` | 未就绪的人类可读原因（含 `KEEL_ARMING_REQUIRE_SHADOW=1` 时的 `no recent shadow_fill rehearsal`） |
+| `warnings` | 非阻断提示（tiny equity、demo、worker_stale、market_source、默认的 shadow 排练缺失） |
+
+**Shadow 排练证据**：`evaluate_arming` 查 ledger 近 `KEEL_ARMING_SHADOW_HOURS`（默认 24）内是否有 `shadow_fill`。缺省 → warning `no recent shadow_fill rehearsal`；设 `KEEL_ARMING_REQUIRE_SHADOW=1` → blocker（`ready_to_arm=false`）。
 
 **操作步骤（人工）**：
 
 1. 保持 `KEEL_KILL_SWITCH=1`，确认 Monitor「实盘准入」或 `arming.ready_to_arm` / `blockers`。
 2. 确认 `okx_capability=trade`（带交易权限的 live/demo key）；只读 key 停在此步。
-3. 确认风险限额：`KEEL_MAX_NOTIONAL_PER_INSTRUMENT`、`KEEL_MAX_DAILY_LOSS` 已设且 > 0。
-4. 阅读 `arming.warnings`（小余额、demo、行情源、worker 是否 stale）。
-5. **推荐先影子排练**：设 `KEEL_SHADOW_MODE=1`（可与 kill-switch=1 同时开着验证门禁；清 kill 前务必开 shadow），确认 Monitor「SHADOW MODE」徽章、`GET /api/v1/status` 的 `shadow_mode=true`，以及 ledger 出现 `shadow_fill` 事件且**无** OKX `place_order`。
-6. **仅当** checklist 绿灯、影子路径已验收、且接受资金风险时，手动设 `KEEL_KILL_SWITCH=0`（可先保留 `KEEL_SHADOW_MODE=1` 再关 shadow），并重启相关进程——API/Monitor **无** toggle。
+3. 确认风险限额：`KEEL_MAX_NOTIONAL_PER_INSTRUMENT`、`KEEL_MAX_DAILY_LOSS` 已设且 > 0；live 首单另看 `KEEL_LIVE_MAX_NOTIONAL_PER_INSTRUMENT`（默认 200）与 `KEEL_LIVE_MAX_CONTRACTS_PER_INSTRUMENT`（默认 5）。
+4. 阅读 `arming.warnings`（小余额、demo、行情源、worker stale、无近期 shadow_fill）。
+5. **必做影子排练（kill 可保持 ON）**：设 `KEEL_SHADOW_MODE=1` + `KEEL_KILL_SWITCH=1`，跑短暂 cycle。**kill-switch = 禁止真实下单；shadow 仍记录 `shadow_fill`**。确认 Monitor「SHADOW MODE」、`shadow_mode=true`、ledger 有 `shadow_fill` 且无 OKX `place_order`，直至 arming 不再警告/阻断 shadow 排练。
+6. **仅当** checklist 绿灯、影子路径已验收、且接受资金风险时，手动设 `KEEL_KILL_SWITCH=0` 并关 `KEEL_SHADOW_MODE`（先关 shadow 再清 kill，或短暂 shadow+unkill 再关 shadow），重启相关进程——API/Monitor **无** toggle。真 live 路径自动套用更紧的 `KEEL_LIVE_MAX_*`。
 
 ### Shadow execution（`KEEL_SHADOW_MODE`）
 
@@ -271,8 +273,9 @@ See also §Live（无模拟盘 key） below.
 | 项 | 行为 |
 |----|------|
 | 默认 | off（`KEEL_SHADOW_MODE` unset/0） |
-| Kill-switch | **仍阻断**交易动作；shadow 不能绕过熔断 |
+| Kill-switch | **只拦真实下单**；`kill=1` + `shadow=1` → 仍走 shadow_fill；`kill=1` + `shadow=0` → deny |
 | 暴露 | `shadow_mode` on `GET /api/v1/status` + `/config`；Monitor Overview 徽章/横幅（仅当 on） |
+| Live caps | `shadow_mode=1` 时仍用 `KEEL_MAX_*`（不切 `KEEL_LIVE_MAX_*`）；真 live（live + 非 shadow）用更紧 live caps |
 
-**在清 kill-switch 之前**先用 shadow 验收整条 decision→risk→ledger 路径，确认没有真实下单。
+**在清 kill-switch 之前**先用 shadow 验收整条 decision→risk→ledger 路径（可与 kill=1 同开），确认没有真实下单。
 

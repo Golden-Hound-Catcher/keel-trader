@@ -40,6 +40,7 @@ def status() -> StatusResponse:
         cap.level,
         market_source=market_source,
         worker_stale=stale,
+        ledger=get_ledger(),
     )
     return StatusResponse(
         version=__version__,
@@ -83,6 +84,10 @@ def config() -> ConfigResponse:
         max_asset_margin=settings.max_single_asset_margin,
         max_notional_per_instrument=settings.max_notional_per_instrument,
         max_contracts_per_instrument=settings.max_contracts_per_instrument,
+        live_max_notional_per_instrument=settings.live_max_notional_per_instrument,
+        live_max_contracts_per_instrument=settings.live_max_contracts_per_instrument,
+        effective_max_notional_per_instrument=settings.effective_max_notional_per_instrument,
+        effective_max_contracts_per_instrument=settings.effective_max_contracts_per_instrument,
         llm_model=settings.llm_model,
         kill_switch=settings.kill_switch,
         shadow_mode=settings.shadow_mode,

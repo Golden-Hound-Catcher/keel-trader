@@ -260,6 +260,12 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertNotIn("legacy_scheduler_jobs", body)
         self.assertIn("max_notional_per_instrument", body)
         self.assertEqual(body["max_notional_per_instrument"], 2000.0)
+        self.assertIn("live_max_notional_per_instrument", body)
+        self.assertEqual(body["live_max_notional_per_instrument"], 200.0)
+        self.assertIn("live_max_contracts_per_instrument", body)
+        self.assertEqual(body["live_max_contracts_per_instrument"], 5)
+        self.assertIn("effective_max_notional_per_instrument", body)
+        self.assertIn("effective_max_contracts_per_instrument", body)
         self.assertIn("max_contracts_per_instrument", body)
         self.assertEqual(body["max_contracts_per_instrument"], 50)
 

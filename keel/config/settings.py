@@ -69,10 +69,16 @@ class Settings:
     max_notional_per_instrument: float = 2000.0
     # Max contracts (size units) per instrument; used when GateContext.size > 0.
     max_contracts_per_instrument: int = 50
+    # First-live tighter caps (KEEL_LIVE_MAX_*); used when env=live AND not shadow_mode.
+    live_max_notional_per_instrument: float = 200.0
+    live_max_contracts_per_instrument: int = 5
     # Emergency kill switch (KEEL_KILL_SWITCH=0|1 / true|false); default off
     kill_switch: bool = False
     # Shadow execution (KEEL_SHADOW_MODE=0|1); when on, ledger shadow fills instead of place_order
     shadow_mode: bool = False
+    # Arming: require recent shadow_fill rehearsal (hours / hard require).
+    arming_shadow_hours: float = 24.0
+    arming_require_shadow: bool = False
 
     # Trader cycle interval (KEEL_CYCLE_INTERVAL_SECONDS / KEEL_OBSERVE_PRESET); default 900
     cycle_interval_seconds: int = 900
@@ -97,6 +103,25 @@ class Settings:
     @property
     def notify_configured(self) -> bool:
         return bool(self.notify_webhook_url.strip())
+
+    @property
+    def uses_live_caps(self) -> bool:
+        """True when real live path should use tighter KEEL_LIVE_MAX_* caps."""
+        return self.okx_environment == "live" and not self.shadow_mode
+
+    @property
+    def effective_max_notional_per_instrument(self) -> float:
+        """Notional cap in force: live tighter caps on real live; else KEEL_MAX_*."""
+        if self.uses_live_caps:
+            return self.live_max_notional_per_instrument
+        return self.max_notional_per_instrument
+
+    @property
+    def effective_max_contracts_per_instrument(self) -> int:
+        """Contracts cap in force: live tighter caps on real live; else KEEL_MAX_*."""
+        if self.uses_live_caps:
+            return self.live_max_contracts_per_instrument
+        return self.max_contracts_per_instrument
 
     @property
     def exchange_mode(self) -> str:
@@ -348,8 +373,12 @@ def get_settings() -> Settings:
         max_single_asset_margin=_env_float("KEEL_MAX_ASSET_MARGIN", 600.0),
         max_notional_per_instrument=_env_float("KEEL_MAX_NOTIONAL_PER_INSTRUMENT", 2000.0),
         max_contracts_per_instrument=_env_int("KEEL_MAX_CONTRACTS_PER_INSTRUMENT", 50),
+        live_max_notional_per_instrument=_env_float("KEEL_LIVE_MAX_NOTIONAL_PER_INSTRUMENT", 200.0),
+        live_max_contracts_per_instrument=_env_int("KEEL_LIVE_MAX_CONTRACTS_PER_INSTRUMENT", 5),
         kill_switch=_env_bool("KEEL_KILL_SWITCH", False),
         shadow_mode=_env_bool("KEEL_SHADOW_MODE", False),
+        arming_shadow_hours=_env_float("KEEL_ARMING_SHADOW_HOURS", 24.0),
+        arming_require_shadow=_env_bool("KEEL_ARMING_REQUIRE_SHADOW", False),
         cycle_interval_seconds=cycle_interval_seconds,
         observe_preset=observe_preset,
         instruments=_env_instruments(),

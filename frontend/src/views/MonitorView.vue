@@ -176,6 +176,7 @@ const COMMON_EVENT_TYPES = [
   'order_resting',
   'order_filled',
   'order_accepted',
+  'shadow_fill',
 ] as const
 
 const eventTypeFilterOptions = computed(() => {
@@ -552,10 +553,13 @@ const configStrip = computed(() => {
   })()
   const maxPos = c?.max_positions ?? '—'
   const maxDaily = c?.max_daily_loss
-  const maxNotional = c?.max_notional_per_instrument
-  const maxContracts = c?.max_contracts_per_instrument
+  const maxNotional = c?.effective_max_notional_per_instrument ?? c?.max_notional_per_instrument
+  const maxContracts = c?.effective_max_contracts_per_instrument ?? c?.max_contracts_per_instrument
+  const liveMaxNotional = c?.live_max_notional_per_instrument
+  const liveMaxContracts = c?.live_max_contracts_per_instrument
   const kill = c?.kill_switch ?? store.status?.kill_switch ?? false
   const shadow = c?.shadow_mode ?? store.status?.shadow_mode ?? false
+  const isLiveEnv = String(env).toLowerCase() === 'live'
   const notify = c?.notify_configured
   const policy = c?.decision_policy || store.status?.decision_policy || '—'
   const intervalSec = cycleIntervalSeconds.value
@@ -571,6 +575,9 @@ const configStrip = computed(() => {
     maxDaily: maxDaily == null ? '—' : fmt(maxDaily),
     maxNotional: maxNotional == null ? '—' : fmt(maxNotional, 0),
     maxContracts: maxContracts == null ? '—' : String(maxContracts),
+    liveMaxNotional: liveMaxNotional == null ? '—' : fmt(liveMaxNotional, 0),
+    liveMaxContracts: liveMaxContracts == null ? '—' : String(liveMaxContracts),
+    isLiveEnv,
     kill: kill ? 'ON' : 'off',
     shadow: shadow ? 'ON' : 'off',
     notify: notify == null ? '—' : notify ? 'yes' : 'no',
@@ -614,7 +621,7 @@ const configStrip = computed(() => {
               <span
                 v-if="shadowModeOn"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-extrabold bg-violet-500/15 text-violet-300 border border-violet-500/40 tracking-wide"
-                title="KEEL_SHADOW_MODE — decisions ledger shadow_fill; no exchange place_order"
+                title="KEEL_SHADOW_MODE — decisions ledger shadow_fill; no exchange place_order (kill-switch still blocks real orders only)"
               >
                 <Ghost class="w-3 h-3" />
                 SHADOW MODE
@@ -938,7 +945,7 @@ const configStrip = computed(() => {
               v-if="armingReady && !armingBlockers.length"
               class="text-[10px] font-mono text-emerald-400/80 mt-1"
             >
-              Checklist green — rehearse with KEEL_SHADOW_MODE=1, then set KEEL_KILL_SWITCH=0 manually (no UI toggle).
+              Checklist green — rehearse with KEEL_SHADOW_MODE=1 (kill may stay ON; shadow still records), then set KEEL_KILL_SWITCH=0 manually (no UI toggle).
             </div>
           </div>
 
@@ -961,6 +968,11 @@ const configStrip = computed(() => {
             <span class="text-[#A8B3C7]">max_daily_loss <span class="text-white">${{ configStrip.maxDaily }}</span></span>
             <span class="text-[#A8B3C7]">max_notional <span class="text-white">${{ configStrip.maxNotional }}</span></span>
             <span class="text-[#A8B3C7]">max_contracts <span class="text-white">{{ configStrip.maxContracts }}</span></span>
+            <span
+              v-if="configStrip.isLiveEnv"
+              class="text-[#A8B3C7]"
+              title="KEEL_LIVE_MAX_* first-live tighter caps (applied when env=live and not shadow)"
+            >live_caps <span class="text-amber-300">${{ configStrip.liveMaxNotional }} / {{ configStrip.liveMaxContracts }} ct</span></span>
             <span class="text-[#A8B3C7]">kill <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
             <span class="text-[#A8B3C7]">shadow <span :class="shadowModeOn ? 'text-violet-300' : 'text-white'">{{ configStrip.shadow }}</span></span>
             <span class="text-[#A8B3C7]">notify <span class="text-white">{{ configStrip.notify }}</span></span>

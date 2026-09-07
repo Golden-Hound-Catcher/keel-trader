@@ -222,11 +222,40 @@ class TestOrchestratorLedgerCoherence(unittest.TestCase):
         self.assertTrue(trades[0].metadata.get("shadow"))
         self.assertEqual(trades[0].strategy_tag, "keel-shadow")
 
-    def test_shadow_mode_kill_switch_still_blocks(self):
+    def test_kill_switch_without_shadow_blocks(self):
         orch = ExecutionOrchestrator(
             exchange=self.exchange,
             ledger=self.ledger,
-            risk_gates=[KillSwitchGate()],
+            risk_gates=[KillSwitchGate(active=True)],
+        )
+        place_calls: list = []
+
+        def boom(request):
+            place_calls.append(request)
+            raise AssertionError("place_order must not be called")
+
+        self.exchange.place_order = boom  # type: ignore[method-assign]
+        decision = Decision(
+            inst_id="BTC-USDT-SWAP",
+            action="BUY_LONG",
+            entry_price=100.2,
+            take_profit=122.0,
+            stop_loss=90.0,
+            margin_usdt=50.0,
+        )
+        result = orch.execute_decision(decision, kill_switch=True, shadow_mode=False)
+        self.assertFalse(result.success)
+        self.assertEqual(result.risk_gate_failed, "kill_switch")
+        self.assertFalse(result.shadow)
+        self.assertEqual(place_calls, [])
+        self.assertEqual(len(self.ledger.get_events(event_type="shadow_fill")), 0)
+
+    def test_kill_switch_with_shadow_allows_shadow_fill(self):
+        """kill=1 + shadow=1 → shadow_fill; never place_order."""
+        orch = ExecutionOrchestrator(
+            exchange=self.exchange,
+            ledger=self.ledger,
+            risk_gates=[KillSwitchGate(active=True)],
         )
         place_calls: list = []
 
@@ -244,11 +273,30 @@ class TestOrchestratorLedgerCoherence(unittest.TestCase):
             margin_usdt=50.0,
         )
         result = orch.execute_decision(decision, kill_switch=True, shadow_mode=True)
-        self.assertFalse(result.success)
-        self.assertEqual(result.risk_gate_failed, "kill_switch")
-        self.assertFalse(result.shadow)
+        self.assertTrue(result.success)
+        self.assertTrue(result.shadow)
+        self.assertTrue(result.filled)
         self.assertEqual(place_calls, [])
-        self.assertEqual(len(self.ledger.get_events(event_type="shadow_fill")), 0)
+        self.assertGreaterEqual(len(self.ledger.get_events(event_type="shadow_fill")), 1)
+
+    def test_kill_shadow_matrix_via_default_gates(self):
+        """Matrix via orchestrator defaults: kill+shadow ok; kill alone denies."""
+        decision = Decision(
+            inst_id="BTC-USDT-SWAP",
+            action="BUY_LONG",
+            entry_price=100.2,
+            take_profit=122.0,
+            stop_loss=90.0,
+            margin_usdt=50.0,
+        )
+        # kill + shadow → shadow fill
+        r1 = self.orch.execute_decision(decision, kill_switch=True, shadow_mode=True)
+        self.assertTrue(r1.success)
+        self.assertTrue(r1.shadow)
+        # kill + no shadow → deny
+        r2 = self.orch.execute_decision(decision, kill_switch=True, shadow_mode=False)
+        self.assertFalse(r2.success)
+        self.assertEqual(r2.risk_gate_failed, "kill_switch")
 
     def test_shadow_mode_from_settings(self):
         import os

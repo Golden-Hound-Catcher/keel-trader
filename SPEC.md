@@ -160,7 +160,7 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_LLM_MODEL` | — | |
 | `KEEL_LEDGER_DB` | local path | SQLite file |
 | `KEEL_KILL_SWITCH` | `0` | `0` \| `1` / true\|false — deny all trading when on |
-| `KEEL_SHADOW_MODE` | `0` | `0` \| `1` — ledger shadow_fill instead of place_order; kill-switch still blocks |
+| `KEEL_SHADOW_MODE` | `0` | `0` \| `1` — ledger shadow_fill instead of place_order; kill blocks real orders only |
 | `KEEL_MAX_NOTIONAL_PER_INSTRUMENT` | `2000` | USDT; existing + requested notional (margin×leverage); on `/config` |
 | `KEEL_MAX_CONTRACTS_PER_INSTRUMENT` | `50` | Contract/size units per instrument when size known; on `/config` |
 | `KEEL_INSTRUMENTS` | empty → defaults | Comma-separated OKX swap ids; empty → `DEFAULT_CRYPTO_INSTRUMENTS`; worker + `/config` instruments |
@@ -185,7 +185,8 @@ Must validate against schema (action, instrument, size/notion, optional TP/SL in
 ### Risk gates (examples; configurable)
 
 - Kill switch (`KEEL_KILL_SWITCH`) — when armed, gates deny all trading actions; `WAIT` still ok  
-- Shadow mode (`KEEL_SHADOW_MODE`) — when on, risk-pass decisions ledger `shadow_fill` (+ optional synthetic trade marked shadow) and **skip** exchange `place_order`; kill-switch still blocks; default off  
+- Shadow mode (`KEEL_SHADOW_MODE`) — when on, risk-pass decisions ledger `shadow_fill` (+ optional synthetic trade marked shadow) and **skip** exchange `place_order`; kill-switch blocks real orders only (shadow may proceed); default off  
+- First-live caps (`KEEL_LIVE_MAX_NOTIONAL_PER_INSTRUMENT` default 200, `KEEL_LIVE_MAX_CONTRACTS_PER_INSTRUMENT` default 5) — applied when `okx_environment=live` and not shadow; paper/shadow keep `KEEL_MAX_*`  
 - Max notional / contracts per instrument (`KEEL_MAX_NOTIONAL_PER_INSTRUMENT` default 2000 USDT ≈ margin 600×~3.3 lev; `KEEL_MAX_CONTRACTS_PER_INSTRUMENT` default 50) — `MaxNotionalGate` after DailyLoss; closes still ok  
 - Cooldown after stop / deny  
 - Daily loss circuit breaker  
@@ -297,6 +298,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q1 shadow rehearsal + live caps**: arming checks recent `shadow_fill`; kill+shadow allows shadow_fill; `KEEL_LIVE_MAX_*` for real live; Monitor/config expose |
 | 2026-09-07 | **Q1 shadow fills**: `KEEL_SHADOW_MODE` → settings.shadow_mode; orchestrator ledgers `shadow_fill` (+ synthetic trade) instead of place_order; kill-switch still blocks; status/config + Monitor badge; RUNBOOK rehearse shadow before clearing kill-switch |
 | 2026-09-07 | **Q1 arming checklist**: `evaluate_arming` → `status.arming` (ready_to_arm/blockers/warnings); Monitor「实盘准入」card; never auto-clears KEEL_KILL_SWITCH |
 | 2026-09-07 | **Q1 key capability probe**: `okx_capability` on `/status`+`/config` (none/paper/read/trade/error) via balance + orders-pending (no place/cancel/close); ~60s cache; Monitor Credentials badge; RUNBOOK arming requires `trade` before clearing kill-switch |
@@ -359,7 +361,11 @@ After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` 
 
 ## Addendum: shadow execution
 
-`KEEL_SHADOW_MODE` (default off) loads into `settings.shadow_mode`. When on, `ExecutionOrchestrator` still runs validation + risk gates (kill-switch remains authoritative). Decisions that would place an order instead record a ledger `shadow_fill` event (decision details) and an optional synthetic trade marked `metadata.shadow=true` / `strategy_tag=keel-shadow`, returning `success=true` without calling exchange `place_order` (no OKX POST). Non-secret `shadow_mode` is echoed on status/config; Monitor Overview shows a read-only badge/banner when on. Operators should rehearse shadow before clearing kill-switch (see RUNBOOK).
+`KEEL_SHADOW_MODE` (default off) loads into `settings.shadow_mode`. When on, `ExecutionOrchestrator` still runs validation + risk gates. **Kill-switch means no real exchange orders**; with shadow on, gates allow the shadow path so operators can rehearse while `KEEL_KILL_SWITCH=1`. Decisions that would place an order instead record a ledger `shadow_fill` event (decision details) and an optional synthetic trade marked `metadata.shadow=true` / `strategy_tag=keel-shadow`, returning `success=true` without calling exchange `place_order` (no OKX POST). Non-secret `shadow_mode` is echoed on status/config; Monitor Overview shows a read-only badge/banner when on. Arming warns (or blocks when `KEEL_ARMING_REQUIRE_SHADOW=1`) if no recent `shadow_fill` (see RUNBOOK).
+
+## Addendum: first-live caps
+
+`KEEL_LIVE_MAX_NOTIONAL_PER_INSTRUMENT` (default 200) and `KEEL_LIVE_MAX_CONTRACTS_PER_INSTRUMENT` (default 5) tighten MaxNotionalGate when `okx_environment=live` and `shadow_mode` is off. Paper, demo, and shadow keep `KEEL_MAX_*`. `/config` exposes `live_max_*` and `effective_max_*`.
 
 ## Addendum: max notional / contracts per instrument
 

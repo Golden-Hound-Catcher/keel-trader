@@ -44,7 +44,7 @@ class ExecutionOrchestrator:
     Flow:
     1. Receive decision (LLM or rule-based)
     2. Re-validate Decision schema / RR geometry
-    3. Check all risk gates (kill-switch still blocks)
+    3. Check all risk gates (kill-switch blocks real orders; shadow may proceed)
     4. Calculate position size
     5. If shadow_mode: ledger shadow_fill (+ optional synthetic trade); no place_order
     6. Else submit limit order with TP/SL and record fill/resting/failure
@@ -77,7 +77,8 @@ class ExecutionOrchestrator:
             cooldown_until: Timestamp when cooldown ends
             kill_switch: Emergency stop; None → ``settings.kill_switch`` (KEEL_KILL_SWITCH)
             shadow_mode: When true, ledger shadow fill instead of exchange place_order;
-                None → ``settings.shadow_mode`` (KEEL_SHADOW_MODE). Kill-switch still blocks.
+                None → ``settings.shadow_mode`` (KEEL_SHADOW_MODE). Kill-switch blocks
+                real orders only — shadow rehearsal proceeds when both are on.
 
         Returns:
             ExecutionResult
@@ -149,6 +150,9 @@ class ExecutionOrchestrator:
         if decision.entry_price and decision.entry_price > 0 and requested_notional > 0:
             estimated_size = requested_notional / float(decision.entry_price)
 
+        # Kill-switch = no real exchange orders. When shadow_mode, skip kill deny
+        # so rehearsal can ledger shadow_fill (orchestrator never calls place_order).
+        gates_kill = bool(kill_switch) and not bool(shadow_mode)
         ctx = GateContext(
             inst_id=decision.inst_id,
             action=action_type,
@@ -160,7 +164,8 @@ class ExecutionOrchestrator:
             daily_pnl=daily_pnl,
             existing_margin_for_asset=existing_margin,
             cooldown_until=cooldown_until,
-            kill_switch_active=kill_switch,
+            kill_switch_active=gates_kill,
+            shadow_mode=bool(shadow_mode),
             notional=requested_notional,
             existing_notional_for_asset=existing_notional,
             existing_size_for_asset=existing_size,
