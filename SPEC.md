@@ -310,6 +310,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **S2 first-live checklist**: `status.first_live` aggregates kill/shadow/capability + arming/economic + suggested `KEEL_LIVE_MAX_*` + `allowed_now` (false while kill on or economic fail) + `human_steps`; Monitor「First live」card; RUNBOOK Stage T gate; never auto-clears kill |
 | 2026-09-07 | **Phase R Rule v3 edge pack**: audit volume_ratio (= last/mean20, correct); default min_vol 1.0→0.5 + percentile/soft volume paths; signal_diag edge hints (atr/expected_tp/edge_hint_bps); compare_rule_params missing-gate hist; near-probe 10bps fee hurdle unchanged |
 | 2026-09-07 | **Phase R RSI soft + edge_hint wire**: hard RSI defaults 42/58→45/55; soft RSI relax when other four gates pass (48/52); near-probe prefers signal_diag.edge_hint_bps; 10bps hurdle unchanged |
 | 2026-09-07 | **S1 economic arming gates**: `evaluate_arming` requires shadow markout evidence (min fills/probe, 300s sample, probe net-RT win_rate≥0.55, avg net-RT≥0); `insufficient_shadow_markout_sample` when undersampled; `arming.economic` on status + Monitor; kill still manual; RUNBOOK/SPEC |
@@ -431,6 +432,11 @@ Extends Q3.2 with official OKX trading-fee awareness (not a naive fixed haircut)
 - Keep `avg_markout_bps` as **gross**; add `avg_net_open_markout_bps` / `avg_net_roundtrip_markout_bps` (+ median/probe/`win_rate_net_roundtrip`). Top-level `fee_model`.
 - Funding is separate (position × funding rate at settlement). v1: if fill→horizon crosses standard UTC 00/08/16 and public `/api/v5/public/funding-rate` is available, apply once; else `funding_applied=false` (do not invent). Short horizons usually 0.
 - Monitor chip prefers **net roundtrip** when present. Never places orders or clears kill-switch.
+
+
+## Addendum: S2 first-live checklist (Stage T gate)
+
+`GET /api/v1/status` includes `first_live`: read-only aggregation of kill_switch, shadow_mode, shadow_near_probe, capability, arming ready/blockers/economic, suggested live caps (`KEEL_LIVE_MAX_*`), `allowed_now`, and ordered `human_steps` keys. `allowed_now` is **false** while kill is on or economic gates have not passed (also requires `ready_to_arm` and shadow off). Never writes env, never clears kill-switch, never places orders. Monitor Overview shows a compact「First live」card. See RUNBOOK.
 
 ## Addendum: first-live caps
 

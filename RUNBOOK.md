@@ -363,6 +363,28 @@ Monitor「实盘准入」卡展示 `economic` PASS/FAIL 与 fills/probe/mk300s/n
 5. **必做影子排练（kill 可保持 ON）**：设 `KEEL_SHADOW_MODE=1` + `KEEL_KILL_SWITCH=1`（可选 `KEEL_SHADOW_NEAR_PROBE=1`），跑短暂 cycle。**kill-switch = 禁止真实下单；shadow 仍记录 `shadow_fill`**。确认 Monitor「SHADOW MODE」、ledger 有足够 shadow/probe fills，并用 `/stats/shadow_markout` 看 300s net-RT 样本，直至 `economic.passed` 且无经济 blocker。
 6. **仅当** checklist + **经济门禁**绿灯、影子路径已验收、且接受资金风险时，手动设 `KEEL_KILL_SWITCH=0` 并关 `KEEL_SHADOW_MODE`（先关 shadow 再清 kill，或短暂 shadow+unkill 再关 shadow），重启相关进程——API/Monitor **无** toggle。真 live 路径自动套用更紧的 `KEEL_LIVE_MAX_*`。
 
+### First live（Stage T gate）
+
+产品化「能否开一笔最小实盘」只读清单——**不**清 kill、**不**下单。看 `GET /api/v1/status` 的 `first_live`（Monitor「First live」卡同步）：
+
+| 字段 | 含义 |
+|------|------|
+| `allowed_now` | **仅当** kill 已关 **且** 经济门禁通过 **且** `ready_to_arm` **且** `shadow_mode` 关 → `true`；kill 开或经济未过 → **强制 false** |
+| `kill_switch` / `shadow_mode` / `shadow_near_probe` / `capability` | 当前状态 echo |
+| `ready_to_arm` + `blockers` + `economic` | 透传 arming / S1 摘要 |
+| `suggested_live_caps` | 建议的 `KEEL_LIVE_MAX_NOTIONAL_PER_INSTRUMENT` / `KEEL_LIVE_MAX_CONTRACTS_PER_INSTRUMENT`（来自 settings） |
+| `human_steps` | 英文 key 有序列表（见下） |
+
+**`human_steps`（API keys）** → 人工含义：
+
+1. `wait_for_economic_pass` — 等 `arming.economic.passed` / First live economic PASS（影子 markout 样本与质量达标）
+2. `set_tiny_notional` — 设极小 `KEEL_LIVE_MAX_*`（默认 notional 200 / contracts 5 可再收紧）
+3. `clear_kill_manually` — **仅人工**设 `KEEL_KILL_SWITCH=0`（API/Monitor **永不**自动清 kill）
+4. `verify_one_fill` — 确认一笔最小实盘成交后立即停手核对
+5. `re_enable_kill` — 立刻 `KEEL_KILL_SWITCH=1` 重新武装
+
+**强调**：Keel **永不**自动写 `KEEL_KILL_SWITCH=0`，也无 UI toggle 清 kill；First live 只回答「现在能不能」，不执行。
+
 ### Shadow execution（`KEEL_SHADOW_MODE`）
 
 可选影子成交：决策通过风控后**不**调用交易所 `place_order`，而是写入 ledger 事件 `shadow_fill`（含 decision 明细）以及可选合成 trade（`metadata.shadow=true` / `strategy_tag=keel-shadow`）。`ExecutionResult.success=true` 且 `shadow=true`。

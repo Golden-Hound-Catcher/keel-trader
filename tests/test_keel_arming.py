@@ -9,6 +9,7 @@ from keel.risk.arming import (
     AVG_NET_RT_BELOW,
     INSUFFICIENT_SHADOW_MARKOUT_SAMPLE,
     PROBE_WIN_RATE_BELOW,
+    build_first_live,
     evaluate_arming,
     evaluate_economic_gates,
 )
@@ -344,6 +345,88 @@ class TestEconomicArmingGates(unittest.TestCase):
         )
         self.assertFalse(r.ready_to_arm)
         self.assertIn(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE, r.blockers)
+
+
+
+class TestFirstLiveChecklist(unittest.TestCase):
+    """S2: first-live Stage T gate aggregation (read-only)."""
+
+    def test_allowed_now_false_when_kill_on(self):
+        arming = evaluate_arming(
+            _settings(kill_switch=True, arming_econ_enabled=True),
+            "trade",
+            markout_stats=_markout(),
+        )
+        self.assertTrue(arming.ready_to_arm)
+        self.assertTrue(arming.economic["passed"])
+        fl = build_first_live(
+            _settings(kill_switch=True, shadow_mode=False),
+            arming,
+        )
+        self.assertFalse(fl.allowed_now)
+        self.assertTrue(fl.kill_switch)
+        self.assertIn("wait_for_economic_pass", fl.human_steps)
+        self.assertIn("clear_kill_manually", fl.human_steps)
+        self.assertIn("re_enable_kill", fl.human_steps)
+        self.assertEqual(
+            fl.suggested_live_caps["live_max_notional_per_instrument"], 200.0
+        )
+        self.assertEqual(
+            fl.suggested_live_caps["live_max_contracts_per_instrument"], 5
+        )
+
+    def test_allowed_now_false_when_economic_fails(self):
+        arming = evaluate_arming(
+            _settings(kill_switch=False, arming_econ_enabled=True),
+            "trade",
+            markout_stats=_markout(sample_count=1, probe_sample_count=1),
+        )
+        self.assertFalse(arming.ready_to_arm)
+        self.assertFalse(arming.economic["passed"])
+        fl = build_first_live(
+            _settings(kill_switch=False, shadow_mode=False),
+            arming,
+        )
+        self.assertFalse(fl.allowed_now)
+        self.assertIn(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE, fl.blockers)
+
+    def test_allowed_now_true_when_ready_kill_off_shadow_off(self):
+        arming = evaluate_arming(
+            _settings(kill_switch=False, arming_econ_enabled=True),
+            "trade",
+            markout_stats=_markout(),
+        )
+        self.assertTrue(arming.ready_to_arm)
+        fl = build_first_live(
+            _settings(kill_switch=False, shadow_mode=False, shadow_near_probe=False),
+            arming,
+        )
+        self.assertTrue(fl.allowed_now)
+        self.assertFalse(fl.kill_switch)
+        self.assertFalse(fl.shadow_mode)
+        self.assertEqual(fl.capability, "trade")
+        self.assertEqual(len(fl.human_steps), 5)
+
+    def test_allowed_now_false_when_shadow_on(self):
+        arming = evaluate_arming(
+            _settings(kill_switch=False, arming_econ_enabled=True),
+            "trade",
+            markout_stats=_markout(),
+        )
+        fl = build_first_live(
+            _settings(kill_switch=False, shadow_mode=True),
+            arming,
+            shadow_mode=True,
+        )
+        self.assertFalse(fl.allowed_now)
+        self.assertTrue(fl.shadow_mode)
+
+    def test_never_mutates_settings(self):
+        s = _settings(kill_switch=True)
+        arming = evaluate_arming(s, "trade", markout_stats=_markout())
+        build_first_live(s, arming)
+        self.assertTrue(s.kill_switch)
+
 
 
 class TestArmingSettingsDefaults(unittest.TestCase):
