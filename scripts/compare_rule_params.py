@@ -1,12 +1,26 @@
 #!/usr/bin/env python3
 """
-Offline Q2 rule-param compare: same synthetic snapshots, two threshold sets.
+Offline Q2 rule-param compare: A/B thresholds on synthetic cycles OR ledger cohort.
 
 No network / no OKX keys. Prints action histograms + near-signal rates; exit 0.
 
-Thresholds via CLI (preferred) or env A/B pairs:
+Synthetic (default — same paper snaps, invents market via paper cycle):
 
   PYTHONPATH=. python scripts/compare_rule_params.py \\
+    --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 1.0 \\
+    --rsi-long-max-b 35 --rsi-short-min-b 65 --min-vol-b 1.2
+
+From exported JSONL/JSON (preferred for okx_public observed decisions):
+
+  PYTHONPATH=. python scripts/compare_rule_params.py \\
+    --from-ledger /tmp/decisions.jsonl \\
+    --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 1.0 \\
+    --rsi-long-max-b 35 --rsi-short-min-b 65 --min-vol-b 1.2
+
+Direct from SQLite (export+replay in one step):
+
+  PYTHONPATH=. python scripts/compare_rule_params.py \\
+    --db data/keel_ledger.db --hours 48 --market-source okx_public \\
     --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 1.0 \\
     --rsi-long-max-b 35 --rsi-short-min-b 65 --min-vol-b 1.2
 
@@ -41,6 +55,12 @@ if str(_ROOT) not in sys.path:
 
 from keel.config import refresh_settings  # noqa: E402
 from keel.ledger import KeelLedger  # noqa: E402
+from keel.ledger.decision_export import (  # noqa: E402
+    action_histogram,
+    load_export_path,
+    near_signal_rate,
+    replay_rule_on_rows,
+)
 from keel.policy import RuleDecisionPolicy  # noqa: E402
 from keel.worker.cycle import run_paper_cycle  # noqa: E402
 
@@ -57,14 +77,32 @@ def _env_float(key: str, default: float) -> float:
         return default
 
 
-def _apply_thresholds(rsi_long: float, rsi_short: float, min_vol: float) -> None:
+_THRESHOLD_KEYS = (
+    "KEEL_RULE_RSI_LONG_MAX",
+    "KEEL_RULE_RSI_SHORT_MIN",
+    "KEEL_RULE_MIN_VOLUME_RATIO",
+)
+
+
+def _apply_thresholds(rsi_long: float, rsi_short: float, min_vol: float) -> dict[str, str | None]:
+    """Set rule thresholds; return previous values for restore."""
+    saved = {k: os.environ.get(k) for k in _THRESHOLD_KEYS}
     os.environ["KEEL_RULE_RSI_LONG_MAX"] = str(rsi_long)
     os.environ["KEEL_RULE_RSI_SHORT_MIN"] = str(rsi_short)
     os.environ["KEEL_RULE_MIN_VOLUME_RATIO"] = str(min_vol)
+    return saved
 
 
-def _near_signal_rate(results: list[dict]) -> float:
-    """Fraction of WAIT decisions with nearest in {long, short}."""
+def _restore_thresholds(saved: dict[str, str | None]) -> None:
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def _near_signal_rate_cycle(results: list[dict]) -> float:
+    """Fraction of WAIT decisions with nearest in {long, short} (paper cycle)."""
     if not results:
         return 0.0
     near = 0
@@ -81,11 +119,11 @@ def _near_signal_rate(results: list[dict]) -> float:
     return near / len(results)
 
 
-def _histogram(results: list[dict]) -> dict[str, int]:
+def _histogram_cycle(results: list[dict]) -> dict[str, int]:
     return dict(Counter(str(r.get("action") or "UNKNOWN") for r in results))
 
 
-def _run_set(
+def _run_synthetic_set(
     label: str,
     *,
     rsi_long: float,
@@ -93,39 +131,58 @@ def _run_set(
     min_vol: float,
     tmp: Path,
 ) -> None:
-    _apply_thresholds(rsi_long, rsi_short, min_vol)
-    refresh_settings()
-    db = tmp / f"{label}.db"
-    ledger = KeelLedger(db)
+    saved = _apply_thresholds(rsi_long, rsi_short, min_vol)
     try:
-        summary = run_paper_cycle(
-            ledger=ledger,
-            policy=RuleDecisionPolicy(),
-            force_paper=True,
-            instrument_ids=list(INSTRUMENTS),
+        refresh_settings()
+        db = tmp / f"{label}.db"
+        ledger = KeelLedger(db)
+        try:
+            summary = run_paper_cycle(
+                ledger=ledger,
+                policy=RuleDecisionPolicy(),
+                force_paper=True,
+                instrument_ids=list(INSTRUMENTS),
+            )
+        finally:
+            ledger.close()
+        results = list(summary.get("results") or [])
+        hist = _histogram_cycle(results)
+        near_rate = _near_signal_rate_cycle(results)
+        print(
+            f"set={label} rsi_long_max={rsi_long} rsi_short_min={rsi_short} "
+            f"min_vol={min_vol} actions={hist} near_signal_rate={near_rate:.3f} "
+            f"n={len(results)}"
         )
     finally:
-        ledger.close()
-    results = list(summary.get("results") or [])
-    hist = _histogram(results)
-    near_rate = _near_signal_rate(results)
-    print(
-        f"set={label} rsi_long_max={rsi_long} rsi_short_min={rsi_short} "
-        f"min_vol={min_vol} actions={hist} near_signal_rate={near_rate:.3f} "
-        f"n={len(results)}"
-    )
+        _restore_thresholds(saved)
 
 
-def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Offline rule threshold A vs B compare")
-    p.add_argument("--rsi-long-max-a", type=float, default=None)
-    p.add_argument("--rsi-short-min-a", type=float, default=None)
-    p.add_argument("--min-vol-a", type=float, default=None)
-    p.add_argument("--rsi-long-max-b", type=float, default=None)
-    p.add_argument("--rsi-short-min-b", type=float, default=None)
-    p.add_argument("--min-vol-b", type=float, default=None)
-    args = p.parse_args(argv)
+def _run_ledger_set(
+    label: str,
+    *,
+    rows: list[dict],
+    rsi_long: float,
+    rsi_short: float,
+    min_vol: float,
+) -> None:
+    saved = _apply_thresholds(rsi_long, rsi_short, min_vol)
+    try:
+        # rule_based_decision reads env thresholds live — no refresh_settings needed
+        results, replayed, skipped = replay_rule_on_rows(rows)
+        hist = action_histogram(results)
+        near_rate = near_signal_rate(results)
+        print(
+            f"set={label} rsi_long_max={rsi_long} rsi_short_min={rsi_short} "
+            f"min_vol={min_vol} actions={hist} near_signal_rate={near_rate:.3f} "
+            f"n={replayed} skipped_incomplete={skipped}"
+        )
+    finally:
+        _restore_thresholds(saved)
 
+
+def _parse_thresholds(args: argparse.Namespace) -> tuple[
+    tuple[float, float, float], tuple[float, float, float]
+]:
     a_long = args.rsi_long_max_a if args.rsi_long_max_a is not None else _env_float(
         "KEEL_RULE_RSI_LONG_MAX", 42.0
     )
@@ -144,12 +201,101 @@ def main(argv: list[str] | None = None) -> int:
     b_vol = args.min_vol_b if args.min_vol_b is not None else _env_float(
         "KEEL_RULE_MIN_VOLUME_RATIO_B", 1.2
     )
+    return (a_long, a_short, a_vol), (b_long, b_short, b_vol)
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        description="Offline rule threshold A vs B compare (synthetic or ledger)"
+    )
+    p.add_argument("--rsi-long-max-a", type=float, default=None)
+    p.add_argument("--rsi-short-min-a", type=float, default=None)
+    p.add_argument("--min-vol-a", type=float, default=None)
+    p.add_argument("--rsi-long-max-b", type=float, default=None)
+    p.add_argument("--rsi-short-min-b", type=float, default=None)
+    p.add_argument("--min-vol-b", type=float, default=None)
+    p.add_argument(
+        "--from-ledger",
+        type=Path,
+        default=None,
+        help="JSONL/JSON export from scripts/export_decisions.py",
+    )
+    p.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="SQLite ledger path (replay observed decisions; implies ledger mode)",
+    )
+    p.add_argument(
+        "--hours",
+        type=float,
+        default=48.0,
+        help="Lookback hours when using --db (default 48)",
+    )
+    p.add_argument(
+        "--market-source",
+        default="okx_public",
+        choices=("any", "okx_public", "synthetic"),
+        help="Filter when using --db (default okx_public)",
+    )
+    p.add_argument("--limit", type=int, default=5000, help="Max rows when using --db")
+    args = p.parse_args(argv)
+
+    a, b = _parse_thresholds(args)
+
+    if args.from_ledger is not None and args.db is not None:
+        print("error: use either --from-ledger or --db, not both", file=sys.stderr)
+        return 2
+
+    if args.from_ledger is not None or args.db is not None:
+        if args.from_ledger is not None:
+            if not args.from_ledger.is_file():
+                print(f"error: export not found: {args.from_ledger}", file=sys.stderr)
+                return 1
+            rows = load_export_path(args.from_ledger)
+            source = f"file:{args.from_ledger}"
+        else:
+            assert args.db is not None
+            if not args.db.is_file():
+                print(f"error: ledger not found: {args.db}", file=sys.stderr)
+                return 1
+            ledger = KeelLedger(args.db)
+            try:
+                rows = ledger.export_decisions(
+                    hours=float(args.hours),
+                    market_source=args.market_source,
+                    limit=int(args.limit),
+                    include_factors=True,
+                )
+            finally:
+                ledger.close()
+            source = (
+                f"db:{args.db} hours={args.hours} market_source={args.market_source}"
+            )
+
+        print(
+            f"Keel Q2 rule-param compare (ledger replay, offline) source={source} "
+            f"cohort_n={len(rows)}"
+        )
+        if not rows:
+            print(
+                "warning: empty cohort — nothing to replay "
+                "(check --hours / --market-source / export path)"
+            )
+        _run_ledger_set("A", rows=rows, rsi_long=a[0], rsi_short=a[1], min_vol=a[2])
+        _run_ledger_set("B", rows=rows, rsi_long=b[0], rsi_short=b[1], min_vol=b[2])
+        print(
+            "note: incomplete calculus/factor rows are skipped "
+            "(see skipped_incomplete); prefer factor_snapshots join + signal_diag"
+        )
+        print("done")
+        return 0
 
     print("Keel Q2 rule-param compare (paper, offline, same synthetic snaps)")
     with tempfile.TemporaryDirectory(prefix="keel-q2-rule-compare-") as tmp:
         root = Path(tmp)
-        _run_set("A", rsi_long=a_long, rsi_short=a_short, min_vol=a_vol, tmp=root)
-        _run_set("B", rsi_long=b_long, rsi_short=b_short, min_vol=b_vol, tmp=root)
+        _run_synthetic_set("A", rsi_long=a[0], rsi_short=a[1], min_vol=a[2], tmp=root)
+        _run_synthetic_set("B", rsi_long=b[0], rsi_short=b[1], min_vol=b[2], tmp=root)
     print("done")
     return 0
 
