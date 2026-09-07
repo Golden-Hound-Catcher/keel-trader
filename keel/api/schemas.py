@@ -62,6 +62,11 @@ class LastCycleSummary(BaseModel):
     duration_ms: int = 0
     # Candle quality aggregate for this cycle (okx_public | synthetic | mixed | unknown).
     market_source: str | None = None
+    # Q3.5: near-probe skip annotation for this cycle (always when evaluated).
+    probe_skips: int = 0
+    by_skip_reason: dict[str, int] = Field(default_factory=dict)
+    top_skip_reason: str | None = None
+    last_probe_skip_reason: str | None = None
 
 
 class ArmingStatus(BaseModel):
@@ -277,6 +282,16 @@ class ShadowFeeModel(BaseModel):
     funding_applied: bool = False
 
 
+class ProbeSkipsBlock(BaseModel):
+    """Q3.5 near-probe skip aggregates from durable shadow_near_probe_skip events."""
+
+    count: int = 0
+    by_skip_reason: dict[str, int] = Field(default_factory=dict)
+    top_skip_reason: str | None = None
+    last_reason: str | None = None
+    last_timestamp: float | None = None
+
+
 class ShadowStatsResponse(BaseModel):
     """Aggregated shadow_fill rehearsal stats (read-only)."""
 
@@ -286,6 +301,9 @@ class ShadowStatsResponse(BaseModel):
     by_policy: dict[str, int] = Field(default_factory=dict)
     probe_count: int = 0
     last_timestamp: float | None = None
+    # Q3.5: near-probe skips (durable events; hours-filterable).
+    probe_skips: ProbeSkipsBlock | None = None
+    by_skip_reason: dict[str, int] = Field(default_factory=dict)
     # Q3.3: OKX fee model for net markout (soft-fail if older clients ignore).
     fee_model: ShadowFeeModel | None = None
     # Q3.2: optional markout nest (absent on older builds / soft-fail clients).

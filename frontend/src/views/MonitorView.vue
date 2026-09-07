@@ -319,6 +319,26 @@ const shadowProbeCount = computed(() => {
   const n = shadowStats.value?.probe_count
   return typeof n === 'number' && Number.isFinite(n) ? n : 0
 })
+/** Q3.5 soft chip: top near-probe skip reason in lookback (hours-filterable). */
+const shadowProbeSkipChip = computed(() => {
+  const skips = shadowStats.value?.probe_skips
+  const by =
+    (skips && skips.by_skip_reason) ||
+    shadowStats.value?.by_skip_reason ||
+    null
+  if (!by || typeof by !== 'object') return null
+  const entries = Object.entries(by).filter(
+    ([, n]) => typeof n === 'number' && n > 0,
+  ) as [string, number][]
+  if (!entries.length) return null
+  entries.sort((a, b) => b[1] - a[1])
+  const [reason, count] = entries[0]
+  const total =
+    typeof skips?.count === 'number' && skips.count > 0
+      ? skips.count
+      : entries.reduce((s, [, n]) => s + n, 0)
+  return { reason, count, total }
+})
 /** Q3.2/Q3.3 probe markout chip — prefer net roundtrip when present; soft-fail. */
 const shadowProbeMarkoutChip = computed(() => {
   const horizons = shadowStats.value?.markout?.horizons
@@ -1289,6 +1309,11 @@ const configStrip = computed(() => {
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-fuchsia-500/40 text-fuchsia-300"
                 title="near-probe shadow_fill count in lookback"
               >probe {{ shadowProbeCount }}</span>
+              <span
+                v-if="shadowProbeSkipChip"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-orange-500/40 text-orange-300"
+                :title="`near-probe skips ${shadowProbeSkipChip.total} · top ${shadowProbeSkipChip.reason}=${shadowProbeSkipChip.count} (Q3.5)`"
+              >skip {{ shadowProbeSkipChip.reason }} ×{{ shadowProbeSkipChip.count }}</span>
               <span
                 v-if="shadowProbeMarkoutChip"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/40 text-amber-300"

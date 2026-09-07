@@ -40,7 +40,11 @@ from keel.exchange.okx_rest import OkxRestAdapter
 from keel.exchange.paper import PaperAdapter, PaperExchange
 from keel.exchange.protocol import ExchangeProtocol, Ticker
 from keel.execution.orchestrator import ExecutionOrchestrator, ExecutionResult
-from keel.execution.near_probe import maybe_near_probe_decision
+from keel.execution.near_probe import (
+    evaluate_near_probe,
+    record_near_probe_skip,
+    should_attempt_near_probe,
+)
 from keel.factors.market_data import Candle, MarketSnapshot
 from keel.factors.technical import (
     calculate_atr,
@@ -348,9 +352,16 @@ def build_cycle_summary(
     risk_deny_reasons: list[dict[str, str]] = []
     error_count = 0
     errors: list[dict[str, Any]] = []
+    probe_skip_by_reason: dict[str, int] = {}
+    last_probe_skip_reason: str | None = None
     for row in results:
         action = str(row.get("action") or "UNKNOWN")
         decision_counts[action] = decision_counts.get(action, 0) + 1
+        skip_r = row.get("near_probe_skip_reason")
+        if skip_r:
+            key = str(skip_r)
+            probe_skip_by_reason[key] = probe_skip_by_reason.get(key, 0) + 1
+            last_probe_skip_reason = key
         if row.get("risk_gate_failed"):
             risk_denies += 1
             if len(risk_deny_reasons) < RISK_DENY_REASONS_CAP:
@@ -368,6 +379,9 @@ def build_cycle_summary(
                 )
     if market_source is None and quality_tags is not None:
         market_source = market_source_from_quality_tags(quality_tags)
+    top_skip = None
+    if probe_skip_by_reason:
+        top_skip = max(probe_skip_by_reason.items(), key=lambda kv: kv[1])[0]
     payload: dict[str, Any] = {
         "timestamp": timestamp,
         "mode": mode,
@@ -380,6 +394,11 @@ def build_cycle_summary(
         "error_count": error_count,
         "errors": errors,
         "duration_ms": int(duration_ms),
+        # Q3.5: last-cycle near-probe skip annotation (always when evaluated).
+        "probe_skips": int(sum(probe_skip_by_reason.values())),
+        "by_skip_reason": probe_skip_by_reason,
+        "top_skip_reason": top_skip,
+        "last_probe_skip_reason": last_probe_skip_reason,
     }
     if policy_success is not None:
         payload["policy_success"] = policy_success
@@ -599,8 +618,9 @@ def run_paper_cycle(
 
         # Q3: optional near-signal → shadow_fill probe (kill+shadow+probe only).
         # Policy decision stays WAIT in the ledger; execution may rehearse shadow.
+        # Q3.5: when probe evaluates but does not fire, record skip reason.
         exec_decision = decision
-        probed = maybe_near_probe_decision(
+        probe_outcome = evaluate_near_probe(
             decision,
             snap,
             kill_switch=settings.kill_switch,
@@ -616,8 +636,30 @@ def run_paper_cycle(
             fee_role=settings.shadow_fee_role,
             settings=settings,
         )
+        probed = probe_outcome.decision
         if probed is not None:
             exec_decision = probed
+        elif (
+            probe_outcome.skip_reason
+            and probe_outcome.skip_reason != "probe_disabled"
+            and decision.action == "WAIT"
+            and should_attempt_near_probe(
+                kill_switch=settings.kill_switch,
+                shadow_mode=settings.shadow_mode,
+                probe_enabled=settings.shadow_near_probe,
+            )
+        ):
+            # Durable skip for hours-filterable /stats/shadow (not when probe off).
+            record_near_probe_skip(
+                ledger,
+                inst_id=inst_id,
+                reason=probe_outcome.skip_reason,
+                edge_bps=probe_outcome.edge_bps,
+                hurdle_bps=probe_outcome.hurdle_bps,
+                fee_role=probe_outcome.fee_role,
+                edge_mode=probe_outcome.edge_mode,
+                timestamp=now,
+            )
 
         exec_result: ExecutionResult = orchestrator.execute_decision(
             exec_decision,
@@ -643,6 +685,12 @@ def run_paper_cycle(
         if probed is not None:
             result_row["shadow_near_probe"] = True
             result_row["exec_action"] = exec_decision.action
+        elif probe_outcome.skip_reason:
+            result_row["near_probe_skip_reason"] = probe_outcome.skip_reason
+            if probe_outcome.edge_bps is not None:
+                result_row["near_probe_edge_bps"] = probe_outcome.edge_bps
+            if probe_outcome.hurdle_bps is not None:
+                result_row["near_probe_hurdle_bps"] = probe_outcome.hurdle_bps
         if getattr(decision, "signal_diag", None):
             result_row["signal_diag"] = decision.signal_diag
         results.append(result_row)

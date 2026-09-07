@@ -453,6 +453,9 @@ class KeelLedger:
         plus probe_count / by_policy so Monitor can distinguish Q3 near-probe
         fills (policy=shadow_near_probe) from forced/manual shadow fills.
 
+        Q3.5: also ``probe_skips`` / ``by_skip_reason`` from durable
+        ``shadow_near_probe_skip`` events (hours filterable).
+
         When ``include_markout`` (default True), also attaches offline markout
         aggregates (avg/median bps, win_rate by horizon) via factor_snapshots.
         """
@@ -502,6 +505,9 @@ class KeelLedger:
                     probe_count += 1
             by_action[action] = by_action.get(action, 0) + 1
             by_policy[policy] = by_policy.get(policy, 0) + 1
+        from keel.ledger.shadow_markout import aggregate_probe_skips
+
+        probe_skips = aggregate_probe_skips(conn, since=since)
         return {
             "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
             "count": len(rows),
@@ -509,6 +515,8 @@ class KeelLedger:
             "by_policy": by_policy,
             "probe_count": probe_count,
             "last_timestamp": last_ts,
+            "probe_skips": probe_skips,
+            "by_skip_reason": dict(probe_skips.get("by_skip_reason") or {}),
         }
 
     def get_shadow_markout(

@@ -193,6 +193,54 @@ def _action_stats(
     }
 
 
+
+SKIP_EVENT_TYPE = "shadow_near_probe_skip"
+
+
+def aggregate_probe_skips(conn: Any, *, since: float) -> dict[str, Any]:
+    """
+    Aggregate ``shadow_near_probe_skip`` ledger events since ``since``.
+
+    Returns ``{count, by_skip_reason, top_skip_reason, last_reason, last_timestamp}``.
+    Soft-empty when no events (older ledgers / probe never evaluated).
+    """
+    by_reason: dict[str, int] = {}
+    last_reason: str | None = None
+    last_ts: float | None = None
+    rows = conn.execute(
+        "SELECT timestamp, data FROM events "
+        "WHERE timestamp >= ? AND event_type = ? "
+        "ORDER BY timestamp DESC",
+        (float(since), SKIP_EVENT_TYPE),
+    ).fetchall()
+    for row in rows:
+        ts = float(row["timestamp"])
+        reason = "unknown"
+        raw = row["data"]
+        payload = None
+        if raw:
+            try:
+                payload = json.loads(raw) if isinstance(raw, str) else raw
+            except (TypeError, json.JSONDecodeError):
+                payload = None
+        if isinstance(payload, dict) and payload.get("reason"):
+            reason = str(payload["reason"])
+        by_reason[reason] = by_reason.get(reason, 0) + 1
+        if last_ts is None:
+            last_ts = ts
+            last_reason = reason
+    top = None
+    if by_reason:
+        top = max(by_reason.items(), key=lambda kv: kv[1])[0]
+    return {
+        "count": len(rows),
+        "by_skip_reason": by_reason,
+        "top_skip_reason": top,
+        "last_reason": last_reason,
+        "last_timestamp": last_ts,
+    }
+
+
 def compute_shadow_markout(
     conn: Any,
     *,
@@ -406,6 +454,7 @@ def compute_shadow_markout(
             }
         )
 
+    probe_skips = aggregate_probe_skips(conn, since=since)
     return {
         "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
         "count": fill_count,
@@ -414,6 +463,8 @@ def compute_shadow_markout(
         "by_policy": by_policy,
         "last_timestamp": last_ts,
         "fee_model": fee_model,
+        "probe_skips": probe_skips,
+        "by_skip_reason": dict(probe_skips.get("by_skip_reason") or {}),
         "markout": {
             "price_source": (
                 ",".join(sorted(sources_used)) if sources_used else "factor_snapshots"
@@ -425,6 +476,8 @@ def compute_shadow_markout(
 
 __all__ = [
     "DEFAULT_MARKOUT_HORIZONS_SECONDS",
+    "SKIP_EVENT_TYPE",
+    "aggregate_probe_skips",
     "markout_bps",
     "lookup_later_price",
     "compute_shadow_markout",

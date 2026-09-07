@@ -35,6 +35,112 @@ _PROBE_SL_ATR = 1.0
 
 EdgeMode = Literal["round_trip", "open"]
 
+# Q3.5: durable ledger event when near-probe evaluates but does not fire.
+SKIP_EVENT_TYPE = "shadow_near_probe_skip"
+
+SkipReason = Literal[
+    "below_hurdle",
+    "edge_unavailable",
+    "cooldown",
+    "max_missing",
+    "probe_disabled",
+    "not_near",
+]
+
+SKIP_REASONS: tuple[str, ...] = (
+    "below_hurdle",
+    "edge_unavailable",
+    "cooldown",
+    "max_missing",
+    "probe_disabled",
+    "not_near",
+)
+
+
+class NearProbeOutcome:
+    """Result of evaluating near-probe: either a Decision or a skip reason."""
+
+    __slots__ = ("decision", "skip_reason", "edge_bps", "hurdle_bps", "fee_role", "edge_mode")
+
+    def __init__(
+        self,
+        decision: Decision | None = None,
+        *,
+        skip_reason: str | None = None,
+        edge_bps: float | None = None,
+        hurdle_bps: float | None = None,
+        fee_role: str | None = None,
+        edge_mode: str | None = None,
+    ) -> None:
+        self.decision = decision
+        self.skip_reason = skip_reason
+        self.edge_bps = edge_bps
+        self.hurdle_bps = hurdle_bps
+        self.fee_role = fee_role
+        self.edge_mode = edge_mode
+
+    @property
+    def fired(self) -> bool:
+        return self.decision is not None
+
+
+def near_probe_skip_payload(
+    reason: str,
+    *,
+    edge_bps: float | None = None,
+    hurdle_bps: float | None = None,
+    fee_role: str | None = None,
+    edge_mode: str | None = None,
+    inst_id: str | None = None,
+) -> dict[str, Any]:
+    """Lightweight ledger/API payload for a near-probe skip."""
+    data: dict[str, Any] = {"reason": str(reason)}
+    if edge_bps is not None:
+        data["edge_bps"] = float(edge_bps)
+    if hurdle_bps is not None:
+        data["hurdle_bps"] = float(hurdle_bps)
+    if fee_role:
+        data["fee_role"] = str(fee_role)
+    if edge_mode:
+        data["edge_mode"] = str(edge_mode)
+    if inst_id:
+        data["inst_id"] = str(inst_id)
+    return data
+
+
+def record_near_probe_skip(
+    ledger: Any,
+    *,
+    inst_id: str,
+    reason: str,
+    edge_bps: float | None = None,
+    hurdle_bps: float | None = None,
+    fee_role: str | None = None,
+    edge_mode: str | None = None,
+    timestamp: float | None = None,
+) -> int | None:
+    """Write ``shadow_near_probe_skip`` ledger event. Returns event id or None."""
+    if ledger is None:
+        return None
+    payload = near_probe_skip_payload(
+        reason,
+        edge_bps=edge_bps,
+        hurdle_bps=hurdle_bps,
+        fee_role=fee_role,
+        edge_mode=edge_mode,
+    )
+    try:
+        return int(
+            ledger.record_event(
+                SKIP_EVENT_TYPE,
+                inst_id=inst_id,
+                data=payload,
+                timestamp=timestamp,
+            )
+        )
+    except Exception:
+        return None
+
 
 def near_signal_meets_gates(
     diag: dict[str, Any] | None,
@@ -323,6 +429,120 @@ def build_near_probe_decision(
     )
 
 
+def evaluate_near_probe(
+    decision: Decision,
+    snapshot: MarketSnapshot,
+    *,
+    kill_switch: bool,
+    shadow_mode: bool,
+    probe_enabled: bool,
+    max_missing: int = DEFAULT_MAX_MISSING,
+    min_confidence: float = 0.0,
+    cooldown_seconds: float = 900.0,
+    ledger: Any | None = None,
+    now: float | None = None,
+    min_edge_bps: float | None = None,
+    edge_mode: str | None = None,
+    fee_role: str | None = None,
+    settings: Any | None = None,
+) -> NearProbeOutcome:
+    """
+    Evaluate near-probe gates and return Decision or a typed skip reason.
+
+    Skip reasons (Q3.5): ``probe_disabled``, ``not_near``, ``max_missing``,
+    ``cooldown``, ``edge_unavailable``, ``below_hurdle``.
+    """
+    if not should_attempt_near_probe(
+        kill_switch=kill_switch,
+        shadow_mode=shadow_mode,
+        probe_enabled=probe_enabled,
+    ):
+        return NearProbeOutcome(skip_reason="probe_disabled")
+
+    if decision.action != "WAIT":
+        return NearProbeOutcome(skip_reason="not_near")
+
+    diag = decision.signal_diag if isinstance(decision.signal_diag, dict) else None
+    if not isinstance(diag, dict):
+        return NearProbeOutcome(skip_reason="not_near")
+    nearest = diag.get("nearest")
+    if nearest not in ("long", "short"):
+        return NearProbeOutcome(skip_reason="not_near")
+
+    missing_raw = diag.get("missing")
+    missing = missing_raw if isinstance(missing_raw, list) else []
+    if len(missing) > int(max_missing):
+        return NearProbeOutcome(skip_reason="max_missing")
+
+    try:
+        conf = float(decision.confidence)
+    except (TypeError, ValueError):
+        conf = 0.0
+    if conf < float(min_confidence):
+        # Below configured confidence — treat as not strong-near.
+        return NearProbeOutcome(skip_reason="not_near")
+
+    if probe_fill_recent(
+        ledger,
+        inst_id=decision.inst_id,
+        cooldown_seconds=cooldown_seconds,
+        now=now,
+    ):
+        return NearProbeOutcome(skip_reason="cooldown")
+
+    hurdle, role, mode = resolve_near_probe_hurdle_bps(
+        settings,
+        min_edge_override=min_edge_bps,
+        edge_mode=edge_mode,
+        fee_role=fee_role,
+    )
+    edge = estimate_near_probe_edge_bps(
+        diag,
+        snapshot,
+        decision_confidence=decision.confidence,
+    )
+    if float(hurdle) > 0.0 and edge is None:
+        return NearProbeOutcome(
+            skip_reason="edge_unavailable",
+            edge_bps=None,
+            hurdle_bps=hurdle,
+            fee_role=role,
+            edge_mode=mode,
+        )
+    if not edge_clears_hurdle(edge, hurdle):
+        return NearProbeOutcome(
+            skip_reason="below_hurdle",
+            edge_bps=edge,
+            hurdle_bps=hurdle,
+            fee_role=role,
+            edge_mode=mode,
+        )
+
+    probed = build_near_probe_decision(
+        decision,
+        snapshot,
+        edge_bps=edge,
+        hurdle_bps=hurdle,
+        fee_role=role,
+        edge_mode=mode,
+    )
+    if probed is None or not probed.valid or probed.action == "WAIT":
+        return NearProbeOutcome(
+            skip_reason="edge_unavailable",
+            edge_bps=edge,
+            hurdle_bps=hurdle,
+            fee_role=role,
+            edge_mode=mode,
+        )
+    return NearProbeOutcome(
+        probed,
+        edge_bps=edge,
+        hurdle_bps=hurdle,
+        fee_role=role,
+        edge_mode=mode,
+    )
+
+
 def maybe_near_probe_decision(
     decision: Decision,
     snapshot: MarketSnapshot,
@@ -344,56 +564,25 @@ def maybe_near_probe_decision(
     Optionally convert WAIT + strong near-signal → shadow probe Decision.
 
     Returns the probe Decision when all gates pass (incl. fee edge hurdle),
-    else None (caller keeps WAIT).
+    else None (caller keeps WAIT). Prefer ``evaluate_near_probe`` when skip
+    reasons are needed (Q3.5).
     """
-    if not should_attempt_near_probe(
+    return evaluate_near_probe(
+        decision,
+        snapshot,
         kill_switch=kill_switch,
         shadow_mode=shadow_mode,
         probe_enabled=probe_enabled,
-    ):
-        return None
-    if decision.action != "WAIT":
-        return None
-    if not near_signal_meets_gates(
-        decision.signal_diag,
         max_missing=max_missing,
         min_confidence=min_confidence,
-        decision_confidence=decision.confidence,
-    ):
-        return None
-    if probe_fill_recent(
-        ledger,
-        inst_id=decision.inst_id,
         cooldown_seconds=cooldown_seconds,
+        ledger=ledger,
         now=now,
-    ):
-        return None
-
-    hurdle, role, mode = resolve_near_probe_hurdle_bps(
-        settings,
-        min_edge_override=min_edge_bps,
+        min_edge_bps=min_edge_bps,
         edge_mode=edge_mode,
         fee_role=fee_role,
-    )
-    edge = estimate_near_probe_edge_bps(
-        decision.signal_diag if isinstance(decision.signal_diag, dict) else None,
-        snapshot,
-        decision_confidence=decision.confidence,
-    )
-    if not edge_clears_hurdle(edge, hurdle):
-        return None
-
-    probed = build_near_probe_decision(
-        decision,
-        snapshot,
-        edge_bps=edge,
-        hurdle_bps=hurdle,
-        fee_role=role,
-        edge_mode=mode,
-    )
-    if probed is None or not probed.valid or probed.action == "WAIT":
-        return None
-    return probed
+        settings=settings,
+    ).decision
 
 
 def is_probe_decision(decision: Decision) -> bool:
