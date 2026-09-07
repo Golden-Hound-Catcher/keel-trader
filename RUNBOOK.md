@@ -302,6 +302,42 @@ When residuals are **modest** (e.g. volume just below hard floor, RSI within ~3 
 
 **Before/after @ atr_bps=25 (1 missing volume, ratio just below hard, soft-halved gap):** R7 raw ≈ 10.0 (fragile; ~0 at atr≈18 after RSI/vol wipe); R8 raw ≈ **14.6** with components audit. **RSI 15 pts away @ atr=25:** R7/R8 both → hint **0** (not spammy).
 
+### Phase R9 — near-entry markout (counterfactual; recommend-only)
+
+After R8, many live WAIT rows still show `edge=0` with 1–2 missing gates. Forcing `edge≥10` via more formula tweaks would game the probe hurdle. R9 **measures** whether entering on historical near-signals would have cleared fees after the fact — offline counterfactual, no live behavior change.
+
+For each WAIT decision with `signal_diag.nearest ∈ {long,short}` and **1…`--max-missing`** gates missing (default **1–2**):
+
+1. Resolve entry price from matched `factor_snapshots` (same cycle timestamp; ±30s fallback; else `decisions.entry_price`).
+2. Map nearest → shadow action (`long→BUY_LONG`, `short→SELL_SHORT`).
+3. Reuse Q3.2/Q3.3 `lookup_later_price` / `markout_bps` + OKX fee model (`net_RT = gross − round_trip_fee_bps`, optional funding).
+4. Report count, by_instrument, gross/net-RT stats, `fee_model`, and **fraction clearing 10 bps net-RT at 300s**.
+
+**Recommend-only** — do **not** flip `KEEL_SHADOW_NEAR_PROBE` or lower the fee hurdle from this script. Use the summary as evidence for whether probes/near entries are worth a manual enable.
+
+```bash
+# Offline counterfactual (local SQLite; strips OKX keys; never writes .env)
+PYTHONPATH=. python scripts/near_entry_markout.py \
+  --db data/keel_ledger.db --hours 168 --market-source okx_public \
+  --max-missing 2 --horizons 60,300,900
+
+# Per-instrument
+PYTHONPATH=. python scripts/near_entry_markout.py \
+  --db data/keel_ledger.db --hours 168 --market-source okx_public \
+  --inst-id BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP --json-only
+```
+
+| Knob (CLI) | Default | Role |
+|------------|---------|------|
+| `--max-missing` | **2** | Upper bound on `len(signal_diag.missing)` |
+| `--min-missing` | **1** | Lower bound (near = at least one gate short) |
+| `--horizons` | `60,300,900` | Markout horizons (seconds) |
+| `--clear-hurdle-bps` | **10** | Net-RT clear fraction threshold |
+| `--market-source` | `any` | `okx_public` / `synthetic` / `any` |
+| `--no-funding` | off | Skip funding adj (trading fees still applied) |
+
+Helper: `keel.ledger.near_entry_markout.compute_near_entry_markout` (same fee_model shape as shadow markout).
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.
