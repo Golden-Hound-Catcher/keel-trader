@@ -76,6 +76,9 @@ class StatusResponse(BaseModel):
     last_cycle: LastCycleSummary | None = None
     seconds_since_last_cycle: int | None = None
     worker_stale: bool = False
+    # Q1: OKX key capability (none|paper|read|trade|error); never places orders.
+    okx_capability: str = "none"
+    okx_capability_detail: str | None = None
 
 
 class ConfigResponse(BaseModel):
@@ -96,6 +99,9 @@ class ConfigResponse(BaseModel):
     cycle_interval_seconds: int = 900
     observe_preset: str | None = None
     scheduler_jobs: list[str] = Field(default_factory=lambda: ["trader"])
+    # Q1: same capability label as status (non-secret).
+    okx_capability: str = "none"
+    okx_capability_detail: str | None = None
 
 
 class DailyPnlResponse(BaseModel):

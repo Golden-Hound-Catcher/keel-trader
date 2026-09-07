@@ -171,7 +171,8 @@ class OKXRestAdapter:
 
         code = result.get("code")
         if code not in (None, "0", 0):
-            raise ValueError(f"OKX API error: {result.get('msg', 'unknown')}")
+            msg = result.get("msg", "unknown")
+            raise ValueError(f"OKX API error {code}: {msg}")
         return result
 
     def _public_request(

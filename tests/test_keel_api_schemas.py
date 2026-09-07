@@ -214,6 +214,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("kill_switch", status_props)
         self.assertIn("seconds_since_last_cycle", status_props)
         self.assertIn("worker_stale", status_props)
+        self.assertIn("okx_capability", status_props)
+        self.assertIn("okx_capability_detail", status_props)
         self.assertIn("ConfigResponse", comps)
         config_props = comps["ConfigResponse"]["properties"]
         self.assertIn("kill_switch", config_props)
@@ -227,6 +229,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("cycle_interval_seconds", config_props)
         self.assertIn("observe_preset", config_props)
         self.assertIn("scheduler_jobs", config_props)
+        self.assertIn("okx_capability", config_props)
+        self.assertIn("okx_capability_detail", config_props)
         self.assertNotIn("legacy_scheduler_jobs", config_props)
         self.assertIn("decision_policy", config_props)
         self.assertIn("decision_policy", status_props)

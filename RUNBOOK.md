@@ -226,3 +226,19 @@ See also §Live（无模拟盘 key） below.
 4. CLI 会自动加载仓库根目录 `.env`（已在环境中的变量优先，不被覆盖）。
 5. 真要实盘下单：另建**带交易权限**的 live key，明确关掉 kill-switch，并接受资金风险——超出当前只读验收范围。
 
+## Q1 实盘武装（capability probe）
+
+`GET /api/v1/status`（与 `/config`）暴露 `okx_capability`：
+
+| 值 | 含义 |
+|----|------|
+| `none` | 未配置 OKX key |
+| `paper` | paper 路径（不探测 OKX） |
+| `read` | 账户只读可用；`orders-pending` 因权限失败 |
+| `trade` | 至少 trade-read（`GET /api/v5/trade/orders-pending` 成功） |
+| `error` | 探测异常（见 `okx_capability_detail`） |
+
+探测**不会** `place_order` / cancel / close；结果缓存约 60s。Monitor Overview Credentials 卡片显示徽章（只读 / 可交易 / paper / 未知）。
+
+**武装前提**：清 kill-switch（`KEEL_KILL_SWITCH=0`）前，先确认 `okx_capability=trade`。只读 key（`read`）不足以下单；kill-switch 行为本身不变（仍由 env 控制、门禁拒绝交易）。
+
