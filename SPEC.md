@@ -295,6 +295,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q0 observe stack**: `scripts/observe_{up,down,status}.sh` one-command api+worker hang; RUNBOOK 观测模式 |
 | 2026-09-07 | **Q0 near-signal radar**: `GET /api/v1/signals/nearest` + Overview「近信号雷达」card (latest per-inst `signal_diag`, soft-fail) |
 | 2026-09-07 | **Q0 observation productization**: rule `signal_diag` (nearest/missing gates) in calculus_data + Decisions UX; `KEEL_OBSERVE_PRESET` cadence (default/fast/slow) on `/config`; live kill-switch observation docs |
 | 2026-09-07 | Monitor/API expose candle quality: Factors `data_quality_reason`, `last_cycle.market_source` (okx_public|synthetic|mixed|unknown) |

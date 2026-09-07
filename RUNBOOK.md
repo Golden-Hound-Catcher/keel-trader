@@ -186,11 +186,28 @@ Kill-switch (`KEEL_KILL_SWITCH=1`) still blocks order placement; **read-only API
 
 ## 观测模式（Q0 live read-only）
 
-Kill-switch on, no orders — continuous iteration on live observation:
+Kill-switch on, no orders — continuous iteration on live observation.
+
+### One-command observe stack
+
+```bash
+./scripts/observe_up.sh      # load .env, start keel-api + keel-worker, wait /health
+./scripts/observe_status.sh  # pid liveness + /health /ready snippets (no secrets)
+./scripts/observe_down.sh    # stop via pid files under data/run/
+```
+
+- Scripts source repo `.env` (`set -a; . .env`), set `PYTHONPATH=.`, prefer `.venv/bin/python`.
+- Pid/logs: `data/run/` (override with `KEEL_OBSERVE_RUN_DIR`, e.g. `/tmp/keel-observe`).
+- Idempotent: if pidfile process is alive, print and skip duplicate start.
+- Does not disable KEEL_KILL_SWITCH (leave it 1 for read-only hanging).
+- Live without OKX triple: warn only (paper fallback likely); does not hard-refuse.
+- Vite Monitor is optional and separate: see frontend/README.md (dev server port 5173). Not started by observe scripts.
+
+### Observation checklist
 
 1. `.env`: `KEEL_OKX_ENV=live` + read-only keys; **`KEEL_KILL_SWITCH=1`** (required for this mode).
 2. Cadence: set `KEEL_OBSERVE_PRESET=fast` (300s) for denser WAIT/near-signal samples, or `default`/`slow` (900/1800). Explicit `KEEL_CYCLE_INTERVAL_SECONDS` still wins if set. Check `/api/v1/config` → `cycle_interval_seconds` + `observe_preset`.
-3. `python -m keel.worker` (or `--once`); monitor Decisions shows **near long/short** chips + missing gate names when action is WAIT (`calculus_data.signal_diag`).
+3. Prefer `./scripts/observe_up.sh` (or manual `python -m keel.worker` / `--once`); monitor Decisions shows **near long/short** chips + missing gate names when action is WAIT (`calculus_data.signal_diag`).
 4. Overview **近信号雷达** card soft-fetches `GET /api/v1/signals/nearest` (WAIT / 近多 / 近空 / 已触发 + per-inst nearest/missing chips); hidden if endpoint missing.
 5. Confirm no fills: kill-switch badge ON; trades empty / risk denies on any accidental BUY/SELL path.
 
