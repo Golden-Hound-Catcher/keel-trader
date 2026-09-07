@@ -18,6 +18,12 @@ router = APIRouter()
 
 
 def _decision_item(d) -> DecisionItem:
+    calc = d.calculus_data
+    signal_diag = None
+    if isinstance(calc, dict):
+        raw = calc.get("signal_diag")
+        if isinstance(raw, dict):
+            signal_diag = raw
     return DecisionItem(
         id=d.id,
         timestamp=d.timestamp,
@@ -28,7 +34,8 @@ def _decision_item(d) -> DecisionItem:
         take_profit=d.take_profit,
         stop_loss=d.stop_loss,
         reason=d.reason,
-        calculus_data=d.calculus_data,
+        calculus_data=calc,
+        signal_diag=signal_diag,
         policy_name=getattr(d, "policy_name", "") or "",
         prompt_modules=getattr(d, "prompt_modules", None),
     )

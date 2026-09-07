@@ -72,8 +72,10 @@ class Settings:
     # Emergency kill switch (KEEL_KILL_SWITCH=0|1 / true|false); default off
     kill_switch: bool = False
 
-    # Trader cycle interval (KEEL_CYCLE_INTERVAL_SECONDS); default 900 = 15min
+    # Trader cycle interval (KEEL_CYCLE_INTERVAL_SECONDS / KEEL_OBSERVE_PRESET); default 900
     cycle_interval_seconds: int = 900
+    # Observation cadence preset name (default|fast|slow); None when unset
+    observe_preset: str | None = None
 
     # Active OKX swap instruments (KEEL_INSTRUMENTS); empty env → DEFAULT_CRYPTO_INSTRUMENTS
     instruments: tuple[str, ...] = ()
@@ -153,16 +155,70 @@ CYCLE_INTERVAL_MIN_SECONDS = 60
 CYCLE_INTERVAL_MAX_SECONDS = 86400
 CYCLE_INTERVAL_DEFAULT_SECONDS = 900
 
+# Q0 observation cadence presets (KEEL_OBSERVE_PRESET). Explicit seconds still win.
+OBSERVE_PRESET_SECONDS: dict[str, int] = {
+    "default": 900,
+    "fast": 300,
+    "slow": 1800,
+}
+
 
 def clamp_cycle_interval_seconds(value: int) -> int:
     """Clamp trader cycle interval to [60, 86400]."""
     return max(CYCLE_INTERVAL_MIN_SECONDS, min(CYCLE_INTERVAL_MAX_SECONDS, int(value)))
 
 
-def _env_cycle_interval_seconds() -> int:
-    """Parse KEEL_CYCLE_INTERVAL_SECONDS with default 900 and sane clamp."""
-    raw = _env_int("KEEL_CYCLE_INTERVAL_SECONDS", CYCLE_INTERVAL_DEFAULT_SECONDS)
-    return clamp_cycle_interval_seconds(raw)
+def _env_key_present(key: str) -> bool:
+    """True when key is set in process env or loaded .env map (even if empty)."""
+    return key in os.environ or key in _DOTENV_VALUES
+
+
+def resolve_observe_preset(raw: str | None = None) -> str | None:
+    """Normalize KEEL_OBSERVE_PRESET to default|fast|slow, else None."""
+    if raw is None:
+        raw = _env("KEEL_OBSERVE_PRESET", "")
+    name = (raw or "").strip().lower()
+    if name in OBSERVE_PRESET_SECONDS:
+        return name
+    return None
+
+
+def resolve_cycle_interval_seconds(
+    *,
+    explicit_seconds: str | None = None,
+    preset: str | None = None,
+    explicit_set: bool | None = None,
+) -> tuple[int, str | None]:
+    """
+    Resolve effective cycle interval + observe preset name.
+
+    Priority: explicit ``KEEL_CYCLE_INTERVAL_SECONDS`` (if set) > ``KEEL_OBSERVE_PRESET``
+    mapping > default 900. Returns ``(clamped_seconds, preset_or_none)``.
+    When seconds are explicit, the preset name is still returned if valid (for /config).
+    """
+    preset_name = resolve_observe_preset(preset)
+
+    if explicit_set is None:
+        explicit_set = _env_key_present("KEEL_CYCLE_INTERVAL_SECONDS")
+    if explicit_seconds is None and explicit_set:
+        explicit_seconds = _env("KEEL_CYCLE_INTERVAL_SECONDS", "")
+
+    if explicit_set:
+        try:
+            value = int(str(explicit_seconds).strip()) if str(explicit_seconds or "").strip() else CYCLE_INTERVAL_DEFAULT_SECONDS
+        except ValueError:
+            value = CYCLE_INTERVAL_DEFAULT_SECONDS
+        return clamp_cycle_interval_seconds(value), preset_name
+
+    if preset_name is not None:
+        return clamp_cycle_interval_seconds(OBSERVE_PRESET_SECONDS[preset_name]), preset_name
+
+    return CYCLE_INTERVAL_DEFAULT_SECONDS, None
+
+
+def _env_cycle_interval_seconds() -> tuple[int, str | None]:
+    """Parse cycle interval + observe preset from env / .env."""
+    return resolve_cycle_interval_seconds()
 
 
 def parse_instruments(raw: str | list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
@@ -267,6 +323,8 @@ def get_settings() -> Settings:
         or _env("OKX_PASSPHRASE")
     )
 
+    cycle_interval_seconds, observe_preset = _env_cycle_interval_seconds()
+
     return Settings(
         okx_environment=okx_env,  # type: ignore[arg-type]
         okx_api_key=okx_api_key,
@@ -289,7 +347,8 @@ def get_settings() -> Settings:
         max_notional_per_instrument=_env_float("KEEL_MAX_NOTIONAL_PER_INSTRUMENT", 2000.0),
         max_contracts_per_instrument=_env_int("KEEL_MAX_CONTRACTS_PER_INSTRUMENT", 50),
         kill_switch=_env_bool("KEEL_KILL_SWITCH", False),
-        cycle_interval_seconds=_env_cycle_interval_seconds(),
+        cycle_interval_seconds=cycle_interval_seconds,
+        observe_preset=observe_preset,
         instruments=_env_instruments(),
     )
 

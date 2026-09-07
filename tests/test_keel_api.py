@@ -216,6 +216,8 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertTrue(body["exchange_mode"])
         self.assertIn("cycle_interval_seconds", body)
         self.assertEqual(body["cycle_interval_seconds"], 900)
+        self.assertIn("observe_preset", body)
+        self.assertIsNone(body["observe_preset"])
         self.assertIn("decision_policy", body)
         self.assertIsInstance(body["decision_policy"], str)
         self.assertTrue(body["decision_policy"])

@@ -162,7 +162,8 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_MAX_CONTRACTS_PER_INSTRUMENT` | `50` | Contract/size units per instrument when size known; on `/config` |
 | `KEEL_INSTRUMENTS` | empty → defaults | Comma-separated OKX swap ids; empty → `DEFAULT_CRYPTO_INSTRUMENTS`; worker + `/config` instruments |
 | `KEEL_DECISION_POLICY` | `rule` | `rule` \| `stub` \| `llm` — exposed as `decision_policy` on `/status` + `/config` |
-| `KEEL_CYCLE_INTERVAL_SECONDS` | `900` | Trader cycle interval; clamped `[60, 86400]` |
+| `KEEL_CYCLE_INTERVAL_SECONDS` | `900` | Trader cycle interval; clamped `[60, 86400]`; wins over observe preset when set |
+| `KEEL_OBSERVE_PRESET` | unset | Q0 cadence: `default`=900 / `fast`=300 / `slow`=1800; exposed as `observe_preset` on `/config` |
 | `KEEL_API_TOKEN` | empty | Optional bearer for `/api/v1/*`; empty → no auth |
 | `KEEL_NOTIFY_WEBHOOK_URL` | empty | Empty → NullNotifier (no network); else POST cycle summary |
 | `KEEL_NOTIFY_ALERTS_ONLY` | `0` | When true, skip notify unless payload `alert` |
@@ -292,6 +293,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q0 observation productization**: rule `signal_diag` (nearest/missing gates) in calculus_data + Decisions UX; `KEEL_OBSERVE_PRESET` cadence (default/fast/slow) on `/config`; live kill-switch observation docs |
 | 2026-09-07 | Monitor/API expose candle quality: Factors `data_quality_reason`, `last_cycle.market_source` (okx_public|synthetic|mixed|unknown) |
 | 2026-09-07 | Worker cycle uses OKX **public candles** on live/demo REST (synthetic fallback); rule policy v2 adds EMA stack + volume_ratio filters (optional `KEEL_RULE_*` knobs) |
 | 2026-09-04 | **P2 decision quality**: persist `policy_name` / `prompt_modules` on decisions (+ calculus_data); `GET /api/v1/stats/decisions?hours=`; monitor Overview stats card + Decisions policy column; `scripts/compare_policies_paper.py` offline stub↔rule compare |

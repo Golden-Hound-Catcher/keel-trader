@@ -40,6 +40,30 @@ function fmtTs(v: unknown): string {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString()
 }
 
+/** Q0 near-signal diagnostics from DecisionItem.signal_diag or calculus_data.signal_diag. */
+function decisionSignalDiag(d: { signal_diag?: Record<string, unknown> | null; calculus_data?: Record<string, unknown> }): Record<string, unknown> | null {
+  const top = d.signal_diag
+  if (top && typeof top === 'object') return top
+  const nested = d.calculus_data?.signal_diag
+  if (nested && typeof nested === 'object') return nested as Record<string, unknown>
+  return null
+}
+
+function nearSignalNearest(d: { action?: string; signal_diag?: Record<string, unknown> | null; calculus_data?: Record<string, unknown> }): string | null {
+  if ((d.action || '').toUpperCase() !== 'WAIT') return null
+  const diag = decisionSignalDiag(d)
+  const n = diag?.nearest
+  return typeof n === 'string' && n ? n : null
+}
+
+function nearSignalMissing(d: { action?: string; signal_diag?: Record<string, unknown> | null; calculus_data?: Record<string, unknown> }): string[] {
+  if ((d.action || '').toUpperCase() !== 'WAIT') return []
+  const diag = decisionSignalDiag(d)
+  const raw = diag?.missing
+  if (!Array.isArray(raw)) return []
+  return raw.map((x) => String(x)).filter(Boolean).slice(0, 6)
+}
+
 const tabs = [
   { id: 'overview', label: 'Overview', icon: Activity },
   { id: 'positions', label: 'Positions', icon: LayoutGrid },
@@ -449,6 +473,8 @@ const configStrip = computed(() => {
   const notify = c?.notify_configured
   const policy = c?.decision_policy || store.status?.decision_policy || '—'
   const intervalSec = cycleIntervalSeconds.value
+  const presetRaw = c?.observe_preset
+  const preset = typeof presetRaw === 'string' && presetRaw.trim() ? presetRaw.trim() : null
   return {
     env,
     mode,
@@ -464,6 +490,10 @@ const configStrip = computed(() => {
     policy,
     cycle: formatCycleIntervalLabel(intervalSec),
     cycleTitle: `Trader cycle interval ${intervalSec}s; stale threshold uses max(2×interval, interval+300) = ${workerStaleThreshold.value}s`,
+    preset,
+    presetTitle: preset
+      ? `KEEL_OBSERVE_PRESET=${preset} → ${intervalSec}s (explicit KEEL_CYCLE_INTERVAL_SECONDS wins if set)`
+      : '',
   }
 })
 </script>
@@ -754,6 +784,11 @@ const configStrip = computed(() => {
             <span class="text-[#A8B3C7]">kill <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
             <span class="text-[#A8B3C7]">notify <span class="text-white">{{ configStrip.notify }}</span></span>
             <span class="text-[#A8B3C7]" :title="configStrip.cycleTitle">周期 <span class="text-white">{{ configStrip.cycle }}</span></span>
+            <span
+              v-if="configStrip.preset"
+              class="text-[#A8B3C7]"
+              :title="configStrip.presetTitle"
+            >preset <span class="text-cyan-400">{{ configStrip.preset }}</span></span>
             <span
               class="inline-flex items-center gap-1 ml-auto px-1.5 py-0.5 rounded text-[10px] font-bold border"
               :class="workerLagSeconds == null
@@ -1059,7 +1094,29 @@ const configStrip = computed(() => {
                   >{{ d.policy_name || '—' }}<span v-if="modulesPreview(d.prompt_modules)" class="text-[#707E94]"> · {{ modulesPreview(d.prompt_modules) }}</span></td>
                   <td class="py-2 pr-3">{{ fmt(d.confidence, 2) }}</td>
                   <td class="py-2 pr-3">{{ fmt(d.entry_price) }}</td>
-                  <td class="py-2 text-zinc-400 max-w-lg line-clamp-2 whitespace-normal break-words" :title="d.reason">{{ d.reason || '—' }}</td>
+                  <td class="py-2 text-zinc-400 max-w-lg whitespace-normal break-words" :title="d.reason">
+                    <div class="line-clamp-2">{{ d.reason || '—' }}</div>
+                    <div
+                      v-if="nearSignalNearest(d)"
+                      class="mt-1 flex flex-wrap items-center gap-1"
+                    >
+                      <span
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                        :class="nearSignalNearest(d) === 'long'
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                          : nearSignalNearest(d) === 'short'
+                            ? 'bg-rose-500/15 text-rose-400 border-rose-500/40'
+                            : 'bg-zinc-500/10 text-[#A8B3C7] border-zinc-500/30'"
+                        :title="`nearest ${nearSignalNearest(d)}`"
+                      >near {{ nearSignalNearest(d) }}</span>
+                      <span
+                        v-for="gate in nearSignalMissing(d)"
+                        :key="gate"
+                        class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400/90 border border-amber-500/30"
+                        :title="`missing: ${gate}`"
+                      >{{ gate }}</span>
+                    </div>
+                  </td>
                 </tr>
               </tbody>
             </table>

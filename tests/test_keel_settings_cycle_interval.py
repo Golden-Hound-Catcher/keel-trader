@@ -9,7 +9,10 @@ from keel.config.settings import (
     CYCLE_INTERVAL_DEFAULT_SECONDS,
     CYCLE_INTERVAL_MAX_SECONDS,
     CYCLE_INTERVAL_MIN_SECONDS,
+    OBSERVE_PRESET_SECONDS,
     clamp_cycle_interval_seconds,
+    resolve_cycle_interval_seconds,
+    resolve_observe_preset,
 )
 from keel.worker.scheduler import KeelScheduler
 
@@ -17,6 +20,7 @@ from keel.worker.scheduler import KeelScheduler
 class TestCycleIntervalSettings(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("KEEL_CYCLE_INTERVAL_SECONDS", None)
+        os.environ.pop("KEEL_OBSERVE_PRESET", None)
         os.environ.pop("KEEL_ENABLE_LEGACY_SCHEDULER_JOBS", None)
         refresh_settings()
 
@@ -75,6 +79,66 @@ class TestCycleIntervalSettings(unittest.TestCase):
         self.assertEqual(s.scheduler_jobs, ("trader",))
         sched = KeelScheduler()
         self.assertEqual(list(sched._jobs.keys()), ["trader"])
+
+
+
+class TestObservePresetResolution(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop("KEEL_CYCLE_INTERVAL_SECONDS", None)
+        os.environ.pop("KEEL_OBSERVE_PRESET", None)
+        refresh_settings()
+
+    def test_preset_mapping_pure(self):
+        self.assertEqual(OBSERVE_PRESET_SECONDS["default"], 900)
+        self.assertEqual(OBSERVE_PRESET_SECONDS["fast"], 300)
+        self.assertEqual(OBSERVE_PRESET_SECONDS["slow"], 1800)
+        self.assertEqual(resolve_observe_preset("FAST"), "fast")
+        self.assertIsNone(resolve_observe_preset("nope"))
+        secs, name = resolve_cycle_interval_seconds(
+            explicit_set=False, preset="fast"
+        )
+        self.assertEqual(secs, 300)
+        self.assertEqual(name, "fast")
+        secs, name = resolve_cycle_interval_seconds(
+            explicit_set=False, preset="slow"
+        )
+        self.assertEqual(secs, 1800)
+        self.assertEqual(name, "slow")
+        secs, name = resolve_cycle_interval_seconds(
+            explicit_set=False, preset="default"
+        )
+        self.assertEqual(secs, 900)
+        self.assertEqual(name, "default")
+
+    def test_explicit_seconds_wins_over_preset(self):
+        secs, name = resolve_cycle_interval_seconds(
+            explicit_seconds="120",
+            explicit_set=True,
+            preset="fast",
+        )
+        self.assertEqual(secs, 120)
+        self.assertEqual(name, "fast")
+
+    def test_settings_fast_preset_when_seconds_unset(self):
+        os.environ.pop("KEEL_CYCLE_INTERVAL_SECONDS", None)
+        os.environ["KEEL_OBSERVE_PRESET"] = "fast"
+        s = refresh_settings()
+        self.assertEqual(s.cycle_interval_seconds, 300)
+        self.assertEqual(s.observe_preset, "fast")
+
+    def test_settings_explicit_seconds_overrides_preset(self):
+        os.environ["KEEL_OBSERVE_PRESET"] = "fast"
+        os.environ["KEEL_CYCLE_INTERVAL_SECONDS"] = "600"
+        s = refresh_settings()
+        self.assertEqual(s.cycle_interval_seconds, 600)
+        self.assertEqual(s.observe_preset, "fast")
+
+    def test_invalid_preset_ignored(self):
+        os.environ.pop("KEEL_CYCLE_INTERVAL_SECONDS", None)
+        os.environ["KEEL_OBSERVE_PRESET"] = "turbo"
+        s = refresh_settings()
+        self.assertEqual(s.cycle_interval_seconds, CYCLE_INTERVAL_DEFAULT_SECONDS)
+        self.assertIsNone(s.observe_preset)
 
 
 
