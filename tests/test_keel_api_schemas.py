@@ -230,6 +230,14 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("blockers", arming_props)
         self.assertIn("warnings", arming_props)
         self.assertIn("economic", arming_props)
+        self.assertIn("first_live", status_props)
+        self.assertIn("FirstLiveStatus", comps)
+        fl_props = comps["FirstLiveStatus"]["properties"]
+        self.assertIn("allowed_now", fl_props)
+        self.assertIn("human_steps", fl_props)
+        self.assertIn("suggested_live_caps", fl_props)
+        self.assertIn("economic", fl_props)
+        self.assertIn("blockers", fl_props)
         self.assertIn("ConfigResponse", comps)
         config_props = comps["ConfigResponse"]["properties"]
         self.assertIn("kill_switch", config_props)

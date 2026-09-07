@@ -21,6 +21,7 @@ import {
   ClipboardCheck,
   Ghost,
   Crosshair,
+  Rocket,
 } from 'lucide-vue-next'
 
 const store = useMonitorStore()
@@ -568,6 +569,16 @@ const armingEconBlockers = computed(() =>
     || String(b).includes('win_rate_net')
   )
 )
+
+/** S2: compact First live Stage T gate card (read-only). */
+const firstLive = computed(() => store.status?.first_live ?? null)
+const firstLiveAllowed = computed(() => Boolean(firstLive.value?.allowed_now))
+const firstLiveBlockers = computed(() => (firstLive.value?.blockers ?? []).slice(0, 4))
+const firstLiveEconPassed = computed(() => {
+  const e = firstLive.value?.economic
+  if (!e || e.enabled === false) return e?.enabled === false ? true : null
+  return Boolean(e.passed)
+})
 
 const realizedPnl = computed(() => {
   const n = Number(store.dailyPnl?.realized_pnl ?? NaN)
@@ -1151,6 +1162,75 @@ const configStrip = computed(() => {
               class="text-[10px] font-mono text-emerald-400/80 mt-1"
             >
               Checklist + economic gates green — rehearse with KEEL_SHADOW_MODE=1 (kill may stay ON; shadow still records), then set KEEL_KILL_SWITCH=0 manually (no UI toggle).
+            </div>
+          </div>
+
+          <div
+            v-if="firstLive"
+            class="bg-[#0D121B] border rounded-xl p-4"
+            :class="firstLiveAllowed ? 'border-emerald-500/40' : 'border-sky-500/30'"
+            role="status"
+            aria-live="polite"
+          >
+            <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono">
+                <Rocket
+                  class="w-4 h-4"
+                  :class="firstLiveAllowed ? 'text-emerald-400' : 'text-sky-400'"
+                />
+                <span class="text-white font-bold uppercase tracking-wide">First live</span>
+                <span class="text-[#707E94] font-normal normal-case">Stage T gate · read-only</span>
+              </div>
+              <span
+                class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-extrabold border tracking-wide"
+                :class="firstLiveAllowed
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                  : 'bg-sky-500/10 text-sky-300 border-sky-500/30'"
+                :title="firstLive.note || 'allowed_now false while kill on or economic not passed'"
+              >
+                {{ firstLiveAllowed ? 'ALLOWED' : 'NOT NOW' }}
+              </span>
+            </div>
+            <div class="text-[11px] font-mono text-[#A8B3C7] mb-2 flex flex-wrap gap-x-3 gap-y-1">
+              <span>allowed_now
+                <span :class="firstLiveAllowed ? 'text-emerald-400' : 'text-amber-300'">
+                  {{ firstLive.allowed_now ? 'true' : 'false' }}
+                </span>
+              </span>
+              <span>economic
+                <span
+                  :class="firstLiveEconPassed === true
+                    ? 'text-emerald-400'
+                    : (firstLiveEconPassed === false ? 'text-rose-300' : 'text-[#707E94]')"
+                >{{ firstLiveEconPassed === true ? 'PASS' : (firstLiveEconPassed === false ? 'FAIL' : '—') }}</span>
+              </span>
+              <span>kill
+                <span :class="firstLive.kill_switch ? 'text-rose-400' : 'text-emerald-400'">
+                  {{ firstLive.kill_switch ? 'ON' : 'off' }}
+                </span>
+              </span>
+              <span>cap <span class="text-white">{{ firstLive.capability || '—' }}</span></span>
+              <span v-if="firstLive.suggested_live_caps">
+                live caps
+                <span class="text-white">${{ firstLive.suggested_live_caps.live_max_notional_per_instrument ?? '—' }}</span>
+                /
+                <span class="text-white">{{ firstLive.suggested_live_caps.live_max_contracts_per_instrument ?? '—' }}</span> ct
+              </span>
+            </div>
+            <div v-if="firstLiveBlockers.length" class="flex flex-wrap gap-1.5 mb-1.5">
+              <span
+                v-for="(b, i) in firstLiveBlockers"
+                :key="'flb-' + i"
+                class="inline-flex max-w-full items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border bg-rose-500/10 text-rose-300 border-rose-500/30 truncate"
+                :title="b"
+              >{{ b }}</span>
+              <span
+                v-if="(firstLive.blockers || []).length > firstLiveBlockers.length"
+                class="text-[10px] font-mono text-[#707E94]"
+              >+{{ (firstLive.blockers || []).length - firstLiveBlockers.length }} more</span>
+            </div>
+            <div class="text-[10px] font-mono text-[#707E94]">
+              never auto-clears kill · see RUNBOOK First live (Stage T gate)
             </div>
           </div>
 

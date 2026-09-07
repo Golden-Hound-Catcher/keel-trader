@@ -81,6 +81,22 @@ class ArmingStatus(BaseModel):
     economic: dict | None = None
 
 
+class FirstLiveStatus(BaseModel):
+    """S2 first-live checklist (Stage T gate) — read-only; never clears kill / places orders."""
+
+    allowed_now: bool = False
+    kill_switch: bool = False
+    shadow_mode: bool = False
+    shadow_near_probe: bool = False
+    capability: str = "none"
+    ready_to_arm: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    economic: dict | None = None
+    suggested_live_caps: dict = Field(default_factory=dict)
+    human_steps: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
 class StatusResponse(BaseModel):
     version: str
     mode: str
@@ -106,6 +122,8 @@ class StatusResponse(BaseModel):
     okx_capability_detail: str | None = None
     # Q1: read-only arming checklist (operator still flips KEEL_KILL_SWITCH manually).
     arming: ArmingStatus | None = None
+    # S2: first-live Stage T gate checklist (allowed_now never true while kill on).
+    first_live: FirstLiveStatus | None = None
 
 
 class ConfigResponse(BaseModel):

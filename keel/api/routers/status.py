@@ -8,11 +8,11 @@ from fastapi import APIRouter
 from keel import __version__
 from keel.api.cycle_time import is_worker_stale, seconds_since_last_cycle
 from keel.api.deps import get_ledger
-from keel.api.schemas import ArmingStatus, ConfigResponse, CredentialsStatus, LastCycleSummary, StatusResponse
+from keel.api.schemas import ArmingStatus, ConfigResponse, CredentialsStatus, FirstLiveStatus, LastCycleSummary, StatusResponse
 from keel.config import get_settings
 from keel.exchange.capability import probe_okx_capability
 from keel.execution.near_probe import resolve_near_probe_hurdle_bps
-from keel.risk.arming import evaluate_arming
+from keel.risk.arming import build_first_live, evaluate_arming
 from keel.domain.instruments import InstrumentPool
 from keel.policy import build_decision_policy, describe_policy
 
@@ -53,6 +53,7 @@ def status() -> StatusResponse:
         worker_stale=stale,
         ledger=get_ledger(),
     )
+    first_live_report = build_first_live(settings, arming_report)
     return StatusResponse(
         version=__version__,
         mode="read_only_control_plane",
@@ -81,6 +82,19 @@ def status() -> StatusResponse:
             blockers=list(arming_report.blockers),
             warnings=list(arming_report.warnings),
             economic=arming_report.economic,
+        ),
+        first_live=FirstLiveStatus(
+            allowed_now=first_live_report.allowed_now,
+            kill_switch=first_live_report.kill_switch,
+            shadow_mode=first_live_report.shadow_mode,
+            shadow_near_probe=first_live_report.shadow_near_probe,
+            capability=first_live_report.capability,
+            ready_to_arm=first_live_report.ready_to_arm,
+            blockers=list(first_live_report.blockers),
+            economic=first_live_report.economic,
+            suggested_live_caps=dict(first_live_report.suggested_live_caps),
+            human_steps=list(first_live_report.human_steps),
+            note=first_live_report.note,
         ),
     )
 

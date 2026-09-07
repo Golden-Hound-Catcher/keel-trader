@@ -78,6 +78,25 @@ export interface KeelArmingStatus {
   economic?: KeelArmingEconomic | null
 }
 
+/** S2 first-live Stage T gate checklist (read-only; never clears kill). */
+export interface KeelFirstLiveStatus {
+  allowed_now: boolean
+  kill_switch: boolean
+  shadow_mode: boolean
+  shadow_near_probe: boolean
+  capability: string
+  ready_to_arm: boolean
+  blockers: string[]
+  economic?: KeelArmingEconomic | null
+  suggested_live_caps?: {
+    live_max_notional_per_instrument?: number
+    live_max_contracts_per_instrument?: number
+    env_keys?: string[]
+  }
+  human_steps: string[]
+  note?: string
+}
+
 export interface KeelStatus {
   version: string
   mode: string
@@ -111,6 +130,8 @@ export interface KeelStatus {
   okx_capability_detail?: string | null
   /** Q1: read-only arming checklist (never writes kill-switch). */
   arming?: KeelArmingStatus | null
+  /** S2: first-live checklist (allowed_now false while kill on / econ fail). */
+  first_live?: KeelFirstLiveStatus | null
 }
 
 export interface KeelConfig {

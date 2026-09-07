@@ -1,5 +1,5 @@
 """
-Read-only arming checklist (Q1) + economic acceptance gates (S1).
+Read-only arming checklist (Q1) + economic acceptance gates (S1) + first-live (S2).
 
 Reports whether it is *safe for the operator to clear* KEEL_KILL_SWITCH —
 without ever writing env or placing orders. ready_to_arm does not flip the
@@ -7,6 +7,10 @@ kill-switch; the operator must still set KEEL_KILL_SWITCH=0 manually.
 
 S1 adds read-only economic gates on shadow markout evidence so ready_to_arm
 cannot go green without sufficient fee-aware sample quality.
+
+S2 productizes a first-live Stage T gate checklist (`build_first_live`) answering
+"can I open one minimum live order?" via status.first_live — still never
+auto-clears kill or places orders.
 """
 from __future__ import annotations
 
@@ -434,4 +438,113 @@ def evaluate_arming(
         blockers=blockers,
         warnings=warnings,
         economic=economic,
+    )
+
+# ---------------------------------------------------------------------------
+# Stage S2: first-live checklist (read-only productization of Stage T gate)
+# ---------------------------------------------------------------------------
+
+_FIRST_LIVE_HUMAN_STEPS: tuple[str, ...] = (
+    "wait_for_economic_pass",
+    "set_tiny_notional",
+    "clear_kill_manually",
+    "verify_one_fill",
+    "re_enable_kill",
+)
+
+
+@dataclass(frozen=True)
+class FirstLiveReport:
+    """Aggregated answer to: can I open one minimum live order? (never clears kill)."""
+
+    allowed_now: bool
+    kill_switch: bool
+    shadow_mode: bool
+    shadow_near_probe: bool
+    capability: str
+    ready_to_arm: bool
+    blockers: list[str] = field(default_factory=list)
+    economic: dict[str, Any] | None = None
+    suggested_live_caps: dict[str, Any] = field(default_factory=dict)
+    human_steps: list[str] = field(default_factory=list)
+    note: str = ""
+
+
+def build_first_live(
+    settings: Any,
+    arming: ArmingReport,
+    *,
+    shadow_mode: bool | None = None,
+    shadow_near_probe: bool | None = None,
+) -> FirstLiveReport:
+    """
+    Productize a first-live checklist from existing arming + settings (Stage S2).
+
+    Read-only: never writes env, never clears kill-switch, never places orders.
+    ``allowed_now`` is False while kill is on OR economic gates have not passed
+    (or other arming blockers remain / shadow still on).
+    """
+    kill = bool(getattr(settings, "kill_switch", False))
+    shadow = bool(shadow_mode) if shadow_mode is not None else bool(
+        getattr(settings, "shadow_mode", False)
+    )
+    near_probe = (
+        bool(shadow_near_probe)
+        if shadow_near_probe is not None
+        else bool(getattr(settings, "shadow_near_probe", False))
+    )
+    cap = (arming.capability or "").strip().lower() or "none"
+    ready = bool(arming.ready_to_arm)
+    blockers = list(arming.blockers or [])
+    economic = arming.economic
+
+    econ_passed = True
+    if economic is not None and economic.get("enabled", True):
+        econ_passed = bool(economic.get("passed"))
+    elif economic is not None and economic.get("enabled") is False:
+        econ_passed = True
+    elif bool(getattr(settings, "arming_econ_enabled", True)):
+        # Enabled but no summary yet → not passed.
+        econ_passed = False
+
+    # Explicit gate: kill on OR economic not passed → not allowed.
+    # Also require ready_to_arm and shadow off for a real live minimum order.
+    allowed = (
+        (not kill)
+        and econ_passed
+        and ready
+        and (not shadow)
+    )
+
+    caps = {
+        "live_max_notional_per_instrument": float(
+            getattr(settings, "live_max_notional_per_instrument", 200.0) or 200.0
+        ),
+        "live_max_contracts_per_instrument": int(
+            getattr(settings, "live_max_contracts_per_instrument", 5) or 5
+        ),
+        "env_keys": [
+            "KEEL_LIVE_MAX_NOTIONAL_PER_INSTRUMENT",
+            "KEEL_LIVE_MAX_CONTRACTS_PER_INSTRUMENT",
+        ],
+    }
+
+    note = (
+        "Read-only Stage T gate checklist. Never auto-clears KEEL_KILL_SWITCH; "
+        "never places orders. allowed_now requires kill off, economic pass, "
+        "ready_to_arm, and shadow_mode off."
+    )
+
+    return FirstLiveReport(
+        allowed_now=allowed,
+        kill_switch=kill,
+        shadow_mode=shadow,
+        shadow_near_probe=near_probe,
+        capability=cap,
+        ready_to_arm=ready,
+        blockers=blockers,
+        economic=economic,
+        suggested_live_caps=caps,
+        human_steps=list(_FIRST_LIVE_HUMAN_STEPS),
+        note=note,
     )
