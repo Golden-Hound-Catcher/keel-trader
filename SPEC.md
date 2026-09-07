@@ -310,6 +310,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Phase R Rule v3 edge pack**: audit volume_ratio (= last/mean20, correct); default min_vol 1.0→0.5 + percentile/soft volume paths; signal_diag edge hints (atr/expected_tp/edge_hint_bps); compare_rule_params missing-gate hist; near-probe 10bps fee hurdle unchanged |
 | 2026-09-07 | **Q3.4 near-probe fee edge hurdle**: gate `KEEL_SHADOW_NEAR_PROBE` on estimated `edge_bps` ≥ OKX RT/open fee (or `KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS`); fail-closed; audit + status hurdle fields; RUNBOOK/SPEC |
 | 2026-09-07 | **Q3.3 fee-aware shadow markout**: OKX `makerU`/`takerU` (or Regular 2/5 bps fallback) nets on `/stats/shadow*`; `fee_model` + net open/RT fields; optional funding at 00/08/16 UTC; Monitor prefers netRT; RUNBOOK/SPEC cite OKX fee docs |
 | 2026-09-07 | **Q3.2 shadow markout**: offline markout vs later factor_snapshots on `/stats/shadow` (+ `/stats/shadow_markout`); avg/median bps + win_rate by horizon; Monitor probe mk chip; RUNBOOK/SPEC |
@@ -390,6 +391,17 @@ After each `keel.worker.cycle` run, the ledger records a `worker_cycle_summary` 
 
 Near-probe must clear a fee-aware minimum edge before emitting `shadow_fill` (live markout after OKX fees was net-negative on small samples). Reuses `keel/exchange/okx_fees.py` (same as Q3.3): role from `KEEL_SHADOW_FEE_ROLE`, live makerU/takerU or Regular fallback (taker 5 bps / maker 2 bps per leg). Default hurdle = `round_trip_fee_bps` (taker→10, maker→4 with Regular); `KEEL_SHADOW_NEAR_PROBE_EDGE_MODE=open` uses one leg; optional `KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS` overrides (0 disables). Crude `edge_bps` from ATR/price × EV of probe TP/SL (2.2/1.0 ATR) with p ≈ gate completeness × confidence/100; **fail closed** when edge cannot be estimated and hurdle > 0. Audit: `edge_bps` / `hurdle_bps` / `fee_role` on probe reason, `signal_diag`, and shadow_fill / trade metadata. Status/config expose `shadow_near_probe_edge_mode`, `shadow_near_probe_min_edge_bps`, `shadow_near_probe_hurdle_bps`.
 
+
+
+## Addendum: Phase R Rule v3 edge pack
+
+Rule policy v3 keeps the five-gate stack (RSI / trend / MACD / EMA / volume) but fixes the **volume bottleneck** without changing market truth:
+
+- **Semantics**: `volume_ratio = last_15m_volume / mean(last_20)` (see `compute_volume_ratio` in `keel/worker/cycle.py`). Not a percent; 1.0 = average.
+- **Defaults**: `KEEL_RULE_MIN_VOLUME_RATIO` **0.5** (was 1.0). Optional adaptive `KEEL_RULE_MIN_VOLUME_PERCENTILE` (default 55) and soft confirmation (`KEEL_RULE_VOLUME_SOFT_*`) when the other four gates pass with a strong RSI extreme.
+- **Diagnostics**: `signal_diag` exposes `volume_ok`, raw ratio, threshold/path used, `near_ready`, and ATR-based `atr_bps` / `expected_tp_bps` / `edge_hint_bps`.
+- **Safety**: Q3.4 near-probe fee hurdle unchanged; kill-switch uncleared; no live orders from this pack.
+- **Verify**: `scripts/compare_rule_params.py` prints missing-gate histograms on ledger cohorts.
 
 ## Addendum: Q3.2 shadow markout
 
