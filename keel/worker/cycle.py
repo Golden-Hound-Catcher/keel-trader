@@ -583,22 +583,23 @@ def run_paper_cycle(
             daily_pnl=daily_pnl,
             kill_switch=settings.kill_switch,
         )
-        results.append(
-            {
-                "inst_id": inst_id,
-                "action": decision.action,
-                "success": exec_result.success,
-                "order_id": exec_result.order_id,
-                "error": exec_result.error,
-                "risk_gate_failed": exec_result.risk_gate_failed,
-                "price": exec_result.price,
-                "size": exec_result.size,
-                "filled": exec_result.filled,
-                "resting": exec_result.resting,
-                "rsi": round(snap.rsi_14, 2),
-                "trend": snap.trend_15m,
-            }
-        )
+        result_row: dict[str, Any] = {
+            "inst_id": inst_id,
+            "action": decision.action,
+            "success": exec_result.success,
+            "order_id": exec_result.order_id,
+            "error": exec_result.error,
+            "risk_gate_failed": exec_result.risk_gate_failed,
+            "price": exec_result.price,
+            "size": exec_result.size,
+            "filled": exec_result.filled,
+            "resting": exec_result.resting,
+            "rsi": round(snap.rsi_14, 2),
+            "trend": snap.trend_15m,
+        }
+        if getattr(decision, "signal_diag", None):
+            result_row["signal_diag"] = decision.signal_diag
+        results.append(result_row)
 
     mode = "paper" if isinstance(exchange, PaperAdapter) else "okx_rest"
     duration_ms = max(0, int(round((time.perf_counter() - cycle_t0) * 1000)))

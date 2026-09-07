@@ -168,7 +168,7 @@ Prefer `KEEL_*` names. Demo default.
 | `KEEL_OBSERVE_PRESET` | unset | Q0 cadence: `default`=900 / `fast`=300 / `slow`=1800; exposed as `observe_preset` on `/config` |
 | `KEEL_API_TOKEN` | empty | Optional bearer for `/api/v1/*`; empty → no auth |
 | `KEEL_NOTIFY_WEBHOOK_URL` | empty | Empty → NullNotifier (no network); else POST cycle summary |
-| `KEEL_NOTIFY_ALERTS_ONLY` | `0` | When true, skip notify unless payload `alert` |
+| `KEEL_NOTIFY_ALERTS_ONLY` | `0` | When true, skip notify unless payload `alert` (deny/error **or** near-signal / BUY|SELL) |
 | `KEEL_NOTIFY_FORMAT` | `keel` | `keel` `{"event","payload"}` \| `discord` `{"content": text}` ≤1900 |
 
 Secrets live in `.env` (`chmod 600`) or process env only. **Do not** add parallel encrypted secret stores in v1.
@@ -295,6 +295,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q0 observe harden + near-signal alerts**: port/pid verify in observe_up; notify `alert` on near-signal; RUNBOOK alerts_only |
 | 2026-09-07 | **Q0 observe stack**: `scripts/observe_{up,down,status}.sh` one-command api+worker hang; RUNBOOK 观测模式 |
 | 2026-09-07 | **Q0 near-signal radar**: `GET /api/v1/signals/nearest` + Overview「近信号雷达」card (latest per-inst `signal_diag`, soft-fail) |
 | 2026-09-07 | **Q0 observation productization**: rule `signal_diag` (nearest/missing gates) in calculus_data + Decisions UX; `KEEL_OBSERVE_PRESET` cadence (default/fast/slow) on `/config`; live kill-switch observation docs |

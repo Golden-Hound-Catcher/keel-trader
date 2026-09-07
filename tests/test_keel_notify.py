@@ -234,6 +234,65 @@ class TestCycleNotifyPayload(unittest.TestCase):
         self.assertEqual(compact["error_count"], 30)
         self.assertEqual(compact["severity"], "error")
 
+    def test_near_signal_missing_le2_sets_alert(self):
+        compact = cycle_notify_payload(
+            {
+                "ok": True,
+                "mode": "paper",
+                "results": [
+                    {
+                        "inst_id": "BTC-USDT-SWAP",
+                        "action": "WAIT",
+                        "signal_diag": {
+                            "nearest": "long",
+                            "missing": ["volume_ok"],
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertTrue(compact["alert"])
+        self.assertTrue(compact["near_signal"])
+        self.assertEqual(compact["near_signal_count"], 1)
+        self.assertEqual(compact["severity"], "warn")
+        self.assertTrue(
+            any(r.startswith("near_signal:BTC-USDT-SWAP") for r in compact["alert_reasons"])
+        )
+        self.assertIn("near_signal=", compact["text"])
+
+    def test_near_signal_missing_gt2_no_alert(self):
+        compact = cycle_notify_payload(
+            {
+                "ok": True,
+                "mode": "paper",
+                "results": [
+                    {
+                        "inst_id": "BTC-USDT-SWAP",
+                        "action": "WAIT",
+                        "signal_diag": {
+                            "nearest": "long",
+                            "missing": ["a", "b", "c"],
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertFalse(compact["alert"])
+        self.assertFalse(compact["near_signal"])
+        self.assertEqual(compact["severity"], "ok")
+
+    def test_buy_sell_action_sets_near_signal_alert(self):
+        compact = cycle_notify_payload(
+            {
+                "ok": True,
+                "mode": "paper",
+                "results": [{"inst_id": "ETH-USDT-SWAP", "action": "SELL_SHORT"}],
+            }
+        )
+        self.assertTrue(compact["alert"])
+        self.assertTrue(compact["near_signal"])
+        self.assertIn("near_signal:ETH-USDT-SWAP:action=SELL_SHORT", compact["alert_reasons"])
+
 
 class TestCycleNotifyWiring(unittest.TestCase):
     def setUp(self):

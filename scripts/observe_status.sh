@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Show observe stack pid liveness + /health /ready snippets (no secrets).
+# Warns when .env says live+keys but /health|/ready look demo/unconfigured (stale API).
 # Usage: ./scripts/observe_status.sh
 set -euo pipefail
 
@@ -39,6 +40,9 @@ echo "run_dir=$RUN_DIR"
 _show_pid "keel-api" "$API_PID_FILE"
 _show_pid "keel-worker" "$WORKER_PID_FILE"
 
+_HEALTH_BODY=""
+_READY_BODY=""
+
 _snip() {
   _path=$1
   _url="${BASE}${_path}"
@@ -55,7 +59,36 @@ _snip() {
   # /health and /ready have no secrets; truncate for readability
   printf "%s\n" "$_body" | head -c 500
   echo
+  if [ "$_path" = "/health" ]; then
+    _HEALTH_BODY="$_body"
+  elif [ "$_path" = "/ready" ]; then
+    _READY_BODY="$_body"
+  fi
 }
 
 _snip "/health"
 _snip "/ready"
+
+# Mismatch: .env expects live+keys but API reports demo / okx_configured=false
+_okx_env=$(printf "%s" "${KEEL_OKX_ENV:-demo}" | tr "[:upper:]" "[:lower:]")
+_k="${KEEL_OKX_API_KEY:-${OKX_LIVE_API_KEY:-${OKX_API_KEY:-}}}"
+_s="${KEEL_OKX_SECRET_KEY:-${OKX_LIVE_SECRET_KEY:-${OKX_SECRET_KEY:-}}}"
+_p="${KEEL_OKX_PASSPHRASE:-${OKX_LIVE_PASSPHRASE:-${OKX_PASSPHRASE:-}}}"
+_env_live_keys=0
+if [ "$_okx_env" = "live" ] && [ -n "$_k" ] && [ -n "$_s" ] && [ -n "$_p" ]; then
+  _env_live_keys=1
+fi
+
+if [ "$_env_live_keys" -eq 1 ]; then
+  _mismatch=0
+  if printf "%s" "$_HEALTH_BODY" | grep -q '"environment"[[:space:]]*:[[:space:]]*"demo"'; then
+    _mismatch=1
+  fi
+  if printf "%s" "$_READY_BODY" | grep -q '"okx_configured"[[:space:]]*:[[:space:]]*false'; then
+    _mismatch=1
+  fi
+  if [ "$_mismatch" -eq 1 ]; then
+    echo "WARN: .env has KEEL_OKX_ENV=live + OKX keys, but /health|/ready look like demo or okx_configured=false." >&2
+    echo "      Likely a STALE API on :${PORT} (different process/env). Check: ./scripts/observe_down.sh then observe_up, or ss -ltnp 'sport = :${PORT}'." >&2
+  fi
+fi
