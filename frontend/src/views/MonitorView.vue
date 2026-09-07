@@ -18,6 +18,7 @@ import {
   Settings2,
   Gauge,
   Waves,
+  ClipboardCheck,
 } from 'lucide-vue-next'
 
 const store = useMonitorStore()
@@ -417,6 +418,12 @@ const okxCapabilityTitle = computed(() => {
   const level = okxCapability.value
   return detail ? `okx_capability=${level} · ${detail}` : `okx_capability=${level}`
 })
+
+/** Q1: read-only 实盘准入 checklist (never a kill-switch toggle). */
+const arming = computed(() => store.status?.arming ?? null)
+const armingReady = computed(() => Boolean(arming.value?.ready_to_arm))
+const armingBlockers = computed(() => arming.value?.blockers ?? [])
+const armingWarnings = computed(() => arming.value?.warnings ?? [])
 
 const realizedPnl = computed(() => {
   const n = Number(store.dailyPnl?.realized_pnl ?? NaN)
@@ -838,6 +845,67 @@ const configStrip = computed(() => {
               <div class="text-[11px] font-mono text-[#707E94] mt-1 truncate" :title="store.status?.ledger_db">
                 {{ store.status?.mode || '—' }}
               </div>
+            </div>
+          </div>
+
+          <div
+            v-if="arming"
+            class="bg-[#0D121B] border rounded-xl p-4"
+            :class="armingReady ? 'border-emerald-500/40' : 'border-amber-500/40'"
+            role="status"
+            aria-live="polite"
+          >
+            <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono">
+                <ClipboardCheck
+                  class="w-4 h-4"
+                  :class="armingReady ? 'text-emerald-400' : 'text-amber-400'"
+                />
+                <span class="text-white font-bold uppercase tracking-wide">实盘准入</span>
+                <span class="text-[#707E94] font-normal normal-case">arming checklist · read-only</span>
+              </div>
+              <span
+                class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-extrabold border tracking-wide"
+                :class="armingReady
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                  : 'bg-amber-500/15 text-amber-400 border-amber-500/40'"
+                :title="armingReady
+                  ? 'Prerequisites met — still set KEEL_KILL_SWITCH=0 manually to arm'
+                  : 'Not ready — resolve blockers before clearing kill-switch'"
+              >
+                {{ armingReady ? 'READY' : 'NOT READY' }}
+              </span>
+            </div>
+            <div class="text-[11px] font-mono text-[#A8B3C7] mb-2">
+              capability
+              <span class="text-white">{{ arming.capability || '—' }}</span>
+              · kill
+              <span :class="arming.kill_switch ? 'text-rose-400' : 'text-emerald-400'">
+                {{ arming.kill_switch ? 'ON' : 'off' }}
+              </span>
+              · never auto-clears env
+            </div>
+            <div v-if="armingBlockers.length" class="flex flex-wrap gap-1.5 mb-1.5">
+              <span
+                v-for="(b, i) in armingBlockers"
+                :key="'ab-' + i"
+                class="inline-flex max-w-full items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border bg-rose-500/10 text-rose-300 border-rose-500/30 truncate"
+                :title="b"
+              >{{ b }}</span>
+            </div>
+            <div v-if="armingWarnings.length" class="flex flex-wrap gap-1.5">
+              <span
+                v-for="(w, i) in armingWarnings"
+                :key="'aw-' + i"
+                class="inline-flex max-w-full items-center px-1.5 py-0.5 rounded text-[10px] font-mono border bg-amber-500/10 text-amber-200/90 border-amber-500/25 truncate"
+                :title="w"
+              >{{ w }}</span>
+            </div>
+            <div
+              v-if="armingReady && !armingBlockers.length"
+              class="text-[10px] font-mono text-emerald-400/80 mt-1"
+            >
+              Checklist green — operator must still set KEEL_KILL_SWITCH=0 manually (no UI toggle).
             </div>
           </div>
 

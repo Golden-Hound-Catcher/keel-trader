@@ -39,6 +39,14 @@ export interface KeelLastCycle {
   market_source?: string | null
 }
 
+export interface KeelArmingStatus {
+  ready_to_arm: boolean
+  kill_switch: boolean
+  capability: string
+  blockers: string[]
+  warnings: string[]
+}
+
 export interface KeelStatus {
   version: string
   mode: string
@@ -60,6 +68,8 @@ export interface KeelStatus {
   /** Q1: OKX key capability — none|paper|read|trade|error (no order placement). */
   okx_capability?: string
   okx_capability_detail?: string | null
+  /** Q1: read-only arming checklist (never writes kill-switch). */
+  arming?: KeelArmingStatus | null
 }
 
 export interface KeelConfig {

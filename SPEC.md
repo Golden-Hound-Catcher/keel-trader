@@ -295,6 +295,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q1 arming checklist**: `evaluate_arming` → `status.arming` (ready_to_arm/blockers/warnings); Monitor「实盘准入」card; never auto-clears KEEL_KILL_SWITCH |
 | 2026-09-07 | **Q1 key capability probe**: `okx_capability` on `/status`+`/config` (none/paper/read/trade/error) via balance + orders-pending (no place/cancel/close); ~60s cache; Monitor Credentials badge; RUNBOOK arming requires `trade` before clearing kill-switch |
 | 2026-09-07 | **Q0 observe harden + near-signal alerts**: port/pid verify in observe_up; notify `alert` on near-signal; RUNBOOK alerts_only |
 | 2026-09-07 | **Q0 observe stack**: `scripts/observe_{up,down,status}.sh` one-command api+worker hang; RUNBOOK 观测模式 |

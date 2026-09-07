@@ -8,9 +8,10 @@ from fastapi import APIRouter
 from keel import __version__
 from keel.api.cycle_time import is_worker_stale, seconds_since_last_cycle
 from keel.api.deps import get_ledger
-from keel.api.schemas import ConfigResponse, CredentialsStatus, LastCycleSummary, StatusResponse
+from keel.api.schemas import ArmingStatus, ConfigResponse, CredentialsStatus, LastCycleSummary, StatusResponse
 from keel.config import get_settings
 from keel.exchange.capability import probe_okx_capability
+from keel.risk.arming import evaluate_arming
 from keel.domain.instruments import InstrumentPool
 from keel.policy import build_decision_policy, describe_policy
 
@@ -31,7 +32,15 @@ def status() -> StatusResponse:
     last_raw = get_ledger().get_last_cycle_summary()
     last_cycle = LastCycleSummary.model_validate(last_raw) if last_raw else None
     lag = seconds_since_last_cycle(last_raw)
+    stale = is_worker_stale(lag, settings.cycle_interval_seconds)
     cap = probe_okx_capability(settings)
+    market_source = last_cycle.market_source if last_cycle else None
+    arming_report = evaluate_arming(
+        settings,
+        cap.level,
+        market_source=market_source,
+        worker_stale=stale,
+    )
     return StatusResponse(
         version=__version__,
         mode="read_only_control_plane",
@@ -46,9 +55,16 @@ def status() -> StatusResponse:
         decision_policy=_active_decision_policy_name(settings),
         last_cycle=last_cycle,
         seconds_since_last_cycle=lag,
-        worker_stale=is_worker_stale(lag, settings.cycle_interval_seconds),
+        worker_stale=stale,
         okx_capability=cap.level,
         okx_capability_detail=cap.detail or None,
+        arming=ArmingStatus(
+            ready_to_arm=arming_report.ready_to_arm,
+            kill_switch=arming_report.kill_switch,
+            capability=arming_report.capability,
+            blockers=list(arming_report.blockers),
+            warnings=list(arming_report.warnings),
+        ),
     )
 
 
