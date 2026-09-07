@@ -128,7 +128,8 @@ Base: `keel.api.app`
 | GET | `/api/v1/trades` | Recent trade/fill events (`?inst_id=` optional) |
 | GET | `/api/v1/events` | Raw ledger events (`?event_type=` / `?inst_id=` optional) |
 | GET | `/api/v1/factors/{inst_id}` | Latest factor snapshot (`?live=1` → OKX public candles) |
-| GET | `/api/v1/stats/decisions` | Decision quality aggregates (`?hours=`, default 24) |
+| GET | `/api/v1/stats/decisions` | Decision quality aggregates (`?hours=`, optional `market_source=okx_public|synthetic|any`) |
+| GET | `/api/v1/stats/shadow` | Shadow_fill rehearsal counts (`?hours=`; by_action + last_timestamp) |
 | GET | `/api/v1/signals/nearest` | Q0 near-signal radar: latest decision per watch instrument + `signal_diag` summary (`?hours=`) |
 
 **Stability**
@@ -298,6 +299,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q2 decision-quality deepening**: stamp `calculus_data.market_source`; `GET /stats/decisions?market_source=`; `GET /stats/shadow`; Monitor shadow chip + market_source chip; `scripts/compare_rule_params.py` offline A/B thresholds |
 | 2026-09-07 | **Q1 shadow rehearsal + live caps**: arming checks recent `shadow_fill`; kill+shadow allows shadow_fill; `KEEL_LIVE_MAX_*` for real live; Monitor/config expose |
 | 2026-09-07 | **Q1 shadow fills**: `KEEL_SHADOW_MODE` → settings.shadow_mode; orchestrator ledgers `shadow_fill` (+ synthetic trade) instead of place_order; kill-switch still blocks; status/config + Monitor badge; RUNBOOK rehearse shadow before clearing kill-switch |
 | 2026-09-07 | **Q1 arming checklist**: `evaluate_arming` → `status.arming` (ready_to_arm/blockers/warnings); Monitor「实盘准入」card; never auto-clears KEEL_KILL_SWITCH |

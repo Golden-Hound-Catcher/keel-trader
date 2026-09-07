@@ -189,6 +189,16 @@ class DecisionStatsResponse(BaseModel):
     risk_deny_events: int = 0
     cycle_count: int = 0
     avg_cycle_duration_ms: float | None = None
+    market_source: str = "any"
+
+
+class ShadowStatsResponse(BaseModel):
+    """Aggregated shadow_fill rehearsal stats (read-only)."""
+
+    hours: int
+    count: int = 0
+    by_action: dict[str, int] = Field(default_factory=dict)
+    last_timestamp: float | None = None
 
 
 class NearestSignalItem(BaseModel):

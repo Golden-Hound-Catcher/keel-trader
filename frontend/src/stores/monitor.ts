@@ -18,6 +18,7 @@ import {
   type KeelConfig,
   type KeelDailyPnl,
   type KeelDecisionStats,
+  type KeelShadowStats,
   type KeelNearestSignals,
 } from '../types/keel'
 
@@ -30,6 +31,8 @@ export const useMonitorStore = defineStore('monitor', () => {
   const dailyPnl = ref<KeelDailyPnl | null>(null)
   /** Soft-fail Overview card; null when endpoint missing or fetch failed. */
   const decisionStats = ref<KeelDecisionStats | null>(null)
+  /** Soft-fail Overview shadow_fill counts; null when endpoint missing or fetch failed. */
+  const shadowStats = ref<KeelShadowStats | null>(null)
   /** Soft-fail Overview near-signal radar; null when endpoint missing or fetch failed. */
   const nearestSignals = ref<KeelNearestSignals | null>(null)
   const balance = ref<KeelBalance | null>(null)
@@ -164,6 +167,14 @@ export const useMonitorStore = defineStore('monitor', () => {
         decisionStats.value = stats
       } catch {
         decisionStats.value = null
+      }
+
+      // Soft-fail: shadow_fill rehearsal counts (Q2)
+      try {
+        const shadow = await keelFetch<KeelShadowStats>('/api/v1/stats/shadow?hours=24')
+        shadowStats.value = shadow
+      } catch {
+        shadowStats.value = null
       }
 
       // Soft-fail: near-signal radar (Q0 observation)
@@ -369,6 +380,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     config,
     dailyPnl,
     decisionStats,
+    shadowStats,
     nearestSignals,
     balance,
     positions,

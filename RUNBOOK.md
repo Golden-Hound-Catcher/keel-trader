@@ -146,24 +146,34 @@ Payload 含 `risk_denies` / `risk_deny_reasons`（capped）、`error_count` / `e
 ---
 
 
-## 7. Decision quality / P2 observability
+## 7. Decision quality / P2 + Q2 observability
 
 Read-only decision stats (no HTTP writes):
 
 ```bash
 # After paper/demo cycles have written the ledger
 curl -s "http://127.0.0.1:8080/api/v1/stats/decisions?hours=24" | python -m json.tool
+# Optional market_source filter (stamped on calculus_data in cycle):
+curl -s "http://127.0.0.1:8080/api/v1/stats/decisions?hours=24&market_source=synthetic" | python -m json.tool
+curl -s "http://127.0.0.1:8080/api/v1/stats/shadow?hours=24" | python -m json.tool
 ```
 
-Response fields: `decision_count`, `by_action`, `by_policy`, `wait_rate` (0–1), `risk_deny_events` (`risk_gate_blocked` count), `cycle_count` (`worker_cycle_summary`), `avg_cycle_duration_ms`.
+Response fields (`/stats/decisions`): `decision_count`, `by_action`, `by_policy`, `wait_rate` (0–1), `risk_deny_events` (`risk_gate_blocked` count), `cycle_count` (`worker_cycle_summary`), `avg_cycle_duration_ms`, `market_source` filter echo (`any`|`okx_public`|`synthetic`).
 
-Monitor Overview soft-fetches the same endpoint (card hidden if API missing). Decisions table shows `policy_name` (modules truncated in title).
+Shadow stats (`/stats/shadow`): `count`, `by_action`, `last_timestamp` for `shadow_fill` events.
 
-Offline policy compare (no OKX keys):
+Monitor Overview soft-fetches decisions + shadow stats (card/chip hidden if API missing). Decisions table shows `policy_name` and `calculus_data.market_source` chip when present.
+
+Offline policy / rule-param compare (no OKX keys):
 
 ```bash
 PYTHONPATH=. python scripts/compare_policies_paper.py
 # prints action histogram for stub and rule; exit 0
+
+PYTHONPATH=. python scripts/compare_rule_params.py \
+  --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 1.0 \
+  --rsi-long-max-b 35 --rsi-short-min-b 65 --min-vol-b 1.2
+# same synthetic paper snaps; prints action histograms + near_signal_rate; exit 0
 ```
 
 ---
