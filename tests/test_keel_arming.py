@@ -1,6 +1,7 @@
 """Q1: read-only arming checklist (mock capability; no network / no kill-switch writes)."""
 from __future__ import annotations
 
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -14,9 +15,30 @@ def _settings(**kwargs):
         kill_switch=True,
         max_notional_per_instrument=2000.0,
         max_daily_loss_usdt=150.0,
+        live_max_notional_per_instrument=200.0,
+        live_max_contracts_per_instrument=5,
+        arming_shadow_hours=24.0,
+        arming_require_shadow=False,
     )
     base.update(kwargs)
     return SimpleNamespace(**base)
+
+
+class _FakeEvent:
+    def __init__(self, timestamp: float, event_type: str = "shadow_fill"):
+        self.timestamp = timestamp
+        self.event_type = event_type
+
+
+class _FakeLedger:
+    def __init__(self, events=None):
+        self._events = list(events or [])
+
+    def get_events(self, event_type=None, inst_id=None, limit=100):
+        out = self._events
+        if event_type is not None:
+            out = [e for e in out if e.event_type == event_type]
+        return out[:limit]
 
 
 class TestEvaluateArmingReady(unittest.TestCase):
@@ -100,6 +122,43 @@ class TestEvaluateArmingWarnings(unittest.TestCase):
         self.assertTrue(r.ready_to_arm)
         self.assertFalse(r.kill_switch)
         self.assertTrue(any("already OFF" in w for w in r.warnings))
+
+
+
+class TestEvaluateArmingShadowRehearsal(unittest.TestCase):
+    def test_warning_when_no_shadow_fill(self):
+        led = _FakeLedger([])
+        r = evaluate_arming(_settings(), "trade", ledger=led)
+        self.assertTrue(r.ready_to_arm)
+        self.assertTrue(any("no recent shadow_fill rehearsal" in w for w in r.warnings))
+        self.assertFalse(any("shadow_fill" in b for b in r.blockers))
+
+    def test_no_shadow_warning_when_recent_shadow_fill(self):
+        led = _FakeLedger([_FakeEvent(time.time() - 60)])
+        r = evaluate_arming(_settings(), "trade", ledger=led)
+        self.assertTrue(r.ready_to_arm)
+        self.assertFalse(any("shadow_fill" in w for w in r.warnings))
+
+    def test_blocker_when_require_shadow_and_missing(self):
+        led = _FakeLedger([])
+        r = evaluate_arming(
+            _settings(arming_require_shadow=True),
+            "trade",
+            ledger=led,
+        )
+        self.assertFalse(r.ready_to_arm)
+        self.assertTrue(any("no recent shadow_fill rehearsal" in b for b in r.blockers))
+
+    def test_stale_shadow_fill_counts_as_missing(self):
+        led = _FakeLedger([_FakeEvent(time.time() - 48 * 3600)])
+        r = evaluate_arming(_settings(arming_shadow_hours=24), "trade", ledger=led)
+        self.assertTrue(any("no recent shadow_fill rehearsal" in w for w in r.warnings))
+
+    def test_no_ledger_skips_shadow_check(self):
+        r = evaluate_arming(_settings(), "trade")
+        self.assertFalse(any("shadow_fill" in w for w in r.warnings))
+        self.assertFalse(any("shadow_fill" in b for b in r.blockers))
+
 
 
 if __name__ == "__main__":

@@ -81,6 +81,12 @@ export interface KeelConfig {
   max_asset_margin: number
   max_notional_per_instrument?: number
   max_contracts_per_instrument?: number
+  /** First-live tighter caps (KEEL_LIVE_MAX_*). */
+  live_max_notional_per_instrument?: number
+  live_max_contracts_per_instrument?: number
+  /** Caps risk gates apply right now (live tighter when env=live and not shadow). */
+  effective_max_notional_per_instrument?: number
+  effective_max_contracts_per_instrument?: number
   llm_model: string
   kill_switch: boolean
   /** Q1: shadow execution flag (same as status.shadow_mode). */

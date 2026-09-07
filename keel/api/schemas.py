@@ -101,6 +101,12 @@ class ConfigResponse(BaseModel):
     max_asset_margin: float
     max_notional_per_instrument: float = 2000.0
     max_contracts_per_instrument: int = 50
+    # First-live tighter caps (KEEL_LIVE_MAX_*); paper/shadow keep KEEL_MAX_*.
+    live_max_notional_per_instrument: float = 200.0
+    live_max_contracts_per_instrument: int = 5
+    # Caps actually applied by risk gates right now.
+    effective_max_notional_per_instrument: float = 2000.0
+    effective_max_contracts_per_instrument: int = 50
     llm_model: str
     kill_switch: bool = False
     shadow_mode: bool = False
