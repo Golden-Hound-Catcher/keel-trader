@@ -312,6 +312,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 |------|------|
 | 2026-09-07 | **Phase R Rule v3 edge pack**: audit volume_ratio (= last/mean20, correct); default min_vol 1.0→0.5 + percentile/soft volume paths; signal_diag edge hints (atr/expected_tp/edge_hint_bps); compare_rule_params missing-gate hist; near-probe 10bps fee hurdle unchanged |
 | 2026-09-07 | **Phase R RSI soft + edge_hint wire**: hard RSI defaults 42/58→45/55; soft RSI relax when other four gates pass (48/52); near-probe prefers signal_diag.edge_hint_bps; 10bps hurdle unchanged |
+| 2026-09-07 | **Phase R4 fee-aware rule suggest**: `scripts/suggest_rule_params.py` + `keel.ledger.rule_suggest` grid-search RSI/vol/rsi_relax on okx_public cohort; rank by edge≥10bps fires under fire-rate cap; recommend-only (no .env write) |
 | 2026-09-07 | **Q3.4 near-probe fee edge hurdle**: gate `KEEL_SHADOW_NEAR_PROBE` on estimated `edge_bps` ≥ OKX RT/open fee (or `KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS`); fail-closed; audit + status hurdle fields; RUNBOOK/SPEC |
 | 2026-09-07 | **Q3.3 fee-aware shadow markout**: OKX `makerU`/`takerU` (or Regular 2/5 bps fallback) nets on `/stats/shadow*`; `fee_model` + net open/RT fields; optional funding at 00/08/16 UTC; Monitor prefers netRT; RUNBOOK/SPEC cite OKX fee docs |
 | 2026-09-07 | **Q3.2 shadow markout**: offline markout vs later factor_snapshots on `/stats/shadow` (+ `/stats/shadow_markout`); avg/median bps + win_rate by horizon; Monitor probe mk chip; RUNBOOK/SPEC |
@@ -404,6 +405,16 @@ Rule policy v3+ keeps the five-gate stack (RSI / trend / MACD / EMA / volume) bu
 - **Diagnostics**: `signal_diag` exposes volume/RSI path + soft flags, `near_ready`, and ATR-based `atr_bps` / `expected_tp_bps` / `edge_hint_bps`. Near-probe prefers `edge_hint_bps` when finite; fee hurdle unchanged (~10 bps taker RT).
 - **Safety**: Q3.4 near-probe fee hurdle unchanged; kill-switch uncleared; no live orders from this pack.
 - **Verify**: `scripts/compare_rule_params.py` prints missing-gate histograms on ledger cohorts.
+
+## Addendum: Phase R4 fee-aware Rule param suggest
+
+Offline grid search over modest Rule thresholds on an `okx_public` ledger cohort (`scripts/suggest_rule_params.py`, helpers in `keel.ledger.rule_suggest`):
+
+- Loads decisions via existing export/replay (`--db` / `--from-ledger`, same as Q2.1).
+- Grid: RSI long max {40,42,45,48}, short min {52,55,58,60}, min_vol {0.35,0.5,0.7}, optional `rsi_relax` on/off.
+- Per combo: action histogram, near-signal rate, missing-gate tops, fraction with `edge_hint_bps ≥ hurdle` (default **10**), full-fire count.
+- Rank: fires with edge≥hurdle, under fire-rate cap (default ≤25% cohort), fewer `volume_ok`-only misses.
+- **Recommend only** — never auto-writes `.env`. Avoid blindly setting `short_min=40`.
 
 ## Addendum: Q3.2 shadow markout
 
