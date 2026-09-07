@@ -60,6 +60,10 @@ export interface KeelStatus {
   kill_switch: boolean
   /** Q1: shadow execution — ledger fills without place_order (KEEL_SHADOW_MODE). */
   shadow_mode?: boolean
+  /** Q3.1: near-signal shadow probe armed (KEEL_SHADOW_NEAR_PROBE; kill+shadow only). */
+  shadow_near_probe?: boolean
+  /** Q3.1: per-instrument probe cooldown seconds. */
+  shadow_near_probe_cooldown_seconds?: number
   /** Active decision policy name (rule|stub|llm) from build_decision_policy. */
   decision_policy: string
   last_cycle?: KeelLastCycle | null
@@ -91,6 +95,10 @@ export interface KeelConfig {
   kill_switch: boolean
   /** Q1: shadow execution flag (same as status.shadow_mode). */
   shadow_mode?: boolean
+  /** Q3.1: near-signal shadow probe (same as status.shadow_near_probe). */
+  shadow_near_probe?: boolean
+  shadow_near_probe_cooldown_seconds?: number
+  shadow_near_probe_max_missing?: number
   /** Active decision policy name (same as status.decision_policy). */
   decision_policy: string
   instruments: string[]
@@ -207,6 +215,9 @@ export interface KeelShadowStats {
   hours: number
   count: number
   by_action: Record<string, number>
+  by_policy?: Record<string, number>
+  /** Q3 near-probe fills in lookback. */
+  probe_count?: number
   last_timestamp?: number | null
 }
 
@@ -214,6 +225,9 @@ export interface KeelShadowStats {
 export interface KeelQualityShadow {
   count: number
   by_action: Record<string, number>
+  by_policy?: Record<string, number>
+  /** Q3 near-probe fills in lookback. */
+  probe_count?: number
   last_timestamp?: number | null
 }
 

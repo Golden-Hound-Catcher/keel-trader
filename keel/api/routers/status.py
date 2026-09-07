@@ -54,6 +54,8 @@ def status() -> StatusResponse:
         ledger_db=str(settings.ledger_path),
         kill_switch=settings.kill_switch,
         shadow_mode=settings.shadow_mode,
+        shadow_near_probe=settings.shadow_near_probe,
+        shadow_near_probe_cooldown_seconds=settings.shadow_near_probe_cooldown_seconds,
         decision_policy=_active_decision_policy_name(settings),
         last_cycle=last_cycle,
         seconds_since_last_cycle=lag,

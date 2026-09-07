@@ -339,3 +339,5 @@ KEEL_SHADOW_NEAR_PROBE=1
 
 重启 worker 后看 ledger `shadow_fill`（`data.policy=shadow_near_probe`）与 `GET /api/v1/stats/shadow` 的 `probe_count`。用完将 `KEEL_SHADOW_NEAR_PROBE=0`。
 
+Monitor / status：`GET /api/v1/status`（与 `/config`）暴露 `shadow_near_probe` + cooldown；Overview 显示 NEAR PROBE chip 与 quality/shadow 条的 `probe_count`。
+
