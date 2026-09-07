@@ -283,6 +283,33 @@ const shadowStatsByAction = computed(() => {
     .map(([k, v]) => `${k}:${v}`)
     .join(' · ')
 })
+
+/** Q2.2 compact quality scorecard (soft-fail). */
+const qualityStats = computed(() => store.qualityStats)
+const qualityWaitPct = computed(() => {
+  const r = qualityStats.value?.wait_rate
+  if (typeof r !== 'number' || !Number.isFinite(r)) return '—'
+  return `${(r * 100).toFixed(0)}%`
+})
+const qualityNearPct = computed(() => {
+  const r = qualityStats.value?.near_signal_rate
+  if (typeof r !== 'number' || !Number.isFinite(r)) return '—'
+  return `${(r * 100).toFixed(0)}%`
+})
+const qualityOkxSharePct = computed(() => {
+  const ms = qualityStats.value?.market_source
+  if (!ms) return '—'
+  const okx = Number(ms.okx_public || 0)
+  const syn = Number(ms.synthetic || 0)
+  const unk = Number(ms.unknown || 0)
+  const total = okx + syn + unk
+  if (!total) return '—'
+  return `${((okx / total) * 100).toFixed(0)}%`
+})
+const qualityShadowCount = computed(() => {
+  const n = qualityStats.value?.shadow?.count
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+})
 function radarNearestLabel(nearest: string | null | undefined, action: string): string {
   const a = (action || '').toUpperCase()
   if (a === 'BUY_LONG') return 'fired long'
@@ -1103,6 +1130,35 @@ const configStrip = computed(() => {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div
+            v-if="qualityStats"
+            class="bg-[#0D121B] border border-[#1A2232] rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-2"
+            title="Observation quality scorecard (read-only)"
+          >
+            <span class="text-[10px] font-mono font-bold text-[#A8B3C7] uppercase tracking-wide mr-1">
+              Quality
+              <span class="text-[#707E94] font-normal normal-case">({{ qualityStats.hours }}h)</span>
+            </span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-cyan-500/40 text-cyan-300"
+              :title="`wait_rate among ${qualityStats.decision_count} decisions`"
+            >wait {{ qualityWaitPct }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-emerald-500/40 text-emerald-300"
+              title="WAIT rows with signal_diag.nearest in {long,short}"
+            >near {{ qualityNearPct }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-violet-500/40 text-violet-300"
+              :title="qualityStats.shadow?.last_timestamp
+                ? `shadow_fill n=${qualityShadowCount} last @ ${fmtTs(qualityStats.shadow.last_timestamp)}`
+                : `shadow_fill n=${qualityShadowCount ?? 0}`"
+            >shadow {{ qualityShadowCount ?? 0 }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-sky-500/40 text-sky-300"
+              :title="`okx_public ${qualityStats.market_source?.okx_public ?? 0} / synthetic ${qualityStats.market_source?.synthetic ?? 0} / unknown ${qualityStats.market_source?.unknown ?? 0}`"
+            >okx {{ qualityOkxSharePct }}</span>
           </div>
 
           <div
