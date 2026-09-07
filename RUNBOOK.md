@@ -409,6 +409,29 @@ Restart worker after edit. Success = observe `full_gate_fires > 0` under TF whil
 
 Revert: set `KEEL_RULE_VARIANT=mean_revert` (or remove) and restart.
 
+### Phase E2B — TF volume soft + MACD lag (gen-2)
+
+Live TF observe (~hours) still had `full_gate_fires=0`. Missing under TF was dominated by `volume_ok`; closest BTC shorts were 15m+1h bearish with only `macd_short_ok` missing (histogram slightly positive — lag) or macd+volume. E2A residual: volume soft still required MR RSI extreme, so TF rarely got soft volume.
+
+E2B (``trend_follow`` only; ``mean_revert`` unchanged):
+
+| Knob | Default | Notes |
+|------|---------|--------|
+| `KEEL_RULE_TF_MACD_LAG_BPS` | `3.0` | Clamp 0–15. TF: long OK if `hist≥0` OR `(hist/price)*1e4 ≥ -lag`; short symmetric. `lag=0` restores strict sign. |
+| (existing) `KEEL_RULE_VOLUME_SOFT_*` | — | Under TF, soft path = **trend+macd+ema** + `ratio≥soft_floor` → `volume_path=soft_tf` (**no** RSI extreme). Hard / percentile unchanged. MR soft still needs RSI extreme (`path=soft`). |
+
+Audit: `signal_diag.macd_lag_bps`, `macd_lag_ok` (true when lag tolerance cleared a wrong-sign hist), `volume_path` (`soft_tf` when TF soft fires). Policy name stays `rule`; `rule_variant` still echoed.
+
+**How to tune (local `.env` only — never commit):**
+```bash
+KEEL_RULE_VARIANT=trend_follow
+# optional E2B:
+# KEEL_RULE_TF_MACD_LAG_BPS=3.0
+# KEEL_RULE_VOLUME_SOFT_ENABLE=1
+# KEEL_RULE_VOLUME_SOFT_FLOOR=0.35
+```
+Restart worker after edit. **Do not** enable `KEEL_SHADOW_NEAR_PROBE`, lower the 10bps hurdle, or clear kill (E0 freeze).
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.
