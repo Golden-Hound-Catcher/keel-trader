@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import stat
 import subprocess
 import unittest
@@ -34,6 +33,27 @@ class ObserveScriptsTest(unittest.TestCase):
                 0,
                 f"bash -n failed for {name}: {proc.stderr}",
             )
+
+    def test_observe_up_hardening_markers(self) -> None:
+        """Lightweight shellcheck-style asserts (no shellcheck binary required)."""
+        text = (ROOT / "scripts" / "observe_up.sh").read_text(encoding="utf-8")
+        self.assertIn("set -euo pipefail", text)
+        self.assertIn("KEEL_OBSERVE_FORCE", text)
+        self.assertIn("address already in use", text.lower())
+        self.assertIn("_listener_pids", text)
+        self.assertIn("_tail_log", text)
+        self.assertIn("scheduler", text.lower())
+        # FORCE only stops our pidfile PIDs — never unknown listeners
+        self.assertIn("never unknown", text.lower())
+        self.assertIn("foreign listener", text.lower())
+        self.assertNotIn("fuser -k", text)
+
+    def test_observe_status_mismatch_warn(self) -> None:
+        text = (ROOT / "scripts" / "observe_status.sh").read_text(encoding="utf-8")
+        self.assertIn("set -euo pipefail", text)
+        self.assertIn("okx_configured", text)
+        self.assertIn("STALE API", text)
+        self.assertIn("KEEL_OKX_ENV", text)
 
 
 if __name__ == "__main__":

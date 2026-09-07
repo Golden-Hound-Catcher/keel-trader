@@ -74,13 +74,49 @@ def _as_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def notify_severity(*, ok: bool, risk_denies: int, error_count: int) -> str:
+def notify_severity(
+    *,
+    ok: bool,
+    risk_denies: int,
+    error_count: int,
+    near_signal: bool = False,
+) -> str:
     """Map cycle outcome to ``ok`` | ``warn`` | ``error``."""
     if (not ok) or error_count > 0:
         return "error"
-    if risk_denies > 0:
+    if risk_denies > 0 or near_signal:
         return "warn"
     return "ok"
+
+
+def _near_signal_alert_reasons(results: Any) -> list[str]:
+    """
+    Near-signal / fire reasons that should flip ``alert=True``.
+
+    - action BUY_LONG / SELL_SHORT (order intent fired)
+    - signal_diag.nearest in {long, short} with len(missing) <= 2
+    """
+    if not isinstance(results, list):
+        return []
+    reasons: list[str] = []
+    for row in results:
+        if not isinstance(row, dict):
+            continue
+        inst = str(row.get("inst_id") or "?")
+        action = str(row.get("action") or "")
+        if action in ("BUY_LONG", "SELL_SHORT"):
+            reasons.append(f"near_signal:{inst}:action={action}")
+            continue
+        diag = row.get("signal_diag")
+        if not isinstance(diag, dict):
+            continue
+        nearest = diag.get("nearest")
+        missing = diag.get("missing") if isinstance(diag.get("missing"), list) else []
+        if nearest in ("long", "short") and len(missing) <= 2:
+            reasons.append(
+                f"near_signal:{inst}:nearest={nearest}:missing={len(missing)}"
+            )
+    return reasons
 
 
 def notify_text_line(payload: dict[str, Any]) -> str:
@@ -97,6 +133,9 @@ def notify_text_line(payload: dict[str, Any]) -> str:
         f"denies={denies}",
         f"errors={errs}",
     ]
+    near_n = _as_int(payload.get("near_signal_count", 0))
+    if near_n > 0 or payload.get("near_signal"):
+        parts.append(f"near_signal={near_n or 1}")
     pnl = payload.get("daily_pnl")
     if pnl is not None:
         parts.append(f"pnl={pnl}")
@@ -111,7 +150,9 @@ def cycle_notify_payload(summary: dict[str, Any]) -> dict[str, Any]:
     Compact JSON-safe summary for webhook bodies.
 
     Enriches with risk/error/duration/alert/severity/text for actionable hooks.
-    Keeps full ``results`` list but drops oversized / path-only fields.
+    ``alert=True`` on deny/error **or** near-signal (nearest long/short with
+    ``len(missing)<=2``) / BUY_LONG|SELL_SHORT fire. Keeps full ``results``
+    list but drops oversized / path-only fields.
     """
     cs = summary.get("cycle_summary") if isinstance(summary.get("cycle_summary"), dict) else {}
     risk_denies = _as_int(summary.get("risk_denies", cs.get("risk_denies", 0)))
@@ -123,8 +164,24 @@ def cycle_notify_payload(summary: dict[str, Any]) -> dict[str, Any]:
     )
     errors = _cap_list(summary.get("errors", cs.get("errors", [])), NOTIFY_LIST_CAP)
     ok = bool(summary.get("ok", True))
-    alert = (not ok) or risk_denies > 0 or error_count > 0
-    severity = notify_severity(ok=ok, risk_denies=risk_denies, error_count=error_count)
+    results = summary.get("results")
+    near_reasons = _near_signal_alert_reasons(results)
+    near_signal = bool(near_reasons)
+    alert_reasons: list[str] = []
+    if not ok:
+        alert_reasons.append("ok_false")
+    if risk_denies > 0:
+        alert_reasons.append("risk_denies")
+    if error_count > 0:
+        alert_reasons.append("errors")
+    alert_reasons.extend(near_reasons)
+    alert = (not ok) or risk_denies > 0 or error_count > 0 or near_signal
+    severity = notify_severity(
+        ok=ok,
+        risk_denies=risk_denies,
+        error_count=error_count,
+        near_signal=near_signal,
+    )
 
     payload: dict[str, Any] = {
         "ok": summary.get("ok"),
@@ -136,13 +193,16 @@ def cycle_notify_payload(summary: dict[str, Any]) -> dict[str, Any]:
         "instruments": summary.get("instruments"),
         "daily_pnl": summary.get("daily_pnl"),
         "positions": summary.get("positions"),
-        "results": summary.get("results"),
+        "results": results,
         "notifier": summary.get("notifier"),
         "risk_denies": risk_denies,
         "risk_deny_reasons": risk_deny_reasons,
         "error_count": error_count,
         "errors": errors,
         "duration_ms": duration_ms,
+        "near_signal": near_signal,
+        "near_signal_count": len(near_reasons),
+        "alert_reasons": _cap_list(alert_reasons, NOTIFY_LIST_CAP),
         "alert": alert,
         "severity": severity,
     }

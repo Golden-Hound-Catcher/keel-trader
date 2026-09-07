@@ -118,10 +118,10 @@ Paper 门禁脚本 **不能**替代 demo（demo 需要操作员本机 key）。C
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `KEEL_NOTIFY_WEBHOOK_URL` | 空 | 空 → NullNotifier（**无网络**）；非空 → 每轮 POST |
-| `KEEL_NOTIFY_ALERTS_ONLY` | `0` | `1` 时仅当 `alert=true`（`ok` 假 / `risk_denies>0` / `error_count>0`）才发送 |
+| `KEEL_NOTIFY_ALERTS_ONLY` | `0` | `1` 时仅当 `alert=true` 才发送：deny / error **或** near-signal（`nearest`∈{long,short} 且 `len(missing)≤2`）/ BUY_LONG|SELL_SHORT |
 | `KEEL_NOTIFY_FORMAT` | `keel` | `keel` → `{"event","payload"}`；`discord` → `{"content": text}`（≤1900 字符，无需桥接） |
 
-Payload 含 `risk_denies` / `risk_deny_reasons`（capped）、`error_count` / `errors`（capped）、`duration_ms`、`alert`、`severity`（`ok`\|`warn`\|`error`）、人类可读 `text`。非密钥字段亦在 `GET /api/v1/config`（`notify_configured` / `notify_alerts_only` / `notify_format`）。
+Payload 含 `risk_denies` / `risk_deny_reasons`（capped）、`error_count` / `errors`（capped）、`duration_ms`、`alert`、`alert_reasons`、`near_signal` / `near_signal_count`、`severity`（`ok`|`warn`|`error`）、人类可读 `text`。 With `KEEL_NOTIFY_ALERTS_ONLY=1` you get **near-signal / deny / error** alerts only (quiet WAIT far-from-signal cycles). 非密钥字段亦在 `GET /api/v1/config`（`notify_configured` / `notify_alerts_only` / `notify_format`）。
 
 ## 5. 紧急停止 / Emergency stop
 
@@ -199,6 +199,9 @@ Kill-switch on, no orders — continuous iteration on live observation.
 - Scripts source repo `.env` (`set -a; . .env`), set `PYTHONPATH=.`, prefer `.venv/bin/python`.
 - Pid/logs: `data/run/` (override with `KEEL_OBSERVE_RUN_DIR`, e.g. `/tmp/keel-observe`).
 - Idempotent: if pidfile process is alive, print and skip duplicate start.
+- **Port harden**: before start, if `:KEEL_API_PORT` (default 8080) is in use and our api pidfile is not alive → **fail** with listener identity (avoids writing a dead pid then hitting a stale `/health`). `KEEL_OBSERVE_FORCE=1` only stops PIDs recorded in observe pidfiles — **never** kills unknown listeners.
+- After start: brief sleep + verify api/worker PIDs still alive; api must answer `/health` or exit non-zero with last log lines. Worker death surfaces scheduler-lock hints from the log.
+- `observe_status.sh`: if `.env` is live+keys but `/health` says `environment=demo` or `/ready` has `okx_configured=false`, warn **stale API mismatch**.
 - Does not disable KEEL_KILL_SWITCH (leave it 1 for read-only hanging).
 - Live without OKX triple: warn only (paper fallback likely); does not hard-refuse.
 - Vite Monitor is optional and separate: see frontend/README.md (dev server port 5173). Not started by observe scripts.
@@ -207,7 +210,7 @@ Kill-switch on, no orders — continuous iteration on live observation.
 
 1. `.env`: `KEEL_OKX_ENV=live` + read-only keys; **`KEEL_KILL_SWITCH=1`** (required for this mode).
 2. Cadence: set `KEEL_OBSERVE_PRESET=fast` (300s) for denser WAIT/near-signal samples, or `default`/`slow` (900/1800). Explicit `KEEL_CYCLE_INTERVAL_SECONDS` still wins if set. Check `/api/v1/config` → `cycle_interval_seconds` + `observe_preset`.
-3. Prefer `./scripts/observe_up.sh` (or manual `python -m keel.worker` / `--once`); monitor Decisions shows **near long/short** chips + missing gate names when action is WAIT (`calculus_data.signal_diag`).
+3. Prefer `./scripts/observe_up.sh` (or manual `python -m keel.worker` / `--once`); monitor Decisions shows **near long/short** chips + missing gate names when action is WAIT (`calculus_data.signal_diag`). Optional webhook: set `KEEL_NOTIFY_WEBHOOK_URL` + `KEEL_NOTIFY_ALERTS_ONLY=1` to get only near-signal / deny / error alerts.
 4. Overview **近信号雷达** card soft-fetches `GET /api/v1/signals/nearest` (WAIT / 近多 / 近空 / 已触发 + per-inst nearest/missing chips); hidden if endpoint missing.
 5. Confirm no fills: kill-switch badge ON; trades empty / risk denies on any accidental BUY/SELL path.
 
