@@ -86,6 +86,10 @@ export interface KeelArmingEconomic {
   by_skip_reason?: Record<string, number>
   /** Diagnostic per-instrument snapshots; overall gate stays aggregate. */
   by_instrument?: Record<string, KeelArmingEconomicInstrument>
+  /** E1: probe | full_gate | mixed | shadow_non_probe | insufficient */
+  economic_sample_source?: string
+  /** E1: full-gate fire count in economic lookback (flag; gates unchanged). */
+  full_gate_fires?: number
   note?: string
 }
 
@@ -414,8 +418,16 @@ export interface KeelQualityInstrumentStats {
   decision_count: number
   wait_rate: number
   near_signal_rate: number
+  /** E1 full-gate fires for this instrument. */
+  full_gate_fires?: number
   by_action?: Record<string, number>
   market_source?: Record<string, number>
+}
+
+export interface KeelFullGateFires {
+  count: number
+  by_action?: Record<string, number>
+  by_instrument?: Record<string, number>
 }
 
 export interface KeelQualityStats {
@@ -425,6 +437,10 @@ export interface KeelQualityStats {
   wait_rate: number
   by_action: Record<string, number>
   near_signal_rate: number
+  /** E1: BUY_LONG/SELL_SHORT with signal_diag.missing==[]. */
+  full_gate_fires?: KeelFullGateFires
+  /** E1: none | probe | full_gate | mixed — economic sample provenance hint. */
+  economic_evidence?: string
   shadow: KeelQualityShadow
   cycle_count: number
   avg_cycle_duration_ms: number | null

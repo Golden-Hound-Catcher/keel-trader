@@ -647,6 +647,9 @@ class TestQualityStats(unittest.TestCase):
         self.assertEqual(body["decision_count"], 0)
         self.assertEqual(body["wait_rate"], 0.0)
         self.assertEqual(body["near_signal_rate"], 0.0)
+        self.assertEqual(body["full_gate_fires"]["count"], 0)
+        self.assertEqual(body["full_gate_fires"]["by_action"], {})
+        self.assertEqual(body.get("economic_evidence"), "none")
         self.assertEqual(body["by_action"], {})
         self.assertEqual(
             body["market_source"],
@@ -697,7 +700,10 @@ class TestQualityStats(unittest.TestCase):
                 confidence=80.0,
                 reason="fire",
                 policy_name="rule",
-                calculus_data={"market_source": "synthetic"},
+                calculus_data={
+                    "market_source": "synthetic",
+                    "signal_diag": {"nearest": "long", "missing": []},
+                },
             )
         )
         self.ledger.record_decision(
@@ -737,6 +743,10 @@ class TestQualityStats(unittest.TestCase):
         self.assertAlmostEqual(body["wait_rate"], 0.75, places=5)
         # 2 of 3 WAIT have nearest in {long, short}
         self.assertAlmostEqual(body["near_signal_rate"], 2.0 / 3.0, places=5)
+        self.assertEqual(body["full_gate_fires"]["count"], 1)
+        self.assertEqual(body["full_gate_fires"]["by_action"].get("BUY_LONG"), 1)
+        self.assertEqual(body["full_gate_fires"]["by_instrument"].get("SOL-USDT-SWAP"), 1)
+        self.assertEqual(body["economic_evidence"], "full_gate")
         self.assertEqual(body["market_source"]["okx_public"], 2)
         self.assertEqual(body["market_source"]["synthetic"], 1)
         self.assertEqual(body["market_source"]["unknown"], 1)
@@ -769,4 +779,5 @@ class TestQualityStats(unittest.TestCase):
         sol = by_inst["SOL-USDT-SWAP"]
         self.assertEqual(sol["by_action"].get("BUY_LONG"), 1)
         self.assertAlmostEqual(sol["wait_rate"], 0.0, places=5)
+        self.assertEqual(sol.get("full_gate_fires"), 1)
         self.assertEqual(direct["by_instrument"]["BTC-USDT-SWAP"]["decision_count"], 1)

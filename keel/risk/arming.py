@@ -226,10 +226,14 @@ def evaluate_economic_gates(
         "passed": False,
         "by_skip_reason": {},
         "by_instrument": {},
+        "economic_sample_source": "insufficient",
+        "full_gate_fires": 0,
         "note": (
             "Kill-switch is never auto-cleared; economic gates are read-only. "
             "Probe skips dominated by below_hurdle do not block alone. "
-            "by_instrument is diagnostic only; overall gate remains aggregate."
+            "by_instrument is diagnostic only; overall gate remains aggregate. "
+            "E1: prefer full-gate markout when n≥20 and 5m netRT win≥0.55; "
+            "keep near_probe off until then (E0 freeze)."
         ),
     }
 
@@ -265,6 +269,27 @@ def evaluate_economic_gates(
     fills_ok = fill_count >= min_fills or probe_count >= min_probe_fills
     sample_ok = sample_count >= min_sample
 
+    # E1 annotation: where economic sample currently comes from (flag only).
+    fg_n = 0
+    if ledger is not None:
+        try:
+            qs = ledger.get_quality_stats(hours=hours)
+            fg_block = qs.get("full_gate_fires") if isinstance(qs, dict) else None
+            if isinstance(fg_block, dict):
+                fg_n = int(fg_block.get("count") or 0)
+            elif isinstance(fg_block, (int, float)):
+                fg_n = int(fg_block)
+        except Exception:
+            fg_n = 0
+    if fg_n > 0 and probe_count == 0 and probe_sample == 0:
+        sample_source = "full_gate"
+    elif probe_count > 0 or probe_sample > 0:
+        sample_source = "probe" if fg_n == 0 else "mixed"
+    elif fill_count > 0:
+        sample_source = "shadow_non_probe"
+    else:
+        sample_source = "insufficient"
+
     summary.update(
         {
             "fill_count": fill_count,
@@ -278,6 +303,8 @@ def evaluate_economic_gates(
             "sample_ok": sample_ok,
             "by_skip_reason": by_skip,
             "by_instrument": _economic_by_instrument(raw, horizon_seconds=horizon),
+            "economic_sample_source": sample_source,
+            "full_gate_fires": fg_n,
         }
     )
 

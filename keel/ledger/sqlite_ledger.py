@@ -559,7 +559,8 @@ class KeelLedger:
         Compact observation quality scorecard for the last ``hours`` window.
 
         Composes decision aggregates, market_source breakdown, near_signal_rate
-        (WAIT rows whose signal_diag.nearest is long/short), shadow_fill stats,
+        (WAIT rows whose signal_diag.nearest is long/short), E1 full_gate_fires
+        (BUY_LONG/SELL_SHORT with signal_diag.missing==[]), shadow_fill stats,
         cheap cycle timing, and optional ``by_instrument`` breakdown —
         read-only, no trading side effects.
         """
@@ -611,6 +612,12 @@ class KeelLedger:
         near_n = int(near_row["n"]) if near_row else 0
         near_signal_rate = (near_n / wait_n) if wait_n else 0.0
 
+        # E1: full-gate fires (BUY_LONG/SELL_SHORT + empty missing + rule policy).
+        from keel.ledger.full_gate import aggregate_full_gate_fires
+
+        full_gate = aggregate_full_gate_fires(conn, since=since)
+        full_gate_by_inst = dict(full_gate.get("by_instrument") or {})
+
         # Per-instrument quality breakdown (diagnosis for multi-inst observe).
         by_instrument: dict[str, dict[str, Any]] = {}
         inst_action_rows = conn.execute(
@@ -627,6 +634,7 @@ class KeelLedger:
                     "decision_count": 0,
                     "wait_rate": 0.0,
                     "near_signal_rate": 0.0,
+                    "full_gate_fires": 0,
                     "by_action": {},
                     "market_source": {
                         "okx_public": 0,
@@ -652,6 +660,7 @@ class KeelLedger:
                     "decision_count": 0,
                     "wait_rate": 0.0,
                     "near_signal_rate": 0.0,
+                    "full_gate_fires": 0,
                     "by_action": {},
                     "market_source": {
                         "okx_public": 0,
@@ -690,6 +699,7 @@ class KeelLedger:
             entry.pop("_wait_n", None)
             entry["wait_rate"] = (wait_i / dc) if dc else 0.0
             entry["near_signal_rate"] = (near_i / wait_i) if wait_i else 0.0
+            entry["full_gate_fires"] = int(full_gate_by_inst.get(ik, 0))
 
         # Cycle count + avg duration (reuse same event source as get_decision_stats).
         cycle_rows = conn.execute(
@@ -725,6 +735,17 @@ class KeelLedger:
         # Counts only — markout is heavier and exposed on /stats/shadow.
         shadow = self.get_shadow_stats(hours=hours_f, include_markout=False)
 
+        probe_n = int(shadow.get("probe_count", 0))
+        fg_n = int(full_gate.get("count", 0))
+        if fg_n > 0 and probe_n == 0:
+            econ_evidence = "full_gate"
+        elif fg_n > 0 and probe_n > 0:
+            econ_evidence = "mixed"
+        elif probe_n > 0:
+            econ_evidence = "probe"
+        else:
+            econ_evidence = "none"
+
         return {
             "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
             "market_source": market_source,
@@ -732,11 +753,17 @@ class KeelLedger:
             "wait_rate": wait_rate,
             "by_action": by_action,
             "near_signal_rate": near_signal_rate,
+            "full_gate_fires": {
+                "count": fg_n,
+                "by_action": dict(full_gate.get("by_action") or {}),
+                "by_instrument": full_gate_by_inst,
+            },
+            "economic_evidence": econ_evidence,
             "shadow": {
                 "count": int(shadow.get("count", 0)),
                 "by_action": dict(shadow.get("by_action") or {}),
                 "by_policy": dict(shadow.get("by_policy") or {}),
-                "probe_count": int(shadow.get("probe_count", 0)),
+                "probe_count": probe_n,
                 "last_timestamp": shadow.get("last_timestamp"),
             },
             "cycle_count": cycle_count,

@@ -371,8 +371,18 @@ class QualityInstrumentStats(BaseModel):
     decision_count: int = 0
     wait_rate: float = 0.0
     near_signal_rate: float = 0.0
+    # E1: full-gate fires (BUY_LONG/SELL_SHORT + empty missing) in window.
+    full_gate_fires: int = 0
     by_action: dict[str, int] = Field(default_factory=dict)
     market_source: dict[str, int] = Field(default_factory=dict)
+
+
+class FullGateFiresBlock(BaseModel):
+    """E1 full-gate fire counts (all entry gates pass → BUY_LONG/SELL_SHORT)."""
+
+    count: int = 0
+    by_action: dict[str, int] = Field(default_factory=dict)
+    by_instrument: dict[str, int] = Field(default_factory=dict)
 
 
 class QualityStatsResponse(BaseModel):
@@ -384,6 +394,10 @@ class QualityStatsResponse(BaseModel):
     wait_rate: float = 0.0
     by_action: dict[str, int] = Field(default_factory=dict)
     near_signal_rate: float = 0.0
+    # E1: distinct from WAIT/near — rule fires with signal_diag.missing==[].
+    full_gate_fires: FullGateFiresBlock = Field(default_factory=FullGateFiresBlock)
+    # Hint whether economic/shadow sample is probe vs full-gate (Monitor label).
+    economic_evidence: str = "none"
     shadow: QualityShadowBlock = Field(default_factory=QualityShadowBlock)
     cycle_count: int = 0
     avg_cycle_duration_ms: float | None = None

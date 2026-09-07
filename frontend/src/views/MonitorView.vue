@@ -330,6 +330,15 @@ const qualityProbeCount = computed(() => {
   const n = qualityStats.value?.shadow?.probe_count
   return typeof n === 'number' && Number.isFinite(n) ? n : null
 })
+/** E1: full-gate fires in quality window (distinct from WAIT/near/probe). */
+const qualityFullGateCount = computed(() => {
+  const n = qualityStats.value?.full_gate_fires?.count
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+})
+const qualityEconomicEvidence = computed(() => {
+  const e = qualityStats.value?.economic_evidence
+  return typeof e === 'string' && e ? e : 'none'
+})
 /** Compact per-instrument quality chips (BTC/ETH/SOL); soft-fail if absent. */
 function shortInstLabel(instId: string): string {
   const base = String(instId || '').split('-')[0] || instId
@@ -342,6 +351,7 @@ const qualityByInstrumentChips = computed(() => {
     label: string
     wait: string
     near: string
+    fg: string
     n: number
     title: string
   }>
@@ -361,14 +371,19 @@ const qualityByInstrumentChips = computed(() => {
         ? `${(row.near_signal_rate * 100).toFixed(0)}%`
         : '—'
     const n = typeof row?.decision_count === 'number' ? row.decision_count : 0
+    const fg =
+      typeof row?.full_gate_fires === 'number' && Number.isFinite(row.full_gate_fires)
+        ? String(row.full_gate_fires)
+        : '0'
     const ms = row?.market_source || {}
     return {
       inst,
       label: shortInstLabel(inst),
       wait,
       near,
+      fg,
       n,
-      title: `${inst} · n=${n} wait=${wait} near=${near} okx=${ms.okx_public ?? 0} synth=${ms.synthetic ?? 0}`,
+      title: `${inst} · n=${n} wait=${wait} near=${near} full_gate=${fg} okx=${ms.okx_public ?? 0} synth=${ms.synthetic ?? 0}`,
     }
   })
 })
@@ -1297,6 +1312,11 @@ const configStrip = computed(() => {
               <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-[#707E94]">
                 <span>fills <span class="text-white">{{ armingEconomic.fill_count ?? '—' }}</span>/<span>{{ armingEconomic.min_fills ?? 10 }}</span></span>
                 <span>probe <span class="text-white">{{ armingEconomic.probe_count ?? '—' }}</span>/<span>{{ armingEconomic.min_probe_fills ?? 5 }}</span></span>
+                <span
+                  v-if="armingEconomic.economic_sample_source"
+                  class="text-[10px] font-mono text-amber-300"
+                  :title="`E1 economic sample source; full_gate_fires=${armingEconomic.full_gate_fires ?? 0}`"
+                >src {{ armingEconomic.economic_sample_source }}</span>
                 <span>mk{{ armingEconomic.horizon_seconds ?? 300 }}s n=<span class="text-white">{{ armingEconomic.sample_count ?? '—' }}</span></span>
                 <span>netRT wr <span class="text-white">{{
                   armingEconomic.probe_win_rate_net_roundtrip != null
@@ -1594,6 +1614,14 @@ const configStrip = computed(() => {
               :title="`near-probe shadow_fill n=${qualityProbeCount ?? 0}`"
             >probe {{ qualityProbeCount ?? 0 }}</span>
             <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-lime-500/40 text-lime-300"
+              :title="`E1 full-gate fires (BUY_LONG/SELL_SHORT, missing==[]) n=${qualityFullGateCount ?? 0}`"
+            >full-gate {{ qualityFullGateCount ?? 0 }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/40 text-amber-300"
+              :title="`Economic sample provenance: ${qualityEconomicEvidence} (full-gate vs old probes); keep near_probe off`"
+            >econ {{ qualityEconomicEvidence }}</span>
+            <span
               class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-sky-500/40 text-sky-300"
               :title="`okx_public ${qualityStats.market_source?.okx_public ?? 0} / synthetic ${qualityStats.market_source?.synthetic ?? 0} / unknown ${qualityStats.market_source?.unknown ?? 0}`"
             >okx {{ qualityOkxSharePct }}</span>
@@ -1604,7 +1632,7 @@ const configStrip = computed(() => {
                 :key="'qi-' + chip.inst"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-[#2A3548] text-[#A8B3C7]"
                 :title="chip.title"
-              ><span class="text-white font-bold">{{ chip.label }}</span> w{{ chip.wait }} n{{ chip.near }}</span>
+              ><span class="text-white font-bold">{{ chip.label }}</span> w{{ chip.wait }} n{{ chip.near }} fg{{ chip.fg }}</span>
             </template>
           </div>
 

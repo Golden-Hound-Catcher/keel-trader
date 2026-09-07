@@ -306,10 +306,17 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 ---
 
+## 15b. Phase E0/E1 — full-gate measurement (gen-2)
+
+**E0 freeze:** do not re-enable `KEEL_SHADOW_NEAR_PROBE`, do not lower the ~10 bps fee hurdle, do not clear kill from near-probe evidence, do not add near-probe tweaks.
+
+**E1:** A *full-gate fire* is a rule decision with action ∈ {BUY_LONG, SELL_SHORT} and `signal_diag.missing == []`. Count distinctly from WAIT/near. `GET /api/v1/stats/quality` exposes `full_gate_fires` (`count` / `by_action` / `by_instrument`) and `economic_evidence` (`none`|`probe`|`full_gate`|`mixed`). Offline markout: `scripts/full_gate_markout.py` (or `near_entry_markout.py --full-gate-only`) reports fee-aware net RT at 60/300/900s; prefer matched non-probe `shadow_fill`, else counterfactual entry. Success criteria later: n≥20 and 5m netRT win≥0.55. Economic arming may annotate `economic_sample_source` / `full_gate_fires` without changing gate thresholds. See RUNBOOK.
+
 ## 16. Changelog
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **E1 full-gate fires**: track BUY_LONG/SELL_SHORT with `signal_diag.missing==[]` (rule); `/stats/quality` exposes `full_gate_fires` + `economic_evidence`; `scripts/full_gate_markout.py` / `--full-gate-only`; Monitor chips; E0 freeze keeps near_probe off / 10bps hurdle / kill uncleared |
 | 2026-09-07 | **Per-instrument quality/economic**: `/stats/quality` + `/stats/shadow` (+ arming/`first_live` economic) optional `by_instrument` maps for BTC/ETH/SOL diagnosis; Monitor soft-fail chips; aggregate gates unchanged; never clears kill |
 | 2026-09-07 | **S2 first-live checklist**: `status.first_live` aggregates kill/shadow/capability + arming/economic + suggested `KEEL_LIVE_MAX_*` + `allowed_now` (false while kill on or economic fail) + `human_steps`; Monitor「First live」card; RUNBOOK Stage T gate; never auto-clears kill |
 | 2026-09-07 | **Phase R Rule v3 edge pack**: audit volume_ratio (= last/mean20, correct); default min_vol 1.0→0.5 + percentile/soft volume paths; signal_diag edge hints (atr/expected_tp/edge_hint_bps); compare_rule_params missing-gate hist; near-probe 10bps fee hurdle unchanged |

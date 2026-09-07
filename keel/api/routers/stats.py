@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query
 from keel.api.deps import get_ledger
 from keel.api.schemas import (
     DecisionStatsResponse,
+    FullGateFiresBlock,
     ProbeSkipsBlock,
     QualityInstrumentStats,
     QualityShadowBlock,
@@ -136,6 +137,7 @@ def _quality_by_instrument(raw: dict[str, Any] | None) -> dict[str, QualityInstr
             decision_count=int(payload.get("decision_count", 0)),
             wait_rate=float(payload.get("wait_rate") or 0.0),
             near_signal_rate=float(payload.get("near_signal_rate") or 0.0),
+            full_gate_fires=int(payload.get("full_gate_fires", 0)),
             by_action=dict(payload.get("by_action") or {}),
             market_source=dict(payload.get("market_source") or {}),
         )
@@ -246,6 +248,7 @@ def get_quality_stats(
     ledger = get_ledger()
     raw = ledger.get_quality_stats(hours=float(hours))
     shadow_raw = raw.get("shadow") or {}
+    fg_raw = raw.get("full_gate_fires") if isinstance(raw.get("full_gate_fires"), dict) else {}
     return QualityStatsResponse(
         hours=hours,
         market_source=dict(raw.get("market_source") or {}),
@@ -253,6 +256,15 @@ def get_quality_stats(
         wait_rate=float(raw.get("wait_rate") or 0.0),
         by_action=dict(raw.get("by_action") or {}),
         near_signal_rate=float(raw.get("near_signal_rate") or 0.0),
+        full_gate_fires=FullGateFiresBlock(
+            count=int(fg_raw.get("count", 0)),
+            by_action=dict(fg_raw.get("by_action") or {}),
+            by_instrument={
+                str(k): int(v)
+                for k, v in dict(fg_raw.get("by_instrument") or {}).items()
+            },
+        ),
+        economic_evidence=str(raw.get("economic_evidence") or "none"),
         shadow=QualityShadowBlock(
             count=int(shadow_raw.get("count", 0)),
             by_action=dict(shadow_raw.get("by_action") or {}),
