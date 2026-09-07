@@ -18,6 +18,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+_DOTENV_LOADED = False
+_DOTENV_VALUES: dict[str, str] = {}
+
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -110,8 +114,12 @@ class Settings:
 
 
 def _env(key: str, default: str = "") -> str:
-    """Read from environment with fallback."""
-    return os.environ.get(key, default)
+    """Read process env first, then repo ``.env`` map, then default."""
+    if key in os.environ:
+        return os.environ[key]
+    if key in _DOTENV_VALUES:
+        return _DOTENV_VALUES[key]
+    return default
 
 
 def _env_bool(key: str, default: bool = False) -> bool:
@@ -199,9 +207,45 @@ def _env_notify_format() -> Literal["keel", "discord"]:
     return "keel"
 
 
+def _load_dotenv_files() -> None:
+    """
+    Load repo-root ``.env`` into an in-memory map (not ``os.environ``).
+
+    Process env always wins via ``_env``. Set ``KEEL_SKIP_DOTENV=1`` to skip
+    (pytest does this so a developer ``.env`` cannot leak into tests).
+    Idempotent.
+    """
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED:
+        return
+    _DOTENV_LOADED = True
+    _DOTENV_VALUES.clear()
+    skip = (os.environ.get("KEEL_SKIP_DOTENV", "") or "").lower()
+    if skip in ("1", "true", "yes"):
+        return
+    root = Path(__file__).resolve().parents[2]
+    env_path = root / ".env"
+    if not env_path.is_file():
+        return
+    try:
+        raw = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        _DOTENV_VALUES[key] = value.strip().strip('"').strip("'")
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Load settings from environment. Cached for performance."""
+    """Load settings from environment (and repo ``.env``). Cached for performance."""
+    _load_dotenv_files()
     okx_env = (_env("KEEL_OKX_ENV") or _env("R20_OKX_ENV", "demo")).lower()
     if okx_env not in ("demo", "live"):
         okx_env = "demo"
@@ -251,6 +295,9 @@ def get_settings() -> Settings:
 
 
 def refresh_settings() -> Settings:
-    """Clear cache and reload settings from environment."""
+    """Clear cache and reload settings from environment / ``.env``."""
+    global _DOTENV_LOADED
+    _DOTENV_LOADED = False
+    _DOTENV_VALUES.clear()
     get_settings.cache_clear()
     return get_settings()
