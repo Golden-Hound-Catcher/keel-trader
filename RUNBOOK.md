@@ -156,13 +156,17 @@ curl -s "http://127.0.0.1:8080/api/v1/stats/decisions?hours=24" | python -m json
 # Optional market_source filter (stamped on calculus_data in cycle):
 curl -s "http://127.0.0.1:8080/api/v1/stats/decisions?hours=24&market_source=synthetic" | python -m json.tool
 curl -s "http://127.0.0.1:8080/api/v1/stats/shadow?hours=24" | python -m json.tool
+# Q2.2 — compact observation quality scorecard (okx share + near-signal + shadow)
+curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" | python -m json.tool
 ```
 
 Response fields (`/stats/decisions`): `decision_count`, `by_action`, `by_policy`, `wait_rate` (0–1), `risk_deny_events` (`risk_gate_blocked` count), `cycle_count` (`worker_cycle_summary`), `avg_cycle_duration_ms`, `market_source` filter echo (`any`|`okx_public`|`synthetic`).
 
 Shadow stats (`/stats/shadow`): `count`, `by_action`, `last_timestamp` for `shadow_fill` events.
 
-Monitor Overview soft-fetches decisions + shadow stats (card/chip hidden if API missing). Decisions table shows `policy_name` and `calculus_data.market_source` chip when present.
+Quality scorecard (`/stats/quality`): single glance for observe health — `market_source` breakdown (`okx_public` / `synthetic` / `unknown`), `decision_count`, `wait_rate`, `by_action`, `near_signal_rate` (fraction of WAIT with `signal_diag.nearest` in `{long,short}`), nested `shadow` (`count` / `by_action` / `last_timestamp`), `cycle_count`, `avg_cycle_duration_ms`. Read-only; does not enable trading.
+
+Monitor Overview soft-fetches decisions + shadow stats + quality scorecard chips (wait / near / shadow / okx share; hidden if API missing). Decisions table shows `policy_name` and `calculus_data.market_source` chip when present.
 
 Offline policy / rule-param compare (no OKX keys):
 

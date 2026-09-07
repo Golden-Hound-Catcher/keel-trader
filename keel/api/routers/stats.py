@@ -6,7 +6,12 @@ from typing import Literal
 from fastapi import APIRouter, Query
 
 from keel.api.deps import get_ledger
-from keel.api.schemas import DecisionStatsResponse, ShadowStatsResponse
+from keel.api.schemas import (
+    DecisionStatsResponse,
+    QualityShadowBlock,
+    QualityStatsResponse,
+    ShadowStatsResponse,
+)
 
 router = APIRouter()
 
@@ -47,4 +52,29 @@ def get_shadow_stats(
         count=int(raw.get("count", 0)),
         by_action=dict(raw.get("by_action") or {}),
         last_timestamp=raw.get("last_timestamp"),
+    )
+
+
+@router.get("/stats/quality", response_model=QualityStatsResponse)
+def get_quality_stats(
+    hours: int = Query(default=24, ge=1, le=168),
+) -> QualityStatsResponse:
+    """Compact observation quality scorecard over the last ``hours`` (max 168)."""
+    ledger = get_ledger()
+    raw = ledger.get_quality_stats(hours=float(hours))
+    shadow_raw = raw.get("shadow") or {}
+    return QualityStatsResponse(
+        hours=hours,
+        market_source=dict(raw.get("market_source") or {}),
+        decision_count=int(raw.get("decision_count", 0)),
+        wait_rate=float(raw.get("wait_rate") or 0.0),
+        by_action=dict(raw.get("by_action") or {}),
+        near_signal_rate=float(raw.get("near_signal_rate") or 0.0),
+        shadow=QualityShadowBlock(
+            count=int(shadow_raw.get("count", 0)),
+            by_action=dict(shadow_raw.get("by_action") or {}),
+            last_timestamp=shadow_raw.get("last_timestamp"),
+        ),
+        cycle_count=int(raw.get("cycle_count", 0)),
+        avg_cycle_duration_ms=raw.get("avg_cycle_duration_ms"),
     )

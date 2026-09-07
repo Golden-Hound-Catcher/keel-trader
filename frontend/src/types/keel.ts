@@ -210,6 +210,25 @@ export interface KeelShadowStats {
   last_timestamp?: number | null
 }
 
+/** Soft-fail Overview quality scorecard from GET /api/v1/stats/quality. */
+export interface KeelQualityShadow {
+  count: number
+  by_action: Record<string, number>
+  last_timestamp?: number | null
+}
+
+export interface KeelQualityStats {
+  hours: number
+  market_source: Record<string, number>
+  decision_count: number
+  wait_rate: number
+  by_action: Record<string, number>
+  near_signal_rate: number
+  shadow: KeelQualityShadow
+  cycle_count: number
+  avg_cycle_duration_ms: number | null
+}
+
 export interface KeelDecisionsResponse {
   count: number
   decisions: KeelDecision[]

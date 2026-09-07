@@ -201,6 +201,28 @@ class ShadowStatsResponse(BaseModel):
     last_timestamp: float | None = None
 
 
+class QualityShadowBlock(BaseModel):
+    """Nested shadow_fill summary inside the quality scorecard."""
+
+    count: int = 0
+    by_action: dict[str, int] = Field(default_factory=dict)
+    last_timestamp: float | None = None
+
+
+class QualityStatsResponse(BaseModel):
+    """Compact observation quality scorecard (read-only)."""
+
+    hours: int
+    market_source: dict[str, int] = Field(default_factory=dict)
+    decision_count: int = 0
+    wait_rate: float = 0.0
+    by_action: dict[str, int] = Field(default_factory=dict)
+    near_signal_rate: float = 0.0
+    shadow: QualityShadowBlock = Field(default_factory=QualityShadowBlock)
+    cycle_count: int = 0
+    avg_cycle_duration_ms: float | None = None
+
+
 class NearestSignalItem(BaseModel):
     """Latest per-instrument decision with signal_diag radar fields."""
 

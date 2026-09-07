@@ -260,6 +260,13 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("count", sh_props)
         self.assertIn("by_action", sh_props)
         self.assertIn("last_timestamp", sh_props)
+        self.assertIn("/api/v1/stats/quality", paths)
+        self.assertIn("QualityStatsResponse", comps)
+        q_props = comps["QualityStatsResponse"]["properties"]
+        self.assertIn("market_source", q_props)
+        self.assertIn("near_signal_rate", q_props)
+        self.assertIn("shadow", q_props)
+        self.assertIn("wait_rate", q_props)
         self.assertIn("/api/v1/signals/nearest", paths)
         self.assertIn("NearestSignalsResponse", comps)
         ns_props = comps["NearestSignalsResponse"]["properties"]

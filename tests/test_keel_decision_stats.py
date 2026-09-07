@@ -612,3 +612,134 @@ class TestCompareRuleParamsScript(unittest.TestCase):
         self.assertIn("set=B", proc.stdout)
         self.assertIn("actions=", proc.stdout)
         self.assertIn("near_signal_rate=", proc.stdout)
+
+
+class TestQualityStats(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "quality.db"
+        set_ledger_path_override(self.db)
+        os.environ["KEEL_LEDGER_DB"] = str(self.db)
+        refresh_settings()
+        self.ledger = KeelLedger(self.db)
+        self.client = TestClient(create_app())
+
+    def tearDown(self):
+        self.ledger.close()
+        set_ledger_path_override(None)
+        os.environ.pop("KEEL_LEDGER_DB", None)
+        refresh_settings()
+        self.temp.cleanup()
+
+    def test_quality_empty_ledger(self):
+        r = self.client.get("/api/v1/stats/quality?hours=24")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["hours"], 24)
+        self.assertEqual(body["decision_count"], 0)
+        self.assertEqual(body["wait_rate"], 0.0)
+        self.assertEqual(body["near_signal_rate"], 0.0)
+        self.assertEqual(body["by_action"], {})
+        self.assertEqual(
+            body["market_source"],
+            {"okx_public": 0, "synthetic": 0, "unknown": 0},
+        )
+        self.assertEqual(body["shadow"]["count"], 0)
+        self.assertEqual(body["shadow"]["by_action"], {})
+        self.assertIsNone(body["shadow"]["last_timestamp"])
+        self.assertEqual(body["cycle_count"], 0)
+        self.assertIsNone(body["avg_cycle_duration_ms"])
+
+    def test_quality_scorecard_fields(self):
+        now = time.time()
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now - 30,
+                inst_id="BTC-USDT-SWAP",
+                action="WAIT",
+                confidence=10.0,
+                reason="near",
+                policy_name="rule",
+                calculus_data={
+                    "market_source": "okx_public",
+                    "signal_diag": {"nearest": "long", "missing": ["vol"]},
+                },
+            )
+        )
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now - 20,
+                inst_id="ETH-USDT-SWAP",
+                action="WAIT",
+                confidence=10.0,
+                reason="far",
+                policy_name="rule",
+                calculus_data={
+                    "market_source": "okx_public",
+                    "signal_diag": {"nearest": "none", "missing": ["rsi", "trend", "vol"]},
+                },
+            )
+        )
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now - 10,
+                inst_id="SOL-USDT-SWAP",
+                action="BUY_LONG",
+                confidence=80.0,
+                reason="fire",
+                policy_name="rule",
+                calculus_data={"market_source": "synthetic"},
+            )
+        )
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now - 5,
+                inst_id="XRP-USDT-SWAP",
+                action="WAIT",
+                confidence=5.0,
+                reason="no ms",
+                policy_name="rule",
+                calculus_data={"signal_diag": {"nearest": "short"}},
+            )
+        )
+        self.ledger.record_event(
+            "shadow_fill",
+            inst_id="BTC-USDT-SWAP",
+            data={"action": "BUY_LONG", "shadow": True},
+            timestamp=now - 2,
+        )
+        self.ledger.record_event(
+            self.ledger.CYCLE_SUMMARY_EVENT,
+            data={"duration_ms": 100.0, "ok": True},
+            timestamp=now - 1,
+        )
+        self.ledger.record_event(
+            self.ledger.CYCLE_SUMMARY_EVENT,
+            data={"duration_ms": 200.0, "ok": True},
+            timestamp=now,
+        )
+
+        r = self.client.get("/api/v1/stats/quality?hours=24")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["decision_count"], 4)
+        self.assertEqual(body["by_action"].get("WAIT"), 3)
+        self.assertEqual(body["by_action"].get("BUY_LONG"), 1)
+        self.assertAlmostEqual(body["wait_rate"], 0.75, places=5)
+        # 2 of 3 WAIT have nearest in {long, short}
+        self.assertAlmostEqual(body["near_signal_rate"], 2.0 / 3.0, places=5)
+        self.assertEqual(body["market_source"]["okx_public"], 2)
+        self.assertEqual(body["market_source"]["synthetic"], 1)
+        self.assertEqual(body["market_source"]["unknown"], 1)
+        self.assertEqual(body["shadow"]["count"], 1)
+        self.assertEqual(body["shadow"]["by_action"].get("BUY_LONG"), 1)
+        self.assertIsNotNone(body["shadow"]["last_timestamp"])
+        self.assertEqual(body["cycle_count"], 2)
+        self.assertAlmostEqual(body["avg_cycle_duration_ms"], 150.0, places=5)
+
+        self.assertEqual(self.client.get("/api/v1/stats/quality?hours=0").status_code, 422)
+        self.assertEqual(self.client.get("/api/v1/stats/quality?hours=169").status_code, 422)
+
+        direct = self.ledger.get_quality_stats(hours=24.0)
+        self.assertEqual(direct["decision_count"], 4)
+        self.assertAlmostEqual(direct["near_signal_rate"], 2.0 / 3.0, places=5)

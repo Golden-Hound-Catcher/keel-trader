@@ -477,6 +477,111 @@ class KeelLedger:
             "last_timestamp": last_ts,
         }
 
+    def get_quality_stats(self, hours: float = 24.0) -> dict[str, Any]:
+        """
+        Compact observation quality scorecard for the last ``hours`` window.
+
+        Composes decision aggregates, market_source breakdown, near_signal_rate
+        (WAIT rows whose signal_diag.nearest is long/short), shadow_fill stats,
+        and cheap cycle timing — read-only, no trading side effects.
+        """
+        hours_f = max(0.0, float(hours))
+        since = time.time() - hours_f * 3600.0
+        conn = self._get_conn()
+
+        # Decision action / wait_rate (unfiltered market_source).
+        by_action: dict[str, int] = {}
+        for row in conn.execute(
+            "SELECT action, COUNT(*) AS n FROM decisions "
+            "WHERE timestamp >= ? GROUP BY action",
+            (since,),
+        ):
+            by_action[str(row["action"])] = int(row["n"])
+        decision_count = sum(by_action.values())
+        wait_n = int(by_action.get("WAIT", 0))
+        wait_rate = (wait_n / decision_count) if decision_count else 0.0
+
+        # market_source breakdown from calculus_data (okx_public / synthetic / unknown).
+        market_source: dict[str, int] = {
+            "okx_public": 0,
+            "synthetic": 0,
+            "unknown": 0,
+        }
+        for row in conn.execute(
+            "SELECT json_extract(calculus_data, '$.market_source') AS ms, "
+            "COUNT(*) AS n FROM decisions WHERE timestamp >= ? GROUP BY ms",
+            (since,),
+        ):
+            raw = row["ms"]
+            key = str(raw).strip().lower() if raw is not None else ""
+            if key == "okx_public":
+                market_source["okx_public"] += int(row["n"])
+            elif key == "synthetic":
+                market_source["synthetic"] += int(row["n"])
+            else:
+                market_source["unknown"] += int(row["n"])
+
+        # near_signal_rate among WAIT: signal_diag.nearest in {long, short}.
+        near_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM decisions "
+            "WHERE timestamp >= ? AND UPPER(action) = 'WAIT' "
+            "AND LOWER(COALESCE("
+            "json_extract(calculus_data, '$.signal_diag.nearest'), '')) "
+            "IN ('long', 'short')",
+            (since,),
+        ).fetchone()
+        near_n = int(near_row["n"]) if near_row else 0
+        near_signal_rate = (near_n / wait_n) if wait_n else 0.0
+
+        # Cycle count + avg duration (reuse same event source as get_decision_stats).
+        cycle_rows = conn.execute(
+            "SELECT data FROM events "
+            "WHERE timestamp >= ? AND event_type = ? "
+            "ORDER BY timestamp DESC",
+            (since, self.CYCLE_SUMMARY_EVENT),
+        ).fetchall()
+        cycle_count = len(cycle_rows)
+        if cycle_count == 0:
+            alt = conn.execute(
+                "SELECT COUNT(*) AS n FROM events "
+                "WHERE timestamp >= ? AND event_type = ?",
+                (since, "trader_cycle_complete"),
+            ).fetchone()
+            cycle_count = int(alt["n"]) if alt else 0
+        durations: list[float] = []
+        for row in cycle_rows:
+            raw = row["data"]
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            ms = payload.get("duration_ms")
+            if isinstance(ms, (int, float)):
+                durations.append(float(ms))
+        avg_ms: float | None = (
+            (sum(durations) / len(durations)) if durations else None
+        )
+
+        shadow = self.get_shadow_stats(hours=hours_f)
+
+        return {
+            "hours": int(hours_f) if hours_f == int(hours_f) else hours_f,
+            "market_source": market_source,
+            "decision_count": decision_count,
+            "wait_rate": wait_rate,
+            "by_action": by_action,
+            "near_signal_rate": near_signal_rate,
+            "shadow": {
+                "count": int(shadow.get("count", 0)),
+                "by_action": dict(shadow.get("by_action") or {}),
+                "last_timestamp": shadow.get("last_timestamp"),
+            },
+            "cycle_count": cycle_count,
+            "avg_cycle_duration_ms": avg_ms,
+        }
+
     def get_nearest_signals(
         self,
         hours: float = 24.0,

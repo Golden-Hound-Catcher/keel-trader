@@ -130,6 +130,7 @@ Base: `keel.api.app`
 | GET | `/api/v1/factors/{inst_id}` | Latest factor snapshot (`?live=1` → OKX public candles) |
 | GET | `/api/v1/stats/decisions` | Decision quality aggregates (`?hours=`, optional `market_source=okx_public|synthetic|any`) |
 | GET | `/api/v1/stats/shadow` | Shadow_fill rehearsal counts (`?hours=`; by_action + last_timestamp) |
+| GET | `/api/v1/stats/quality` | Observation quality scorecard (`?hours=`): market_source breakdown, wait/near_signal rates, shadow nest, cycle timing |
 | GET | `/api/v1/signals/nearest` | Q0 near-signal radar: latest decision per watch instrument + `signal_diag` summary (`?hours=`) |
 
 **Stability**
@@ -299,6 +300,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | **Q2.2 quality scorecard**: `GET /api/v1/stats/quality?hours=` compact observe health (market_source breakdown, wait/near_signal rates, shadow nest, cycles); Monitor Overview chips; RUNBOOK note |
 | 2026-09-07 | **Q2.1 ledger rule-param compare**: `scripts/export_decisions.py` + `KeelLedger.export_decisions`; `compare_rule_params.py --from-ledger` / `--db` replays RuleDecisionPolicy on observed okx_public calculus/factors (skip incomplete) |
 | 2026-09-07 | **Q2 decision-quality deepening**: stamp `calculus_data.market_source`; `GET /stats/decisions?market_source=`; `GET /stats/shadow`; Monitor shadow chip + market_source chip; `scripts/compare_rule_params.py` offline A/B thresholds |
 | 2026-09-07 | **Q1 shadow rehearsal + live caps**: arming checks recent `shadow_fill`; kill+shadow allows shadow_fill; `KEEL_LIVE_MAX_*` for real live; Monitor/config expose |
