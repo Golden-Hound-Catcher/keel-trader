@@ -14,6 +14,7 @@ from keel.factors.market_data import MarketSnapshot
 from keel.policy.stub import rule_based_decision
 
 # Factor keys needed to reconstruct a replayable MarketSnapshot.
+# R5+/E2A: trend_1h/trend_4h + volume_percentile matter for TF hard 1h + soft volume.
 _FACTOR_KEYS = (
     "price",
     "rsi_14",
@@ -22,7 +23,10 @@ _FACTOR_KEYS = (
     "atr_14",
     "macd_histogram",
     "trend_15m",
+    "trend_1h",
+    "trend_4h",
     "volume_ratio",
+    "volume_percentile",
 )
 
 # Minimum numeric factors for gate replay (price/atr may be filled from fallbacks).
@@ -60,6 +64,17 @@ def factor_dict_from_snapshot(snap: Any) -> dict[str, Any]:
     data_valid = payload.get("data_valid")
     if data_valid is None:
         data_valid = bool(getattr(snap, "price", 0) > 0 and getattr(snap, "atr_14", 0) > 0)
+    trend_1h = payload.get("trend_1h")
+    if trend_1h is None or trend_1h == "":
+        trend_1h = "neutral"
+    trend_4h = payload.get("trend_4h")
+    if trend_4h is None or trend_4h == "":
+        trend_4h = "neutral"
+    vol_pct = payload.get("volume_percentile")
+    try:
+        vol_pct_out: float | None = float(vol_pct) if vol_pct is not None else None
+    except (TypeError, ValueError):
+        vol_pct_out = None
     return {
         "price": float(getattr(snap, "price", 0) or 0),
         "rsi_14": float(getattr(snap, "rsi_14", 0) or 0),
@@ -68,7 +83,10 @@ def factor_dict_from_snapshot(snap: Any) -> dict[str, Any]:
         "atr_14": float(getattr(snap, "atr_14", 0) or 0),
         "macd_histogram": float(getattr(snap, "macd_histogram", 0) or 0),
         "trend_15m": str(getattr(snap, "trend_15m", "neutral") or "neutral"),
+        "trend_1h": str(trend_1h),
+        "trend_4h": str(trend_4h),
         "volume_ratio": float(getattr(snap, "volume_ratio", 1) or 1),
+        "volume_percentile": vol_pct_out,
         "data_valid": bool(data_valid),
         "data_quality_reason": str(payload.get("data_quality_reason") or ""),
     }
@@ -206,6 +224,17 @@ def snapshot_from_export_row(row: dict[str, Any]) -> MarketSnapshot | None:
     trend = str(factors.get("trend_15m") or "neutral")
     if trend not in ("bullish", "bearish", "neutral"):
         trend = "neutral"
+    trend_1h = str(factors.get("trend_1h") or "neutral")
+    if trend_1h not in ("bullish", "bearish", "neutral"):
+        trend_1h = "neutral"
+    trend_4h = str(factors.get("trend_4h") or "neutral")
+    if trend_4h not in ("bullish", "bearish", "neutral"):
+        trend_4h = "neutral"
+    vol_pct_raw = factors.get("volume_percentile")
+    try:
+        vol_pct: float | None = float(vol_pct_raw) if vol_pct_raw is not None else None
+    except (TypeError, ValueError):
+        vol_pct = None
 
     inst = str(row.get("inst_id") or row.get("instrument") or "")
     ts = float(row.get("timestamp") or 0)
@@ -220,7 +249,10 @@ def snapshot_from_export_row(row: dict[str, Any]) -> MarketSnapshot | None:
         ema_21=float(factors["ema_21"]),
         macd_histogram=float(factors["macd_histogram"]),
         volume_ratio=float(factors["volume_ratio"]),
+        volume_percentile=vol_pct,
         trend_15m=trend,  # type: ignore[arg-type]
+        trend_1h=trend_1h,  # type: ignore[assignment]
+        trend_4h=trend_4h,  # type: ignore[assignment]
         data_valid=data_valid,
         data_quality_reason=str(factors.get("data_quality_reason") or "ledger_replay"),
     )
