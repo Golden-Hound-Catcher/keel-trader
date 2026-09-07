@@ -12,6 +12,7 @@ Stage 4: persists factor_snapshots + coherent Decision↔risk↔ledger events so
 keel.api can read the latest cycle from SQLite without hitting live OKX.
 
 Stage 5: optional OkxRestAdapter via keel.exchange.factory.build_exchange.
+Live/demo OKX path fetches public 15m/1h candles (synthetic fallback on failure).
 
 Stage 6: DecisionPolicy port (Stub/Rule/LLM) + modular prompts; default Rule for offline.
 
@@ -23,6 +24,7 @@ Monitor: writes worker_cycle_summary to the ledger for GET /api/v1/status last_c
 from __future__ import annotations
 
 import argparse
+import logging
 import math
 import os
 import sys
@@ -30,9 +32,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from keel.config import get_settings
+from keel.config import Settings, get_settings
 from keel.domain.instruments import InstrumentPool
 from keel.exchange.factory import build_exchange, describe_exchange
+from keel.exchange.okx_public import fetch_candles
+from keel.exchange.okx_rest import OkxRestAdapter
 from keel.exchange.paper import PaperAdapter, PaperExchange
 from keel.exchange.protocol import ExchangeProtocol, Ticker
 from keel.execution.orchestrator import ExecutionOrchestrator, ExecutionResult
@@ -73,6 +77,84 @@ DEFAULT_SEED_PRICES: dict[str, float] = {
     "SUI-USDT-SWAP": 1.8,
     "LINK-USDT-SWAP": 14.5,
 }
+
+
+
+logger = logging.getLogger("keel.worker.cycle")
+
+
+def _okx_rows_to_candles(rows: list[list[float]]) -> list[Candle]:
+    """Convert fetch_candles rows [ts_ms, o, h, l, c, vol] → Candle (oldest→newest)."""
+    out: list[Candle] = []
+    for row in rows:
+        if len(row) < 6:
+            continue
+        out.append(
+            Candle(
+                timestamp=float(row[0]) / 1000.0,
+                open=float(row[1]),
+                high=float(row[2]),
+                low=float(row[3]),
+                close=float(row[4]),
+                volume=float(row[5]),
+            )
+        )
+    return out
+
+
+def _use_okx_public_candles(
+    exchange: ExchangeProtocol,
+    settings: Settings,
+    *,
+    force_paper: bool,
+) -> bool:
+    """True when cycle should prefer OKX public candles over synthetic."""
+    if isinstance(exchange, PaperAdapter):
+        return False
+    if isinstance(exchange, OkxRestAdapter):
+        return True
+    return bool(settings.okx_configured and not force_paper)
+
+
+def _fetch_okx_snapshot_candles(
+    inst_id: str,
+    *,
+    now: float,
+    base_price: float,
+) -> tuple[list[Candle], list[Candle], list[Candle], str]:
+    """
+    Fetch 15m (and optionally 1h) public candles.
+
+    Returns (c15, c1h, c4h, quality_tag). quality_tag is "okx_public" on success
+    or "synthetic_fallback:<reason>" when falling back.
+    """
+    try:
+        rows_15m = fetch_candles(inst_id, bar="15m", limit=64)
+        candles_15m = _okx_rows_to_candles(rows_15m)
+        if len(candles_15m) < 20:
+            raise ValueError(f"insufficient 15m candles ({len(candles_15m)})")
+    except Exception as exc:  # noqa: BLE001 — cycle must complete offline-capable
+        logger.warning(
+            "okx public candles failed inst=%s err=%s; falling back to synthetic",
+            inst_id,
+            exc,
+        )
+        candles = build_synthetic_candles(base_price, now=now)
+        return candles, candles[::4] or candles, candles[::16] or candles, f"synthetic_fallback:{exc}"
+
+    candles_1h: list[Candle]
+    try:
+        rows_1h = fetch_candles(inst_id, bar="1H", limit=64)
+        candles_1h = _okx_rows_to_candles(rows_1h)
+        if len(candles_1h) < 5:
+            candles_1h = candles_15m[::4] or candles_15m
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("okx 1h candles failed inst=%s err=%s; subsample 15m", inst_id, exc)
+        candles_1h = candles_15m[::4] or candles_15m
+
+    candles_4h = candles_1h[::4] or candles_1h
+    return candles_15m, candles_1h, candles_4h, "okx_public"
+
 
 
 def build_synthetic_candles(
@@ -300,25 +382,40 @@ def run_paper_cycle(
     notifier_label = describe_notifier(notifier)
 
     now = time.time()
+    use_okx_candles = _use_okx_public_candles(exchange, settings, force_paper=force_paper)
     snapshots: dict[str, MarketSnapshot] = {}
     for inst_id in ids:
         inst = pool.get(inst_id)
         name = inst.name if inst else inst_id.split("-")[0]
         base = prices.get(inst_id, 100.0)
-        candles = build_synthetic_candles(base, now=now)
+        quality_tag = "synthetic"
+        if use_okx_candles:
+            candles_15m, candles_1h, candles_4h, quality_tag = _fetch_okx_snapshot_candles(
+                inst_id, now=now, base_price=base
+            )
+        else:
+            candles_15m = build_synthetic_candles(base, now=now)
+            candles_1h = candles_15m[::4] or candles_15m
+            candles_4h = candles_15m[::16] or candles_15m
+        last_close = candles_15m[-1].close if candles_15m else base
         snap = MarketSnapshot(
             inst_id=inst_id,
             name=name,
             timestamp=now,
-            bid=candles[-1].close * 0.9999,
-            ask=candles[-1].close * 1.0001,
-            candles_15m=candles,
-            candles_1h=candles[::4] or candles,
-            candles_4h=candles[::16] or candles,
+            bid=last_close * 0.9999,
+            ask=last_close * 1.0001,
+            candles_15m=candles_15m,
+            candles_1h=candles_1h,
+            candles_4h=candles_4h,
         )
-        snapshots[inst_id] = enrich_snapshot(snap)
+        enrich_snapshot(snap)
+        if quality_tag.startswith("synthetic_fallback"):
+            snap.data_quality_reason = quality_tag
+        elif quality_tag == "okx_public" and snap.data_valid:
+            snap.data_quality_reason = "okx_public"
+        snapshots[inst_id] = snap
 
-    # Paper needs synthetic tickers; OKX REST serves tickers via public API.
+    # Seed paper tickers only for PaperExchange; OKX REST serves tickers via API.
     if isinstance(exchange, PaperAdapter):
         _seed_paper_tickers(exchange, snapshots)
 
@@ -363,6 +460,7 @@ def run_paper_cycle(
                     "macd_line": snap.macd_line,
                     "macd_signal": snap.macd_signal,
                     "data_valid": snap.data_valid,
+                    "data_quality_reason": snap.data_quality_reason,
                 },
             )
         )

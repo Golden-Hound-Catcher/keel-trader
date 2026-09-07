@@ -174,6 +174,13 @@ PYTHONPATH=. python scripts/compare_policies_paper.py
 - [env.example](env.example) — 环境变量模板
 - `./scripts/run_acceptance.sh` — paper 自动验收（无 key）
 
+
+### Live/demo market data (public candles)
+
+On OKX REST (demo or live), each worker cycle fetches **public** 15m (and 1h) candles via `keel.exchange.okx_public.fetch_candles` — no trading permission required. Paper path keeps synthetic candles. If the public fetch fails, the cycle logs a warning, falls back to synthetic, and still completes (`data_quality_reason` starts with `synthetic_fallback:`).
+
+Kill-switch (`KEEL_KILL_SWITCH=1`) still blocks order placement; **read-only API keys are enough** for this observation path (candles + factors + decisions). Orders still need trade-enabled keys and kill-switch off.
+
 ## Live（无模拟盘 key）
 
 若没有 OKX **模拟盘** API，可用 **live** 只读/观测（需你确认）：

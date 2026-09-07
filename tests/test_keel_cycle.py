@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from keel.exchange.okx_rest import OkxRestAdapter
 from keel.exchange.paper import PaperAdapter
 from keel.ledger import KeelLedger
 from keel.worker.cycle import (
@@ -290,6 +291,107 @@ class TestKeelWorkerCycleEntrypoint(unittest.TestCase):
             self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
             self.assertIn("Keel Trader", result.stdout)
 
+
+
+class TestOkxPublicCandlesInCycle(unittest.TestCase):
+    """OKX REST path uses public candles; paper stays synthetic / offline."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "okx_cycle.db"
+        self.ledger = KeelLedger(self.db)
+
+    def tearDown(self):
+        self.ledger.close()
+        self.temp.cleanup()
+
+    @staticmethod
+    def _fake_candle_rows(base: float = 67000.0, count: int = 64) -> list[list[float]]:
+        """Oldest→newest OKX-shaped rows with rising-then-dip pattern."""
+        rows: list[list[float]] = []
+        price = base * 0.97
+        stamp_ms = 1_700_000_000_000
+        for i in range(count):
+            open_px = price
+            close_px = price * (1.0 + 0.0005 + (0.004 if i % 5 else -0.002))
+            high_px = max(open_px, close_px) * 1.001
+            low_px = min(open_px, close_px) * 0.999
+            vol = 1500.0 + i * 10.0  # rising volume → volume_ratio >= 1
+            rows.append([stamp_ms + i * 900_000, open_px, high_px, low_px, close_px, vol])
+            price = close_px
+        return rows
+
+    def test_okx_adapter_uses_mocked_fetch_candles(self):
+        rows = self._fake_candle_rows(67000.0)
+        expected_close = rows[-1][4]
+        exchange = OkxRestAdapter(
+            api_key="k",
+            secret_key="s",
+            passphrase="p",
+            demo=True,
+            transport=lambda *a, **k: '{"code":"0","data":[]}',
+        )
+
+        def fake_fetch(inst_id, *, bar="15m", limit=50, **kwargs):
+            if bar in ("15m", "1H", "1h"):
+                return list(rows) if bar == "15m" else list(rows)[::4] or list(rows)
+            return list(rows)
+
+        with patch("keel.worker.cycle.fetch_candles", side_effect=fake_fetch):
+            summary = run_paper_cycle(
+                exchange=exchange,
+                ledger=self.ledger,
+                instrument_ids=["BTC-USDT-SWAP"],
+                force_action="WAIT",
+            )
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["mode"], "okx_rest")
+        snap = self.ledger.get_latest_factor_snapshot("BTC-USDT-SWAP", max_age_seconds=60)
+        self.assertIsNotNone(snap)
+        self.assertAlmostEqual(snap.price, expected_close, places=4)
+        self.assertTrue(snap.payload.get("data_valid"))
+        self.assertEqual(snap.payload.get("data_quality_reason"), "okx_public")
+
+    def test_okx_fetch_failure_falls_back_synthetic(self):
+        exchange = OkxRestAdapter(
+            api_key="k", secret_key="s", passphrase="p", demo=True,
+            transport=lambda *a, **k: '{"code":"0","data":[]}',
+        )
+
+        with patch(
+            "keel.worker.cycle.fetch_candles",
+            side_effect=ValueError("network down"),
+        ):
+            summary = run_paper_cycle(
+                exchange=exchange,
+                ledger=self.ledger,
+                instrument_ids=["BTC-USDT-SWAP"],
+                force_action="WAIT",
+            )
+        self.assertTrue(summary["ok"])
+        snap = self.ledger.get_latest_factor_snapshot("BTC-USDT-SWAP", max_age_seconds=60)
+        self.assertIsNotNone(snap)
+        self.assertGreater(snap.price, 0)
+        reason = str(snap.payload.get("data_quality_reason") or "")
+        self.assertTrue(reason.startswith("synthetic_fallback:"), msg=reason)
+
+    def test_paper_path_does_not_call_fetch_candles(self):
+        exchange = PaperAdapter(initial_balance=10_000.0)
+        with patch("keel.worker.cycle.fetch_candles") as mocked:
+            summary = run_paper_cycle(
+                exchange=exchange,
+                ledger=self.ledger,
+                instrument_ids=["BTC-USDT-SWAP"],
+                force_action="WAIT",
+                force_paper=True,
+            )
+            mocked.assert_not_called()
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["mode"], "paper")
+        snap = self.ledger.get_latest_factor_snapshot("BTC-USDT-SWAP", max_age_seconds=60)
+        self.assertIsNotNone(snap)
+        # paper seed prices → synthetic around DEFAULT_SEED (~65000 for BTC)
+        self.assertGreater(snap.price, 50_000)
 
 if __name__ == "__main__":
     unittest.main()
