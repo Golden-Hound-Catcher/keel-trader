@@ -57,6 +57,9 @@ export interface KeelStatus {
   seconds_since_last_cycle?: number | null
   /** True when lag exceeds interval-based stale threshold (same as /ready). */
   worker_stale?: boolean
+  /** Q1: OKX key capability — none|paper|read|trade|error (no order placement). */
+  okx_capability?: string
+  okx_capability_detail?: string | null
 }
 
 export interface KeelConfig {
@@ -80,6 +83,9 @@ export interface KeelConfig {
   /** Q0 observe cadence preset: default|fast|slow when KEEL_OBSERVE_PRESET set. */
   observe_preset?: string | null
   scheduler_jobs?: string[]
+  /** Q1: OKX key capability (same as status.okx_capability). */
+  okx_capability?: string
+  okx_capability_detail?: string | null
 }
 
 export interface KeelDailyPnl {

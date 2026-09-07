@@ -378,6 +378,46 @@ const cycleErrorsTitle = computed(() => {
 /** Read-only: armed via KEEL_KILL_SWITCH (status API); no admin toggle. */
 const killSwitchOn = computed(() => Boolean(store.status?.kill_switch))
 
+/** Q1: OKX key capability badge (只读 / 可交易 / paper / 未知). */
+const okxCapability = computed(() => {
+  const raw = (store.status?.okx_capability || store.config?.okx_capability || '').toLowerCase()
+  return raw || 'none'
+})
+const okxCapabilityLabel = computed(() => {
+  switch (okxCapability.value) {
+    case 'read':
+      return '只读'
+    case 'trade':
+      return '可交易'
+    case 'paper':
+      return 'paper'
+    case 'error':
+      return '未知'
+    case 'none':
+    default:
+      return '未知'
+  }
+})
+const okxCapabilityClass = computed(() => {
+  switch (okxCapability.value) {
+    case 'read':
+      return 'bg-amber-500/15 text-amber-400 border-amber-500/40'
+    case 'trade':
+      return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+    case 'paper':
+      return 'bg-cyan-500/15 text-cyan-400 border-cyan-500/40'
+    case 'error':
+      return 'bg-rose-500/15 text-rose-400 border-rose-500/40'
+    default:
+      return 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'
+  }
+})
+const okxCapabilityTitle = computed(() => {
+  const detail = store.status?.okx_capability_detail || store.config?.okx_capability_detail
+  const level = okxCapability.value
+  return detail ? `okx_capability=${level} · ${detail}` : `okx_capability=${level}`
+})
+
 const realizedPnl = computed(() => {
   const n = Number(store.dailyPnl?.realized_pnl ?? NaN)
   return Number.isFinite(n) ? n : null
@@ -785,7 +825,14 @@ const configStrip = computed(() => {
                 Credentials
               </div>
               <div class="text-sm font-mono text-white space-y-1">
-                <div>OKX: {{ store.status?.credentials?.okx ? 'yes' : 'no' }}</div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span>OKX: {{ store.status?.credentials?.okx ? 'yes' : 'no' }}</span>
+                  <span
+                    class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                    :class="okxCapabilityClass"
+                    :title="okxCapabilityTitle"
+                  >{{ okxCapabilityLabel }}</span>
+                </div>
                 <div>LLM: {{ store.status?.credentials?.llm ? 'yes' : 'no' }}</div>
               </div>
               <div class="text-[11px] font-mono text-[#707E94] mt-1 truncate" :title="store.status?.ledger_db">

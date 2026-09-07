@@ -157,11 +157,15 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertFalse(r.json()["kill_switch"])
         self.assertIn("decision_policy", r.json())
         self.assertIsInstance(r.json()["decision_policy"], str)
+        self.assertIn("okx_capability", r.json())
+        self.assertEqual(r.json()["okx_capability"], "none")
 
         r = self.client.get("/api/v1/config")
         self.assertEqual(r.status_code, 200)
         self.assertIn("kill_switch", r.json())
         self.assertFalse(r.json()["kill_switch"])
+        self.assertIn("okx_capability", r.json())
+        self.assertEqual(r.json()["okx_capability"], "none")
         self.assertEqual(r.json()["decision_policy"], self.client.get("/api/v1/status").json()["decision_policy"])
 
     def test_status_kill_switch_on_when_armed(self):
