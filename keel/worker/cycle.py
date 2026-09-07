@@ -274,6 +274,34 @@ def _seed_paper_tickers(
 
 
 
+def market_source_from_quality_tags(tags: list[str]) -> str:
+    """
+    Aggregate per-instrument candle quality tags for last_cycle.market_source.
+
+    Returns one of: okx_public | synthetic | mixed | unknown.
+    """
+    kinds: set[str] = set()
+    for raw in tags:
+        t = str(raw or "").strip()
+        if t == "okx_public":
+            kinds.add("okx_public")
+        elif t == "synthetic" or t.startswith("synthetic_fallback"):
+            kinds.add("synthetic")
+        else:
+            kinds.add("unknown")
+    if not kinds:
+        return "unknown"
+    if kinds == {"okx_public"}:
+        return "okx_public"
+    if kinds == {"synthetic"}:
+        return "synthetic"
+    if "okx_public" in kinds and "synthetic" in kinds:
+        return "mixed"
+    if len(kinds) == 1:
+        return next(iter(kinds))
+    return "mixed"
+
+
 # Cap detail lists on cycle summaries (monitor / status payloads).
 RISK_DENY_REASONS_CAP = 20
 CYCLE_ERRORS_CAP = 20
@@ -289,6 +317,8 @@ def build_cycle_summary(
     results: list[dict[str, Any]],
     policy_success: bool | None = None,
     duration_ms: int = 0,
+    market_source: str | None = None,
+    quality_tags: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Structured last-cycle payload for ledger + GET /api/v1/status.
@@ -296,6 +326,8 @@ def build_cycle_summary(
     Aggregates decision counts by action, risk denies (count + capped reasons),
     and non-risk errors (full ``error_count`` + capped ``errors`` detail list).
     Includes wall-clock ``duration_ms`` for the cycle run.
+    ``market_source`` (okx_public|synthetic|mixed|unknown) reflects candle quality;
+    when omitted, derived from ``quality_tags`` if provided.
     """
     decision_counts: dict[str, int] = {}
     risk_denies = 0
@@ -320,6 +352,8 @@ def build_cycle_summary(
                         "error": str(row["error"]),
                     }
                 )
+    if market_source is None and quality_tags is not None:
+        market_source = market_source_from_quality_tags(quality_tags)
     payload: dict[str, Any] = {
         "timestamp": timestamp,
         "mode": mode,
@@ -335,6 +369,8 @@ def build_cycle_summary(
     }
     if policy_success is not None:
         payload["policy_success"] = policy_success
+    if market_source is not None:
+        payload["market_source"] = market_source
     return payload
 
 
@@ -384,6 +420,7 @@ def run_paper_cycle(
     now = time.time()
     use_okx_candles = _use_okx_public_candles(exchange, settings, force_paper=force_paper)
     snapshots: dict[str, MarketSnapshot] = {}
+    quality_tags: list[str] = []
     for inst_id in ids:
         inst = pool.get(inst_id)
         name = inst.name if inst else inst_id.split("-")[0]
@@ -411,8 +448,11 @@ def run_paper_cycle(
         enrich_snapshot(snap)
         if quality_tag.startswith("synthetic_fallback"):
             snap.data_quality_reason = quality_tag
+        elif quality_tag == "synthetic" and snap.data_valid:
+            snap.data_quality_reason = "synthetic"
         elif quality_tag == "okx_public" and snap.data_valid:
             snap.data_quality_reason = "okx_public"
+        quality_tags.append(quality_tag)
         snapshots[inst_id] = snap
 
     # Seed paper tickers only for PaperExchange; OKX REST serves tickers via API.
@@ -566,6 +606,7 @@ def run_paper_cycle(
         results=results,
         policy_success=policy_result.success,
         duration_ms=duration_ms,
+        quality_tags=quality_tags,
     )
     ledger.record_cycle_summary(cycle_summary)
     ledger.record_event(

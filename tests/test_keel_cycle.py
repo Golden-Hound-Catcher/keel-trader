@@ -16,6 +16,7 @@ from keel.worker.cycle import (
     build_cycle_summary,
     build_synthetic_candles,
     enrich_snapshot,
+    market_source_from_quality_tags,
     rule_based_decision,
     run_paper_cycle,
 )
@@ -139,12 +140,14 @@ class TestPaperCycle(unittest.TestCase):
         self.assertIn("duration_ms", cs)
         self.assertIsInstance(cs["duration_ms"], int)
         self.assertGreaterEqual(cs["duration_ms"], 0)
+        self.assertEqual(cs.get("market_source"), "synthetic")
 
         stored = self.ledger.get_last_cycle_summary()
         self.assertIsNotNone(stored)
         self.assertEqual(stored["instruments"], 2)
         self.assertEqual(stored["decision_counts"].get("WAIT"), 2)
         self.assertEqual(stored["duration_ms"], cs["duration_ms"])
+        self.assertEqual(stored.get("market_source"), "synthetic")
         events = self.ledger.get_events(event_type="worker_cycle_summary", limit=5)
         self.assertGreaterEqual(len(events), 1)
 
@@ -293,6 +296,50 @@ class TestKeelWorkerCycleEntrypoint(unittest.TestCase):
 
 
 
+
+class TestMarketSourceAggregation(unittest.TestCase):
+    def test_from_quality_tags_okx_synthetic_mixed_unknown(self):
+        self.assertEqual(market_source_from_quality_tags(["okx_public"]), "okx_public")
+        self.assertEqual(market_source_from_quality_tags(["synthetic"]), "synthetic")
+        self.assertEqual(
+            market_source_from_quality_tags(["synthetic_fallback:net"]),
+            "synthetic",
+        )
+        self.assertEqual(
+            market_source_from_quality_tags(["okx_public", "synthetic_fallback:x"]),
+            "mixed",
+        )
+        self.assertEqual(market_source_from_quality_tags([]), "unknown")
+        self.assertEqual(market_source_from_quality_tags(["ok"]), "unknown")
+
+    def test_build_cycle_summary_accepts_market_source(self):
+        cs = build_cycle_summary(
+            timestamp=1.0,
+            mode="okx_rest",
+            adapter="okx_rest",
+            policy="rule",
+            instruments=1,
+            results=[{"inst_id": "BTC-USDT-SWAP", "action": "WAIT", "success": True}],
+            quality_tags=["okx_public"],
+        )
+        self.assertEqual(cs["market_source"], "okx_public")
+
+    def test_build_cycle_summary_mixed_from_tags(self):
+        cs = build_cycle_summary(
+            timestamp=1.0,
+            mode="okx_rest",
+            adapter="okx_rest",
+            policy="rule",
+            instruments=2,
+            results=[
+                {"inst_id": "BTC-USDT-SWAP", "action": "WAIT", "success": True},
+                {"inst_id": "ETH-USDT-SWAP", "action": "WAIT", "success": True},
+            ],
+            quality_tags=["okx_public", "synthetic_fallback:timeout"],
+        )
+        self.assertEqual(cs["market_source"], "mixed")
+
+
 class TestOkxPublicCandlesInCycle(unittest.TestCase):
     """OKX REST path uses public candles; paper stays synthetic / offline."""
 
@@ -351,6 +398,7 @@ class TestOkxPublicCandlesInCycle(unittest.TestCase):
         self.assertAlmostEqual(snap.price, expected_close, places=4)
         self.assertTrue(snap.payload.get("data_valid"))
         self.assertEqual(snap.payload.get("data_quality_reason"), "okx_public")
+        self.assertEqual(summary["cycle_summary"].get("market_source"), "okx_public")
 
     def test_okx_fetch_failure_falls_back_synthetic(self):
         exchange = OkxRestAdapter(
@@ -374,6 +422,37 @@ class TestOkxPublicCandlesInCycle(unittest.TestCase):
         self.assertGreater(snap.price, 0)
         reason = str(snap.payload.get("data_quality_reason") or "")
         self.assertTrue(reason.startswith("synthetic_fallback:"), msg=reason)
+        self.assertEqual(summary["cycle_summary"].get("market_source"), "synthetic")
+
+    def test_mixed_market_source_when_partial_fallback(self):
+        exchange = OkxRestAdapter(
+            api_key="k", secret_key="s", passphrase="p", demo=True,
+            transport=lambda *a, **k: '{"code":"0","data":[]}',
+        )
+        rows = self._fake_candle_rows(67000.0)
+
+        def fake_fetch(inst_id, *, bar="15m", limit=50, **kwargs):
+            if inst_id.startswith("ETH"):
+                raise ValueError("eth down")
+            if bar in ("15m", "1H", "1h"):
+                return list(rows) if bar == "15m" else list(rows)[::4] or list(rows)
+            return list(rows)
+
+        with patch("keel.worker.cycle.fetch_candles", side_effect=fake_fetch):
+            summary = run_paper_cycle(
+                exchange=exchange,
+                ledger=self.ledger,
+                instrument_ids=["BTC-USDT-SWAP", "ETH-USDT-SWAP"],
+                force_action="WAIT",
+            )
+        self.assertTrue(summary["ok"])
+        self.assertEqual(summary["cycle_summary"].get("market_source"), "mixed")
+        btc = self.ledger.get_latest_factor_snapshot("BTC-USDT-SWAP", max_age_seconds=60)
+        eth = self.ledger.get_latest_factor_snapshot("ETH-USDT-SWAP", max_age_seconds=60)
+        self.assertEqual(btc.payload.get("data_quality_reason"), "okx_public")
+        self.assertTrue(
+            str(eth.payload.get("data_quality_reason") or "").startswith("synthetic_fallback:")
+        )
 
     def test_paper_path_does_not_call_fetch_candles(self):
         exchange = PaperAdapter(initial_balance=10_000.0)

@@ -34,6 +34,8 @@ def get_factors(
         snap = ledger.get_latest_factor_snapshot(inst_id, max_age_seconds=max_age)
         if snap is not None:
             payload = snap.payload or {}
+            raw_quality = payload.get("data_quality_reason")
+            quality = str(raw_quality) if raw_quality not in (None, "") else None
             return FactorsResponse(
                 inst_id=inst_id,
                 source="ledger",
@@ -52,6 +54,7 @@ def get_factors(
                 ),
                 trend_15m=snap.trend_15m,
                 volume_ratio=snap.volume_ratio,
+                data_quality_reason=quality,
             )
 
     try:
@@ -89,6 +92,7 @@ def get_factors(
                 percent_b=round(bb.percent_b, 4),
             ),
             candle_count=len(candles),
+            data_quality_reason="okx_public",
         )
     except HTTPException:
         raise

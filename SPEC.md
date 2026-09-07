@@ -292,6 +292,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-07 | Monitor/API expose candle quality: Factors `data_quality_reason`, `last_cycle.market_source` (okx_public|synthetic|mixed|unknown) |
 | 2026-09-07 | Worker cycle uses OKX **public candles** on live/demo REST (synthetic fallback); rule policy v2 adds EMA stack + volume_ratio filters (optional `KEEL_RULE_*` knobs) |
 | 2026-09-04 | **P2 decision quality**: persist `policy_name` / `prompt_modules` on decisions (+ calculus_data); `GET /api/v1/stats/decisions?hours=`; monitor Overview stats card + Decisions policy column; `scripts/compare_policies_paper.py` offline stub↔rule compare |
 | 2026-09-04 | **P1 ops desk**: actionable notify (alert/severity/text, alerts-only, discord JSON shape); monitor duty narrative (日损剩余 + config limits/instruments); deploy one-path `install.sh` + `ops_smoke.sh`. P1 ops items **done**; demo keys still pending |
