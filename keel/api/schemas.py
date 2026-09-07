@@ -67,6 +67,8 @@ class LastCycleSummary(BaseModel):
     by_skip_reason: dict[str, int] = Field(default_factory=dict)
     top_skip_reason: str | None = None
     last_probe_skip_reason: str | None = None
+    # R6: optional per-instrument multi-TF trends from last cycle (soft-fail if absent).
+    instrument_trends: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ArmingStatus(BaseModel):
@@ -399,6 +401,8 @@ class NearestSignalItem(BaseModel):
     missing: list[str] = Field(default_factory=list)
     rsi_14: float | None = None
     trend_15m: str | None = None
+    trend_1h: str | None = None
+    trend_4h: str | None = None
     volume_ratio: float | None = None
     ema_9: float | None = None
     ema_21: float | None = None
@@ -489,6 +493,8 @@ class FactorsResponse(BaseModel):
     macd: MacdBlock
     timestamp: float | None = None
     trend_15m: str | None = None
+    trend_1h: str | None = None
+    trend_4h: str | None = None
     volume_ratio: float | None = None
     bollinger: BollingerBlock | None = None
     candle_count: int | None = None

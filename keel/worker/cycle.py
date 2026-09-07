@@ -469,6 +469,21 @@ def build_cycle_summary(
         payload["policy_success"] = policy_success
     if market_source is not None:
         payload["market_source"] = market_source
+    # R6: compact multi-TF trends per instrument for status/monitor (soft-fail).
+    instrument_trends: list[dict[str, Any]] = []
+    for row in results:
+        iid = row.get("inst_id")
+        if not iid:
+            continue
+        instrument_trends.append(
+            {
+                "inst_id": str(iid),
+                "trend_15m": row.get("trend_15m", row.get("trend")),
+                "trend_1h": row.get("trend_1h"),
+                "trend_4h": row.get("trend_4h"),
+            }
+        )
+    payload["instrument_trends"] = instrument_trends
     return payload
 
 
@@ -750,6 +765,9 @@ def run_paper_cycle(
             "shadow": getattr(exec_result, "shadow", False),
             "rsi": round(snap.rsi_14, 2),
             "trend": snap.trend_15m,
+            "trend_15m": snap.trend_15m,
+            "trend_1h": snap.trend_1h,
+            "trend_4h": snap.trend_4h,
         }
         if probed is not None:
             result_row["shadow_near_probe"] = True

@@ -38,6 +38,8 @@ def get_nearest_signals(
             missing=list(s.get("missing") or []),
             rsi_14=s.get("rsi_14"),
             trend_15m=s.get("trend_15m"),
+            trend_1h=s.get("trend_1h"),
+            trend_4h=s.get("trend_4h"),
             volume_ratio=s.get("volume_ratio"),
             ema_9=s.get("ema_9"),
             ema_21=s.get("ema_21"),

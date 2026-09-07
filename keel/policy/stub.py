@@ -6,6 +6,8 @@ filters, soft RSI relax when the other four gates pass, and edge hints for
 near-probe observability.
 R5: real multi-TF trends (trend_15m/1h/4h); entry gate is 15m; optional hard
 1h alignment via KEEL_RULE_REQUIRE_1H_TREND (default 0 = soft confirm only).
+R6: when trend_1h_confirm and nearest side aligns, multiply edge_hint_bps by
+KEEL_RULE_1H_EDGE_BOOST (default 1.25x, clamped 1.0–2.0; uplift capped +5 bps).
 Q0: diagnose_rule_signal attaches structured near-signal gate diagnostics.
 """
 from __future__ import annotations
@@ -21,6 +23,11 @@ from keel.policy.protocol import DecisionPolicy, PolicyContext, PolicyResult
 _TP_ATR = 2.2
 _SL_ATR = 1.0
 _RULE_GATE_COUNT = 5
+# R6: 1h-confirm edge_hint multiplier bounds + absolute uplift cap (bps).
+_1H_EDGE_BOOST_DEFAULT = 1.25
+_1H_EDGE_BOOST_MIN = 1.0
+_1H_EDGE_BOOST_MAX = 2.0
+_1H_EDGE_BOOST_CAP_BPS = 5.0
 
 
 def _env_float(key: str, default: float) -> float:
@@ -78,6 +85,8 @@ def _rule_thresholds() -> dict[str, float | bool]:
         "rsi_relax_short_min": _env_float("KEEL_RULE_RSI_RELAX_SHORT_MIN", 52.0),
         # R5: hard-require 1h trend same direction as 15m (default off = soft confirm).
         "require_1h_trend": _env_bool("KEEL_RULE_REQUIRE_1H_TREND", False),
+        # R6: multiplicative edge_hint boost when 1h confirms nearest side (default 1.25x).
+        "edge_1h_boost": _env_float("KEEL_RULE_1H_EDGE_BOOST", _1H_EDGE_BOOST_DEFAULT),
     }
 
 
@@ -135,6 +144,82 @@ def _edge_hints(snapshot: MarketSnapshot, n_missing: int) -> dict[str, float | N
     }
 
 
+def _clamp_1h_edge_boost(raw: float) -> float:
+    """Clamp KEEL_RULE_1H_EDGE_BOOST into [1.0, 2.0] so ops cannot invent huge edges."""
+    try:
+        m = float(raw)
+    except (TypeError, ValueError):
+        m = _1H_EDGE_BOOST_DEFAULT
+    if m != m:  # NaN
+        return _1H_EDGE_BOOST_DEFAULT
+    return max(_1H_EDGE_BOOST_MIN, min(_1H_EDGE_BOOST_MAX, m))
+
+
+def apply_1h_edge_boost(
+    hints: dict[str, float | None],
+    *,
+    trend_1h_confirm: bool,
+    nearest: str,
+    trend_15m: str,
+    boost_mult: float,
+) -> dict[str, Any]:
+    """
+    R6: multiply edge_hint_bps when 1h confirms and nearest side aligns with 15m.
+
+    Formula (documented):
+      mult = clamp(KEEL_RULE_1H_EDGE_BOOST, 1.0, 2.0)  # default 1.25
+      if trend_1h_confirm and nearest∈{long,short} aligns with trend_15m:
+          boosted = base * mult
+          edge_hint_bps = min(boosted, base + 5.0)   # absolute uplift cap
+      else:
+          edge_hint_bps = base
+
+    Does **not** change the near-probe fee hurdle (~10 bps taker RT).
+    """
+    out: dict[str, Any] = dict(hints)
+    base = hints.get("edge_hint_bps")
+    mult = _clamp_1h_edge_boost(boost_mult)
+    out["edge_hint_boost_mult"] = float(mult)
+    out["edge_hint_1h_boosted"] = False
+    if base is None:
+        return out
+    try:
+        base_f = float(base)
+    except (TypeError, ValueError):
+        return out
+    if base_f != base_f or base_f < 0:
+        return out
+
+    nearest_s = str(nearest or "")
+    t15 = str(trend_15m or "neutral")
+    aligns = (
+        bool(trend_1h_confirm)
+        and (
+            (nearest_s == "long" and t15 == "bullish")
+            or (nearest_s == "short" and t15 == "bearish")
+        )
+    )
+    if not aligns or mult <= 1.0:
+        out["edge_hint_bps"] = float(base_f)
+        return out
+
+    boosted = base_f * mult
+    # Cap absolute uplift so a large mult cannot invent huge edges.
+    capped = min(boosted, base_f + _1H_EDGE_BOOST_CAP_BPS)
+    # Never claim more edge than the expected TP move.
+    etp = hints.get("expected_tp_bps")
+    try:
+        etp_f = float(etp) if etp is not None else None
+    except (TypeError, ValueError):
+        etp_f = None
+    if etp_f is not None and etp_f == etp_f and etp_f > 0:
+        capped = min(capped, etp_f)
+    out["edge_hint_bps"] = float(max(0.0, capped))
+    out["edge_hint_1h_boosted"] = True
+    out["edge_hint_bps_raw"] = float(base_f)
+    return out
+
+
 def _volume_gate(
     snapshot: MarketSnapshot,
     *,
@@ -189,6 +274,8 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     ``atr_bps`` / ``expected_tp_bps`` / ``edge_hint_bps``.
     R5: ``trend_15m`` / ``trend_1h`` / ``trend_4h``, ``trend_gate``
     (``15m`` or ``15m+1h``), ``trend_1h_confirm``, ``require_1h_trend``.
+    R6: optional 1h-confirm ``edge_hint`` boost (``edge_hint_1h_boosted``,
+    ``edge_hint_boost_mult``, ``edge_hint_bps_raw`` when applied).
     """
     th = _rule_thresholds()
     rsi_long_max = float(th["rsi_long_max"])
@@ -336,7 +423,15 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         gates["nearest"] = "none"
         gates["missing"] = ["data_valid"]
         gates["near_ready"] = False
-        gates.update(_edge_hints(snapshot, _RULE_GATE_COUNT))
+        gates.update(
+            apply_1h_edge_boost(
+                _edge_hints(snapshot, _RULE_GATE_COUNT),
+                trend_1h_confirm=False,
+                nearest="none",
+                trend_15m=trend_15m,
+                boost_mult=float(th["edge_1h_boost"]),
+            )
+        )
         return gates
 
     long_missing = [g for g in _LONG_GATES if not gates[g]]
@@ -374,7 +469,15 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         and snapshot.rsi_14 >= rsi_relax_short_min
     )
     gates["near_ready"] = near_vol or near_rsi_long or near_rsi_short
-    gates.update(_edge_hints(snapshot, len(missing)))
+    gates.update(
+        apply_1h_edge_boost(
+            _edge_hints(snapshot, len(missing)),
+            trend_1h_confirm=bool(trend_1h_confirm),
+            nearest=str(nearest),
+            trend_15m=trend_15m,
+            boost_mult=float(th["edge_1h_boost"]),
+        )
+    )
     return gates
 
 
@@ -399,6 +502,8 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     path is exercised end-to-end. Offline-testable via crafted MarketSnapshot.
     Attaches ``signal_diag`` (from ``diagnose_rule_signal``) on every decision.
     Near-probe fee hurdle (10 bps taker RT) is unchanged — edge hints are audit-only.
+    R6 may boost ``edge_hint_bps`` when 1h confirms nearest side (still does not
+    lower the fee hurdle).
     """
     diag = diagnose_rule_signal(snapshot)
 

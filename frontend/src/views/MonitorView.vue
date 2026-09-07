@@ -248,6 +248,20 @@ const lastCycleActions = computed(() => {
     .join(' · ')
 })
 
+/** R6: soft-fail multi-TF trends from last_cycle.instrument_trends. */
+const lastCycleTrends = computed(() => {
+  const raw = lastCycle.value?.instrument_trends
+  if (!Array.isArray(raw)) return [] as Array<{
+    inst_id: string
+    trend_15m?: string | null
+    trend_1h?: string | null
+    trend_4h?: string | null
+  }>
+  return raw
+    .filter((r) => r && typeof r === 'object' && r.inst_id)
+    .slice(0, 12)
+})
+
 const decisionStats = computed(() => store.decisionStats)
 const decisionStatsWaitPct = computed(() => {
   const r = decisionStats.value?.wait_rate
@@ -489,6 +503,31 @@ function radarMissing(s: { missing?: string[] | null }): string[] {
   const raw = s.missing
   if (!Array.isArray(raw)) return []
   return raw.map((x) => String(x)).filter(Boolean).slice(0, 3)
+}
+
+/** R6 multi-TF trend chip class (soft-fail). */
+function trendChipClass(t: string | null | undefined): string {
+  const v = String(t || '').toLowerCase()
+  if (v === 'bullish') return 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+  if (v === 'bearish') return 'bg-rose-500/15 text-rose-400 border-rose-500/40'
+  if (v === 'neutral') return 'bg-zinc-500/10 text-[#A8B3C7] border-zinc-500/30'
+  return 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'
+}
+
+function trendShort(t: string | null | undefined): string {
+  const v = String(t || '').toLowerCase()
+  if (v === 'bullish') return 'bull'
+  if (v === 'bearish') return 'bear'
+  if (v === 'neutral') return 'neu'
+  return t ? String(t) : '—'
+}
+
+function formatMultiTfTrends(row: {
+  trend_15m?: string | null
+  trend_1h?: string | null
+  trend_4h?: string | null
+}): string {
+  return `15m=${trendShort(row.trend_15m)} · 1h=${trendShort(row.trend_1h)} · 4h=${trendShort(row.trend_4h)}`
 }
 
 
@@ -1507,6 +1546,23 @@ const configStrip = computed(() => {
                   </div>
                 </div>
               </div>
+              <div
+                v-if="lastCycleTrends.length"
+                class="md:col-span-4 flex flex-wrap items-center gap-2 pt-1"
+              >
+                <div class="text-[#707E94] w-full">Multi-TF trends</div>
+                <span
+                  v-for="t in lastCycleTrends"
+                  :key="t.inst_id"
+                  class="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono border border-[#1A2232] bg-[#080B10]/80"
+                  :title="`${t.inst_id} · ${formatMultiTfTrends(t)}`"
+                >
+                  <span class="text-white font-bold">{{ t.inst_id.replace('-USDT-SWAP', '') }}</span>
+                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(t.trend_15m)">15m {{ trendShort(t.trend_15m) }}</span>
+                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(t.trend_1h)">1h {{ trendShort(t.trend_1h) }}</span>
+                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(t.trend_4h)">4h {{ trendShort(t.trend_4h) }}</span>
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1681,6 +1737,15 @@ const configStrip = computed(() => {
                   class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400/90 border border-amber-500/30"
                   :title="`missing: ${gate}`"
                 >{{ gate }}</span>
+                <span
+                  v-if="s.trend_15m || s.trend_1h || s.trend_4h"
+                  class="inline-flex items-center gap-1 text-[10px] font-mono text-[#A8B3C7]"
+                  :title="formatMultiTfTrends(s)"
+                >
+                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(s.trend_15m)">15m {{ trendShort(s.trend_15m) }}</span>
+                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(s.trend_1h)">1h {{ trendShort(s.trend_1h) }}</span>
+                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(s.trend_4h)">4h {{ trendShort(s.trend_4h) }}</span>
+                </span>
                 <span class="ml-auto text-[10px] text-[#707E94]">{{ fmtTs(s.timestamp) }}</span>
               </li>
             </ul>
@@ -2023,7 +2088,7 @@ const configStrip = computed(() => {
                   <th class="pb-2 pr-3">EMA21</th>
                   <th class="pb-2 pr-3">VolΔ</th>
                   <th class="pb-2 pr-3">MACD hist</th>
-                  <th class="pb-2">Trend / status</th>
+                  <th class="pb-2">Trends 15m/1h/4h</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
@@ -2049,7 +2114,15 @@ const configStrip = computed(() => {
                       class="text-amber-400/90 truncate max-w-[14rem] inline-block align-bottom"
                       :title="row.error"
                     >err: {{ row.error }}</span>
-                    <span v-else>{{ row.f?.trend_15m || '—' }}</span>
+                    <span
+                      v-else
+                      class="inline-flex items-center gap-1 flex-wrap"
+                      :title="formatMultiTfTrends({ trend_15m: row.f?.trend_15m, trend_1h: row.f?.trend_1h, trend_4h: row.f?.trend_4h })"
+                    >
+                      <span class="inline-flex items-center px-1 rounded border text-[10px] font-mono" :class="trendChipClass(row.f?.trend_15m)">15m {{ trendShort(row.f?.trend_15m) }}</span>
+                      <span class="inline-flex items-center px-1 rounded border text-[10px] font-mono" :class="trendChipClass(row.f?.trend_1h)">1h {{ trendShort(row.f?.trend_1h) }}</span>
+                      <span class="inline-flex items-center px-1 rounded border text-[10px] font-mono" :class="trendChipClass(row.f?.trend_4h)">4h {{ trendShort(row.f?.trend_4h) }}</span>
+                    </span>
                   </td>
                 </tr>
               </tbody>

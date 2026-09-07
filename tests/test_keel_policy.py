@@ -848,3 +848,160 @@ class TestMultiTfTrendGate(unittest.TestCase):
                 os.environ.pop("KEEL_RULE_REQUIRE_1H_TREND", None)
             else:
                 os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = prev
+
+
+class TestR6OneHourEdgeBoost(unittest.TestCase):
+    """R6: 1h-confirm multiplies edge_hint_bps (fee hurdle unchanged)."""
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=1.0,
+            price=65000.0,
+            atr_14=500.0,
+            rsi_14=40.0,
+            trend_15m="bullish",
+            trend_1h="bullish",
+            trend_4h="neutral",
+            macd_histogram=10.0,
+            ema_9=65100.0,
+            ema_21=64900.0,
+            volume_ratio=0.8,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def _env_boost(self, value: str | None):
+        import os
+
+        prev = os.environ.get("KEEL_RULE_1H_EDGE_BOOST")
+        if value is None:
+            os.environ.pop("KEEL_RULE_1H_EDGE_BOOST", None)
+        else:
+            os.environ["KEEL_RULE_1H_EDGE_BOOST"] = value
+        return prev
+
+    def _restore_boost(self, prev):
+        import os
+
+        if prev is None:
+            os.environ.pop("KEEL_RULE_1H_EDGE_BOOST", None)
+        else:
+            os.environ["KEEL_RULE_1H_EDGE_BOOST"] = prev
+
+    def test_apply_1h_edge_boost_math_and_cap(self):
+        from keel.policy.stub import apply_1h_edge_boost, _clamp_1h_edge_boost
+
+        self.assertEqual(_clamp_1h_edge_boost(1.25), 1.25)
+        self.assertEqual(_clamp_1h_edge_boost(0.5), 1.0)
+        self.assertEqual(_clamp_1h_edge_boost(9.0), 2.0)
+
+        hints = {"atr_bps": 100.0, "expected_tp_bps": 220.0, "edge_hint_bps": 12.0}
+        out = apply_1h_edge_boost(
+            hints,
+            trend_1h_confirm=True,
+            nearest="long",
+            trend_15m="bullish",
+            boost_mult=1.25,
+        )
+        # 12 * 1.25 = 15; uplift 3 < 5 cap
+        self.assertTrue(out["edge_hint_1h_boosted"])
+        self.assertAlmostEqual(out["edge_hint_bps"], 15.0)
+        self.assertAlmostEqual(out["edge_hint_bps_raw"], 12.0)
+        self.assertAlmostEqual(out["edge_hint_boost_mult"], 1.25)
+
+        # Absolute uplift cap: base*2 would be +12, capped at +5
+        capped = apply_1h_edge_boost(
+            {"atr_bps": 100.0, "expected_tp_bps": 220.0, "edge_hint_bps": 20.0},
+            trend_1h_confirm=True,
+            nearest="short",
+            trend_15m="bearish",
+            boost_mult=2.0,
+        )
+        self.assertTrue(capped["edge_hint_1h_boosted"])
+        self.assertAlmostEqual(capped["edge_hint_bps"], 25.0)  # 20 + 5
+
+        # No boost when 1h does not confirm
+        no = apply_1h_edge_boost(
+            hints,
+            trend_1h_confirm=False,
+            nearest="long",
+            trend_15m="bullish",
+            boost_mult=1.25,
+        )
+        self.assertFalse(no["edge_hint_1h_boosted"])
+        self.assertAlmostEqual(no["edge_hint_bps"], 12.0)
+
+        # Nearest must align with 15m side
+        misaligned = apply_1h_edge_boost(
+            hints,
+            trend_1h_confirm=True,
+            nearest="short",
+            trend_15m="bullish",
+            boost_mult=1.25,
+        )
+        self.assertFalse(misaligned["edge_hint_1h_boosted"])
+        self.assertAlmostEqual(misaligned["edge_hint_bps"], 12.0)
+
+    def test_diagnose_boosts_when_1h_confirms_nearest(self):
+        import os
+        from keel.policy.stub import diagnose_rule_signal
+
+        prev_req = os.environ.pop("KEEL_RULE_REQUIRE_1H_TREND", None)
+        prev_boost = self._env_boost("1.25")
+        try:
+            # Force near-signal WAIT: fail volume only so nearest=long with confirm
+            confirm = diagnose_rule_signal(
+                self._snap(volume_ratio=0.1, volume_percentile=0.0, trend_1h="bullish")
+            )
+            # Disable soft volume so we stay WAIT-ish with missing
+            disagree = diagnose_rule_signal(
+                self._snap(volume_ratio=0.1, volume_percentile=0.0, trend_1h="bearish")
+            )
+            self.assertTrue(confirm["trend_1h_confirm"])
+            self.assertEqual(confirm["nearest"], "long")
+            self.assertFalse(disagree["trend_1h_confirm"])
+            self.assertIn("edge_hint_bps", confirm)
+            self.assertIn("edge_hint_bps", disagree)
+            # Same gates otherwise → confirm should be >= disagree (boosted or equal)
+            if confirm.get("edge_hint_bps") is not None and disagree.get("edge_hint_bps") is not None:
+                self.assertGreaterEqual(
+                    confirm["edge_hint_bps"], disagree["edge_hint_bps"]
+                )
+            if confirm.get("edge_hint_1h_boosted"):
+                self.assertAlmostEqual(
+                    confirm["edge_hint_bps"],
+                    min(
+                        confirm["edge_hint_bps_raw"] * 1.25,
+                        confirm["edge_hint_bps_raw"] + 5.0,
+                        confirm["expected_tp_bps"],
+                    ),
+                    places=5,
+                )
+        finally:
+            self._restore_boost(prev_boost)
+            if prev_req is None:
+                os.environ.pop("KEEL_RULE_REQUIRE_1H_TREND", None)
+            else:
+                os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = prev_req
+
+    def test_full_fire_boost_clears_hurdle_still(self):
+        """Boost helps fee-clearing hints; does not invent huge edges."""
+        import os
+        from keel.policy.stub import diagnose_rule_signal
+
+        prev_boost = self._env_boost(None)  # default 1.25
+        try:
+            diag = diagnose_rule_signal(self._snap())
+            self.assertEqual(diag["missing"], [])
+            self.assertTrue(diag["trend_1h_confirm"])
+            self.assertTrue(diag.get("edge_hint_1h_boosted"))
+            self.assertGreater(diag["edge_hint_bps"], 10)
+            # uplift ≤ 5 bps vs raw
+            self.assertLessEqual(
+                diag["edge_hint_bps"] - diag["edge_hint_bps_raw"], 5.0 + 1e-9
+            )
+        finally:
+            self._restore_boost(prev_boost)

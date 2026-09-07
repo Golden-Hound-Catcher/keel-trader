@@ -42,6 +42,13 @@ export interface KeelLastCycle {
   by_skip_reason?: Record<string, number>
   top_skip_reason?: string | null
   last_probe_skip_reason?: string | null
+  /** R6: per-instrument multi-TF trends from last cycle (soft-fail if absent). */
+  instrument_trends?: Array<{
+    inst_id: string
+    trend_15m?: string | null
+    trend_1h?: string | null
+    trend_4h?: string | null
+  }>
 }
 
 /** S1 economic arming gate summary (read-only; never clears kill-switch). */
@@ -249,6 +256,8 @@ export interface KeelNearestSignalItem {
   missing?: string[]
   rsi_14?: number | null
   trend_15m?: string | null
+  trend_1h?: string | null
+  trend_4h?: string | null
   volume_ratio?: number | null
   ema_9?: number | null
   ema_21?: number | null
@@ -470,6 +479,8 @@ export interface KeelFactors {
     histogram?: number
   }
   trend_15m?: string
+  trend_1h?: string
+  trend_4h?: string
   volume_ratio?: number
   bollinger?: Record<string, number>
   candle_count?: number
