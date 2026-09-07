@@ -174,6 +174,24 @@ PYTHONPATH=. python scripts/compare_rule_params.py \
   --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 1.0 \
   --rsi-long-max-b 35 --rsi-short-min-b 65 --min-vol-b 1.2
 # same synthetic paper snaps; prints action histograms + near_signal_rate; exit 0
+
+# Q2.1 — export observed ledger decisions (local SQLite, no OKX keys)
+PYTHONPATH=. python scripts/export_decisions.py \
+  --db data/keel_ledger.db --hours 48 --market-source okx_public \
+  --format jsonl --out /tmp/keel_decisions.jsonl
+
+# Replay RuleDecisionPolicy A/B thresholds on that cohort (preferred over synthetic):
+PYTHONPATH=. python scripts/compare_rule_params.py \
+  --from-ledger /tmp/keel_decisions.jsonl \
+  --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 1.0 \
+  --rsi-long-max-b 35 --rsi-short-min-b 65 --min-vol-b 1.2
+
+# Or one-shot from DB (default market_source=okx_public):
+PYTHONPATH=. python scripts/compare_rule_params.py \
+  --db data/keel_ledger.db --hours 48 --market-source okx_public \
+  --rsi-long-max-a 42 --rsi-short-min-a 58 --min-vol-a 1.0 \
+  --rsi-long-max-b 35 --rsi-short-min-b 65 --min-vol-b 1.2
+# Replays stored factor_snapshots / signal_diag; skips incomplete rows (skipped_incomplete=N).
 ```
 
 ---

@@ -596,6 +596,87 @@ class KeelLedger:
             },
         }
 
+
+    def export_decisions(
+        self,
+        *,
+        hours: float | None = None,
+        since: float | None = None,
+        market_source: str | None = None,
+        inst_id: str | None = None,
+        limit: int = 5000,
+        include_factors: bool = True,
+    ) -> list[dict[str, Any]]:
+        """
+        Export recent decisions as plain dicts for offline JSONL/JSON replay.
+
+        Includes instrument, action, timestamp, market_source, signal_diag,
+        calculus_data, policy_name, and (when available) a matched factor
+        snapshot for RuleDecisionPolicy offline compare.
+        """
+        from keel.ledger.decision_export import (
+            build_export_row,
+            factor_dict_from_snapshot,
+        )
+
+        hours_f = float(hours) if hours is not None else None
+        if since is None and hours_f is not None:
+            since = time.time() - max(0.0, hours_f) * 3600.0
+
+        ms_raw = (market_source or "any").strip().lower()
+        ms_filter = ms_raw if ms_raw in ("okx_public", "synthetic") else None
+
+        conn = self._get_conn()
+        query = "SELECT * FROM decisions WHERE 1=1"
+        params: list[Any] = []
+        if since is not None:
+            query += " AND timestamp >= ?"
+            params.append(float(since))
+        if inst_id is not None:
+            query += " AND inst_id = ?"
+            params.append(inst_id)
+        if ms_filter:
+            query += (
+                " AND calculus_data IS NOT NULL"
+                " AND json_extract(calculus_data, '$.market_source') = ?"
+            )
+            params.append(ms_filter)
+
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(max(1, int(limit)))
+        rows = conn.execute(query, params).fetchall()
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            rec = self._row_to_decision(row)
+            factors = None
+            if include_factors:
+                # Exact timestamp match (cycle writes decision + factor with same now).
+                frow = conn.execute(
+                    """
+                    SELECT * FROM factor_snapshots
+                    WHERE inst_id = ? AND abs(timestamp - ?) < 0.05
+                    ORDER BY abs(timestamp - ?) ASC, id DESC
+                    LIMIT 1
+                    """,
+                    (rec.inst_id, float(rec.timestamp), float(rec.timestamp)),
+                ).fetchone()
+                if frow is not None:
+                    factors = factor_dict_from_snapshot(self._row_to_factor(frow))
+            out.append(
+                build_export_row(
+                    decision_id=rec.id,
+                    timestamp=float(rec.timestamp),
+                    inst_id=rec.inst_id,
+                    action=rec.action,
+                    policy_name=rec.policy_name or "",
+                    calculus_data=rec.calculus_data,
+                    entry_price=rec.entry_price,
+                    factors=factors,
+                )
+            )
+        return out
+
     def get_latest_decision(self, inst_id: str, max_age_seconds: int = 300) -> DecisionRecord | None:
         """Get the most recent decision for an instrument if it's still fresh."""
         cutoff = time.time() - max_age_seconds
