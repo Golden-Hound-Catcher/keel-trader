@@ -225,3 +225,188 @@ class TestComparePoliciesPaperScript(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNearestSignalsRadar(unittest.TestCase):
+    """Q0: GET /api/v1/signals/nearest from recorded signal_diag decisions."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "radar.db"
+        set_ledger_path_override(self.db)
+        os.environ["KEEL_LEDGER_DB"] = str(self.db)
+        os.environ["KEEL_INSTRUMENTS"] = "BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP"
+        refresh_settings()
+        self.ledger = KeelLedger(self.db)
+        self.client = TestClient(create_app())
+
+    def tearDown(self):
+        self.ledger.close()
+        set_ledger_path_override(None)
+        os.environ.pop("KEEL_LEDGER_DB", None)
+        os.environ.pop("KEEL_INSTRUMENTS", None)
+        refresh_settings()
+        self.temp.cleanup()
+
+    def _diag(self, nearest: str, missing: list[str], **metrics):
+        base = {
+            "nearest": nearest,
+            "missing": missing,
+            "rsi_14": 45.0,
+            "trend_15m": "bullish",
+            "volume_ratio": 1.2,
+            "ema_9": 100.0,
+            "ema_21": 99.0,
+            "macd_histogram": 0.5,
+            "data_valid": True,
+        }
+        base.update(metrics)
+        return base
+
+    def test_nearest_empty_ledger(self):
+        r = self.client.get("/api/v1/signals/nearest?hours=24")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["hours"], 24)
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["signals"], [])
+        s = body["summary"]
+        self.assertEqual(s["waiting"], 0)
+        self.assertEqual(s["long_nearest"], 0)
+        self.assertEqual(s["short_nearest"], 0)
+        self.assertEqual(s["fired_long"], 0)
+        self.assertEqual(s["fired_short"], 0)
+
+    def test_nearest_hours_validation(self):
+        self.assertEqual(self.client.get("/api/v1/signals/nearest?hours=0").status_code, 422)
+        self.assertEqual(self.client.get("/api/v1/signals/nearest?hours=169").status_code, 422)
+
+    def test_nearest_latest_per_instrument_with_signal_diag(self):
+        now = time.time()
+        # Older BTC wait (should be ignored for latest)
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now - 100,
+                inst_id="BTC-USDT-SWAP",
+                action="WAIT",
+                confidence=10.0,
+                reason="old",
+                calculus_data={"signal_diag": self._diag("short", ["volume_ok"])},
+                policy_name="rule",
+            )
+        )
+        # Latest BTC: near long, missing volume
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now - 10,
+                inst_id="BTC-USDT-SWAP",
+                action="WAIT",
+                confidence=40.0,
+                reason="near long",
+                calculus_data={
+                    "signal_diag": self._diag(
+                        "long",
+                        ["volume_ok", "macd_long_ok"],
+                        rsi_14=28.5,
+                        volume_ratio=0.4,
+                    )
+                },
+                policy_name="rule",
+            )
+        )
+        # ETH fired long
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now - 5,
+                inst_id="ETH-USDT-SWAP",
+                action="BUY_LONG",
+                confidence=70.0,
+                reason="fire",
+                calculus_data={"signal_diag": self._diag("long", [], rsi_14=22.0)},
+                policy_name="rule",
+            )
+        )
+        # SOL near short
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now - 3,
+                inst_id="SOL-USDT-SWAP",
+                action="WAIT",
+                confidence=35.0,
+                reason="near short",
+                calculus_data={
+                    "signal_diag": self._diag(
+                        "short",
+                        ["volume_ok"],
+                        trend_15m="bearish",
+                        macd_histogram=-0.2,
+                    )
+                },
+                policy_name="rule",
+            )
+        )
+        # Outside watch list — ignored
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now - 1,
+                inst_id="DOGE-USDT-SWAP",
+                action="SELL_SHORT",
+                confidence=60.0,
+                reason="out of watch",
+                calculus_data={"signal_diag": self._diag("short", [])},
+                policy_name="rule",
+            )
+        )
+
+        r = self.client.get("/api/v1/signals/nearest")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["hours"], 24)
+        self.assertEqual(body["count"], 3)
+        by_id = {s["inst_id"]: s for s in body["signals"]}
+        self.assertNotIn("DOGE-USDT-SWAP", by_id)
+
+        btc = by_id["BTC-USDT-SWAP"]
+        self.assertEqual(btc["action"], "WAIT")
+        self.assertEqual(btc["nearest"], "long")
+        self.assertEqual(btc["missing"], ["volume_ok", "macd_long_ok"])
+        self.assertEqual(btc["rsi_14"], 28.5)
+        self.assertEqual(btc["volume_ratio"], 0.4)
+        self.assertEqual(btc["trend_15m"], "bullish")
+        self.assertEqual(btc["ema_9"], 100.0)
+        self.assertEqual(btc["ema_21"], 99.0)
+        self.assertEqual(btc["macd_histogram"], 0.5)
+
+        eth = by_id["ETH-USDT-SWAP"]
+        self.assertEqual(eth["action"], "BUY_LONG")
+        self.assertEqual(eth["nearest"], "long")
+        self.assertEqual(eth["missing"], [])
+
+        sol = by_id["SOL-USDT-SWAP"]
+        self.assertEqual(sol["nearest"], "short")
+        self.assertEqual(sol["missing"], ["volume_ok"])
+        self.assertEqual(sol["trend_15m"], "bearish")
+
+        summary = body["summary"]
+        self.assertEqual(summary["waiting"], 2)
+        self.assertEqual(summary["long_nearest"], 1)
+        self.assertEqual(summary["short_nearest"], 1)
+        self.assertEqual(summary["fired_long"], 1)
+        self.assertEqual(summary["fired_short"], 0)
+
+    def test_ledger_get_nearest_signals_direct(self):
+        now = time.time()
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now,
+                inst_id="BTC-USDT-SWAP",
+                action="SELL_SHORT",
+                calculus_data={"signal_diag": self._diag("short", [])},
+            )
+        )
+        raw = self.ledger.get_nearest_signals(
+            hours=24.0, instrument_ids=["BTC-USDT-SWAP"]
+        )
+        self.assertEqual(len(raw["signals"]), 1)
+        self.assertEqual(raw["summary"]["fired_short"], 1)
+        self.assertEqual(raw["signals"][0]["nearest"], "short")

@@ -191,7 +191,8 @@ Kill-switch on, no orders — continuous iteration on live observation:
 1. `.env`: `KEEL_OKX_ENV=live` + read-only keys; **`KEEL_KILL_SWITCH=1`** (required for this mode).
 2. Cadence: set `KEEL_OBSERVE_PRESET=fast` (300s) for denser WAIT/near-signal samples, or `default`/`slow` (900/1800). Explicit `KEEL_CYCLE_INTERVAL_SECONDS` still wins if set. Check `/api/v1/config` → `cycle_interval_seconds` + `observe_preset`.
 3. `python -m keel.worker` (or `--once`); monitor Decisions shows **near long/short** chips + missing gate names when action is WAIT (`calculus_data.signal_diag`).
-4. Confirm no fills: kill-switch badge ON; trades empty / risk denies on any accidental BUY/SELL path.
+4. Overview **近信号雷达** card soft-fetches `GET /api/v1/signals/nearest` (WAIT / 近多 / 近空 / 已触发 + per-inst nearest/missing chips); hidden if endpoint missing.
+5. Confirm no fills: kill-switch badge ON; trades empty / risk denies on any accidental BUY/SELL path.
 
 See also §Live（无模拟盘 key） below.
 

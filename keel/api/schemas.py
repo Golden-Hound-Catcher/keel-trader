@@ -165,6 +165,39 @@ class DecisionStatsResponse(BaseModel):
     avg_cycle_duration_ms: float | None = None
 
 
+class NearestSignalItem(BaseModel):
+    """Latest per-instrument decision with signal_diag radar fields."""
+
+    inst_id: str
+    action: str
+    timestamp: float
+    nearest: str | None = None
+    missing: list[str] = Field(default_factory=list)
+    rsi_14: float | None = None
+    trend_15m: str | None = None
+    volume_ratio: float | None = None
+    ema_9: float | None = None
+    ema_21: float | None = None
+    macd_histogram: float | None = None
+
+
+class NearestSignalsSummary(BaseModel):
+    waiting: int = 0
+    long_nearest: int = 0
+    short_nearest: int = 0
+    fired_long: int = 0
+    fired_short: int = 0
+
+
+class NearestSignalsResponse(BaseModel):
+    """Q0 near-signal radar: latest decision per watch instrument (read-only)."""
+
+    hours: int
+    count: int
+    summary: NearestSignalsSummary
+    signals: list[NearestSignalItem]
+
+
 class LatestDecisionResponse(BaseModel):
     found: bool
     inst_id: str | None = None
