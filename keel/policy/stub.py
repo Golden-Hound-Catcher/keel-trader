@@ -16,6 +16,10 @@ penalties scale with min(atr_bps, available_ev) so modest residuals leave room t
 clear the 10 bps probe hurdle without spamming when far from gates; near p and
 penalty coeffs are env-tunable; ≥3 missing still fail-closed; hurdle unchanged.
 Q0: diagnose_rule_signal attaches structured near-signal gate diagnostics.
+E2A: opt-in ``KEEL_RULE_VARIANT=trend_follow`` (default ``mean_revert``) —
+force 15m+1h same-direction trend gates; RSI side gates become "not
+overbought/oversold" (TF defaults 68/32) instead of mean-reversion extremes.
+Policy name stays ``rule`` so E1 full_gate detection still counts fires.
 """
 from __future__ import annotations
 
@@ -125,7 +129,26 @@ def _edge_hint_geometry() -> dict[str, float]:
     }
 
 
-def _rule_thresholds() -> dict[str, float | bool]:
+def _rule_variant() -> str:
+    """
+    E2A: rule semantics variant (env ``KEEL_RULE_VARIANT``).
+
+    - ``mean_revert`` (default): existing RSI extremes + soft 1h confirm.
+    - ``trend_follow``: hard 15m+1h alignment; RSI = not overbought/oversold.
+    Unknown values fall back to ``mean_revert``.
+    """
+    raw = (os.environ.get("KEEL_RULE_VARIANT") or "mean_revert").strip().lower()
+    if raw in ("trend_follow", "trend-follow", "tf"):
+        return "trend_follow"
+    return "mean_revert"
+
+
+def resolve_rule_variant() -> str:
+    """Public alias for status/config echo (same as diagnose ``rule_variant``)."""
+    return _rule_variant()
+
+
+def _rule_thresholds() -> dict[str, float | bool | str]:
     """
     Rule v3+ thresholds (env-overridable, backward-compatible KEEL_RULE_*).
 
@@ -140,7 +163,8 @@ def _rule_thresholds() -> dict[str, float | bool]:
     relax path (other four gates + slightly looser band) mirrors volume soft
     confirm without flooding every bar.
     """
-    return {
+    variant = _rule_variant()
+    th: dict[str, float | bool | str] = {
         # Hard RSI bands (mean-reversion): modestly widened after v3 RSI bottleneck.
         "rsi_long_max": _env_float("KEEL_RULE_RSI_LONG_MAX", 45.0),
         "rsi_short_min": _env_float("KEEL_RULE_RSI_SHORT_MIN", 55.0),
@@ -161,7 +185,16 @@ def _rule_thresholds() -> dict[str, float | bool]:
         "require_1h_trend": _env_bool("KEEL_RULE_REQUIRE_1H_TREND", False),
         # R6: multiplicative edge_hint boost when 1h confirms nearest side (default 1.25x).
         "edge_1h_boost": _env_float("KEEL_RULE_1H_EDGE_BOOST", _1H_EDGE_BOOST_DEFAULT),
+        "rule_variant": variant,
     }
+    if variant == "trend_follow":
+        # E2A: RSI = not overbought (long) / not oversold (short); force 15m+1h.
+        th["rsi_long_max"] = _env_float("KEEL_RULE_TF_RSI_LONG_MAX", 68.0)
+        th["rsi_short_min"] = _env_float("KEEL_RULE_TF_RSI_SHORT_MIN", 32.0)
+        th["require_1h_trend"] = True
+        # Mean-reversion soft RSI relax does not apply under trend-follow.
+        th["rsi_relax_enable"] = False
+    return th
 
 
 def _factor_reason(snapshot: MarketSnapshot, prefix: str) -> str:
@@ -198,7 +231,7 @@ def _distance_penalty_bps(
     *,
     atr_bps: float,
     available_ev_bps: float,
-    th: dict[str, float | bool],
+    th: dict[str, float | bool | str],
     geo: dict[str, float],
 ) -> tuple[float, dict[str, float], float]:
     """
@@ -265,7 +298,7 @@ def _edge_hints(
     missing: list[str] | int,
     *,
     nearest: str = "none",
-    th: dict[str, float | bool] | None = None,
+    th: dict[str, float | bool | str] | None = None,
 ) -> dict[str, Any]:
     """
     ATR-based expected move / edge hint for probe observability (does not change fee hurdle).
@@ -522,6 +555,9 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     (``15m`` or ``15m+1h``), ``trend_1h_confirm``, ``require_1h_trend``.
     R6: optional 1h-confirm ``edge_hint`` boost (``edge_hint_1h_boosted``,
     ``edge_hint_boost_mult``, ``edge_hint_bps_raw`` when applied).
+    E2A: ``rule_variant`` (``mean_revert``|``trend_follow``); TF forces
+    ``require_1h_trend`` and redefines RSI side gates (keys still
+    ``rsi_long_ok`` / ``rsi_short_ok``).
     R7/R8: ``edge_hint_mode`` (``full``|``near``|``none``) plus
     ``edge_hint_sized_ev`` / ``edge_hint_distance_penalty_bps`` /
     ``edge_hint_distance_components`` / ``edge_hint_penalty_scale_bps``
@@ -667,6 +703,7 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         "trend_gate": trend_gate,
         "trend_1h_confirm": trend_1h_confirm,
         "require_1h_trend": require_1h,
+        "rule_variant": str(th.get("rule_variant") or "mean_revert"),
     }
 
     if not data_ok:
@@ -766,6 +803,8 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     lower the fee hurdle). R7/R8 near-signal geometry may yield a non-zero base
     hint when 1–2 gates are missing (distance-to-threshold + ATR; R8 pen_scale
     leaves room in low-ATR regimes); hurdle unchanged.
+    E2A: ``KEEL_RULE_VARIANT=trend_follow`` forces 15m+1h and uses TF RSI
+    bands (not-overbought / not-oversold); default ``mean_revert`` is unchanged.
     """
     diag = diagnose_rule_signal(snapshot)
 
@@ -801,7 +840,12 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
             stop_loss=sl,
             leverage=3,
             margin_usdt=margin,
-            reason=_factor_reason(snapshot, "rule long"),
+            reason=_factor_reason(
+                snapshot,
+                "rule long trend_follow"
+                if diag.get("rule_variant") == "trend_follow"
+                else "rule long",
+            ),
             signal_diag=diag,
         )
 
@@ -825,7 +869,12 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
             stop_loss=sl,
             leverage=3,
             margin_usdt=margin,
-            reason=_factor_reason(snapshot, "rule short"),
+            reason=_factor_reason(
+                snapshot,
+                "rule short trend_follow"
+                if diag.get("rule_variant") == "trend_follow"
+                else "rule short",
+            ),
             signal_diag=diag,
         )
 
@@ -833,7 +882,12 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         inst_id=snapshot.inst_id,
         action="WAIT",
         confidence=40.0,
-        reason=_factor_reason(snapshot, "no rule signal"),
+        reason=_factor_reason(
+            snapshot,
+            "no rule signal trend_follow"
+            if diag.get("rule_variant") == "trend_follow"
+            else "no rule signal",
+        ),
         signal_diag=diag,
     )
 

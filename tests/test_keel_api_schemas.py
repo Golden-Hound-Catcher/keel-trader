@@ -266,6 +266,8 @@ class TestApiSchemas(unittest.TestCase):
         self.assertNotIn("legacy_scheduler_jobs", config_props)
         self.assertIn("decision_policy", config_props)
         self.assertIn("decision_policy", status_props)
+        self.assertIn("rule_variant", config_props)
+        self.assertIn("rule_variant", status_props)
         self.assertIn("DailyPnlResponse", comps)
         self.assertIn("/api/v1/pnl/daily", paths)
         self.assertIn("/api/v1/stats/decisions", paths)

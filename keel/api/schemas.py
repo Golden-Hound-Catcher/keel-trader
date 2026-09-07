@@ -116,6 +116,8 @@ class StatusResponse(BaseModel):
     shadow_near_probe_min_edge_bps: float | None = None
     shadow_near_probe_hurdle_bps: float | None = None
     decision_policy: str = "rule"
+    # E2A: mean_revert (default) | trend_follow — inside rule policy; name stays rule.
+    rule_variant: str = "mean_revert"
     last_cycle: LastCycleSummary | None = None
     seconds_since_last_cycle: int | None = None
     worker_stale: bool = False
@@ -153,6 +155,8 @@ class ConfigResponse(BaseModel):
     shadow_near_probe_min_edge_bps: float | None = None
     shadow_near_probe_hurdle_bps: float | None = None
     decision_policy: str = "rule"
+    # E2A: mean_revert (default) | trend_follow — inside rule policy; name stays rule.
+    rule_variant: str = "mean_revert"
     instruments: list[str] = Field(default_factory=list)
     notify_configured: bool = False
     notify_alerts_only: bool = False

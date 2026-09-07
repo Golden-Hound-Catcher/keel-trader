@@ -169,6 +169,8 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertEqual(r.json()["shadow_near_probe_hurdle_bps"], 10.0)
         self.assertIn("decision_policy", r.json())
         self.assertIsInstance(r.json()["decision_policy"], str)
+        self.assertIn("rule_variant", r.json())
+        self.assertEqual(r.json()["rule_variant"], "mean_revert")
         self.assertIn("okx_capability", r.json())
         self.assertEqual(r.json()["okx_capability"], "none")
         self.assertIn("arming", r.json())
@@ -207,6 +209,8 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertIn("okx_capability", r.json())
         self.assertEqual(r.json()["okx_capability"], "none")
         self.assertEqual(r.json()["decision_policy"], self.client.get("/api/v1/status").json()["decision_policy"])
+        self.assertIn("rule_variant", r.json())
+        self.assertEqual(r.json()["rule_variant"], self.client.get("/api/v1/status").json()["rule_variant"])
 
     def test_status_shadow_mode_on_when_armed(self):
         os.environ["KEEL_SHADOW_MODE"] = "1"
