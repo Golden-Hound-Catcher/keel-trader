@@ -324,6 +324,8 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 **F2b (TF RSI pullback):** Under `trend_follow` only, master `KEEL_RULE_TF_PULLBACK` default **0** (off after over-filter backtest; set `1` to enable). Long requires `rsi_14 <= KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX` (default **52**); short requires `rsi_14 >= KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN` (default **48**); clamp 20–80. Gate `pullback_ok` in `signal_diag` (+ `rsi_pullback_long_max` / `rsi_pullback_short_min` / `tf_pullback_enabled`). `mean_revert` ignores. Full-gate / backtest use diagnose. Still E0 freeze. See RUNBOOK.
 
+**F3 (train/valid strategy):** Jo split train[-14d,-7d) / valid[-7d,now); grid + select on train only (max 5m netRT win, FG≥10, avg≥−5bps); freeze one config; validate once vs F0b baseline on valid. CLI `scripts/okx_train_valid_strategy.py`. No peeking; E0 freeze. See RUNBOOK.
+
 **F2c (strategy compare):** Offline side-by-side on same OKX candles: (A) TF E3.1 ext=0 pullback=0 fixed-horizon markout; (B) mean_revert same cooldown; (C) optional TF ATR barrier exit (TP 2.2×ATR / SL 1.0×ATR / timeout 900s on 15m OHLC; measurement only). CLI `scripts/okx_history_strategy_compare.py`. Still E0 freeze — no live variant/exit flip from F2c alone. See RUNBOOK.
 
 **F1 (isolate pre-E3.1 FG cohort):** Live economic/arming was poisoned by pre-E3.1 spray (majority `trend_4h=neutral`, ~24% 5m netRT). Tag full-gate fires as `post_e31`/`strict_tf` when `signal_diag.require_4h_trend` truthy **or** `trend_gate` contains `4h`; else `pre_e31`/`stale_pre_e31`. `/stats/quality` exposes `full_gate_fires.by_cohort`, primary `full_gate_markout` = **post_e31 only**, audit `full_gate_markout_pre_e31`. Headline `economic_evidence` / FG 5m metrics must not use pre_e31 when post exists (pre-only → `stale_pre_e31` + empty primary). Arming FG win-rate gates use post_e31 markout only; if prefer path (total FG fires≥20) but post_e31 markout sample < `min_markout_sample` (default **5**) → blocker `insufficient_post_e31_full_gate_sample` (never pre_e31 24%). Prefer threshold stays `FULL_GATE_ECON_PREFER_MIN=20`. Monitor FG chip = post primary + optional stale hint. Still E0 freeze. See RUNBOOK.
@@ -332,6 +334,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-08 | **F3 train/valid strategy**: Jo [-14d,-7d)/[-7d,now) split; train-only grid+select; one frozen valid score vs F0b; `okx_train_valid_strategy.py`; E0 freeze |
 | 2026-09-08 | **F2c strategy compare**: same-candle TF E3.1 vs mean_revert vs optional TF barrier markout (TP 2.2 / SL 1.0 ATR / 900s); CLI `okx_history_strategy_compare.py`; measurement only; E0 freeze unchanged |
 | 2026-09-08 | **F2b TF RSI pullback**: `KEEL_RULE_TF_PULLBACK` default 0 (off after over-filter); long `rsi<=52` / short `rsi>=48` (`KEEL_RULE_TF_RSI_PULLBACK_*`); gate `pullback_ok`; MR ignores; E0 freeze unchanged |
 | 2026-09-08 | **F2a TF extension ATR filter**: `KEEL_RULE_TF_MAX_EXTENSION_ATR` default **0=off** after backtest regression (was 1.5; clamp 0.5–5 when >0); gate `extension_ok` vs ema_21/atr_14; MR ignores; E0 freeze unchanged |

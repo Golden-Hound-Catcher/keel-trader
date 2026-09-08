@@ -1,5 +1,5 @@
 """
-F0b / F2c: offline OKX historical candle backtest under E3.1 rule semantics.
+F0b / F2c / F3: offline OKX historical candle backtest under E3.1 rule semantics.
 
 Walks closed 15m bars, builds worker-like snapshots (15m/1H/4H + enrich),
 runs ``diagnose_rule_signal`` / ``rule_based_decision`` under forced TF+E2B+E3.1
@@ -55,6 +55,8 @@ _ENV_TF_REQUIRE_4H = "KEEL_RULE_TF_REQUIRE_4H"
 _ENV_TF_MACD_LAG = "KEEL_RULE_TF_MACD_LAG_BPS"
 _ENV_TF_MAX_EXT = "KEEL_RULE_TF_MAX_EXTENSION_ATR"
 _ENV_TF_PULLBACK = "KEEL_RULE_TF_PULLBACK"
+_ENV_TF_RSI_PB_LONG = "KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX"
+_ENV_TF_RSI_PB_SHORT = "KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN"
 
 
 @dataclass
@@ -422,6 +424,8 @@ def forced_e31_rule_env(
     macd_lag_bps: float = 3.0,
     max_extension_atr: float = 0.0,
     pullback: bool = False,
+    rsi_pullback_long_max: float | None = None,
+    rsi_pullback_short_min: float | None = None,
 ) -> Iterator[str]:
     """Force TF + E3.1 require_4h + E2B MACD lag; pin F2a/F2b off by default."""
     keys = {
@@ -430,6 +434,10 @@ def forced_e31_rule_env(
         _ENV_TF_MAX_EXT: str(float(max_extension_atr)),
         _ENV_TF_PULLBACK: "1" if pullback else "0",
     }
+    if pullback and rsi_pullback_long_max is not None:
+        keys[_ENV_TF_RSI_PB_LONG] = str(float(rsi_pullback_long_max))
+    if pullback and rsi_pullback_short_min is not None:
+        keys[_ENV_TF_RSI_PB_SHORT] = str(float(rsi_pullback_short_min))
     prev = {k: os.environ.get(k) for k in keys}
     for k, v in keys.items():
         os.environ[k] = v
@@ -462,6 +470,10 @@ def walk_forward_backtest(
     barrier_timeout_seconds: float = DEFAULT_BARRIER_TIMEOUT_SECONDS,
     max_extension_atr: float = 0.0,
     pullback: bool = False,
+    rsi_pullback_long_max: float | None = None,
+    rsi_pullback_short_min: float | None = None,
+    decision_ts_min: float | None = None,
+    decision_ts_max: float | None = None,
 ) -> dict[str, Any]:
     """
     Walk closed 15m bars per instrument; record full-gate entries + markouts.
@@ -486,6 +498,8 @@ def walk_forward_backtest(
         macd_lag_bps=macd_lag_bps,
         max_extension_atr=max_extension_atr,
         pullback=pullback,
+        rsi_pullback_long_max=rsi_pullback_long_max,
+        rsi_pullback_short_min=rsi_pullback_short_min,
     ):
         for series in series_list:
             inst = series.inst_id
@@ -500,6 +514,11 @@ def walk_forward_backtest(
             for i in range(start_i, end_i + 1):
                 snap = build_snapshot_at(series, index_15m=i, lookback=lookback)
                 if not snap.data_valid:
+                    continue
+                decision_ts = float(snap.timestamp)
+                if decision_ts_min is not None and decision_ts < float(decision_ts_min):
+                    continue
+                if decision_ts_max is not None and decision_ts >= float(decision_ts_max):
                     continue
                 n_steps += 1
                 by_inst_steps[inst] += 1
@@ -606,6 +625,10 @@ def walk_forward_backtest(
         include_barrier=include_barrier,
         max_extension_atr=float(max_extension_atr),
         pullback=bool(pullback),
+        rsi_pullback_long_max=rsi_pullback_long_max,
+        rsi_pullback_short_min=rsi_pullback_short_min,
+        decision_ts_min=decision_ts_min,
+        decision_ts_max=decision_ts_max,
     )
 
 
@@ -641,6 +664,10 @@ def _summarize(
     include_barrier: bool = False,
     max_extension_atr: float = 0.0,
     pullback: bool = False,
+    rsi_pullback_long_max: float | None = None,
+    rsi_pullback_short_min: float | None = None,
+    decision_ts_min: float | None = None,
+    decision_ts_max: float | None = None,
 ) -> dict[str, Any]:
     by_inst: dict[str, Any] = {}
     for inst, steps in sorted(by_inst_steps.items()):
@@ -723,6 +750,14 @@ def _summarize(
         "macd_lag_bps": float(macd_lag_bps),
         "max_extension_atr": float(max_extension_atr),
         "pullback": bool(pullback),
+        "rsi_pullback_long_max": (
+            float(rsi_pullback_long_max) if rsi_pullback_long_max is not None else None
+        ),
+        "rsi_pullback_short_min": (
+            float(rsi_pullback_short_min) if rsi_pullback_short_min is not None else None
+        ),
+        "decision_ts_min": decision_ts_min,
+        "decision_ts_max": decision_ts_max,
         "cooldown_seconds": int(cooldown_seconds),
         "n_steps": n_steps,
         "full_gate_count": n_full_gate,

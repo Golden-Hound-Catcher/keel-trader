@@ -545,6 +545,37 @@ PYTHONPATH=. python scripts/okx_history_rule_backtest.py \
 
 Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear).
 
+### Phase F3 — train / validation strategy pipeline (no peeking)
+
+Jo protocol (offline, public OKX candles only):
+
+1. **Analysis (train):** closed-bar decisions in **[-14d, -7d)** — fit / grid rank here only.
+2. **Validation (valid):** closed-bar decisions in **[-7d, now)** — score the frozen config once.
+3. Mathematical search (variant / require_4h / extension ATR / pullback RSI bands / cooldown) runs **only on train**; markout path for train truncates candles at `train_end` so valid prices are not visible.
+4. **Select ONE** primary by pre-declared rule: maximize train 5m netRT win subject to train FG **n≥10** and train avg netRT **≥ −5bps** (else best available — say so).
+5. Validate once vs **F0b baseline** (TF + require_4h + ext=0 + pullback=0 + cd=900) on the **same valid window**. Do **not** claim success if valid 5m win ≪ **0.55**.
+
+**Offline result (BTC+ETH+SOL, 2200×15m, grid=42):** no cell met train avg_net≥−5bps; best-available train pick `TF|4h|ext=1.5|pb=off|cd=1800` train FG=36 / 5m win **22.2%** avg **−7.9bps**. Frozen valid: FG=62 / 5m win **8.1%** avg **−10.7bps** frac_clear **0%** (900s win 19.4%; barrier win 19.4% timeout56/SL6). F0b baseline on same valid: FG=92 / 5m win **12.0%** avg **−10.7bps**. Valid ≪0.55 — do not claim success / do not arm.
+
+```bash
+# Public API only — strips OKX keys / KEEL_SKIP_DOTENV (never writes .env)
+PYTHONPATH=. python scripts/okx_train_valid_strategy.py \
+  --inst-ids BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP \
+  --bars-15m 2200 \
+  --json-out /tmp/keel_f3_train_valid.json
+```
+
+| Piece | Location |
+|-------|----------|
+| Windows + grid + selection | `keel.backtest.train_valid` |
+| Walk + decision window | `walk_forward_backtest(..., decision_ts_min/max=...)` |
+| CLI | `scripts/okx_train_valid_strategy.py` |
+| Unit tests | `tests/test_okx_train_valid_strategy.py` |
+
+**Residuals:** closed-bar higher-TF filter + train truncate (look-ahead control); taker RT fee model / funding ignored; modest grid selection bias on train win rate — valid is the only honest score.
+
+Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear, no arm from F3 alone).
+
 ### Phase F2c — strategy compare on same candles (measurement)
 
 Jo: F2a/F2b entry filters did not lift 5m net toward **0.55**. F2c asks whether **mean_revert** beats TF E3.1 on the same public candles, and whether a **barrier exit** (TP 2.2×ATR / SL 1.0×ATR / timeout 900s on subsequent 15m OHLC; SL-first if both print) looks better than fixed **300s** markout — **measurement only**, not a live exit change.
