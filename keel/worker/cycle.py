@@ -89,7 +89,7 @@ DEFAULT_SEED_PRICES: dict[str, float] = {
 logger = logging.getLogger("keel.worker.cycle")
 
 
-def _okx_rows_to_candles(rows: list[list[float]]) -> list[Candle]:
+def okx_rows_to_candles(rows: list[list[float]]) -> list[Candle]:
     """Convert fetch_candles rows [ts_ms, o, h, l, c, vol] → Candle (oldest→newest)."""
     out: list[Candle] = []
     for row in rows:
@@ -106,6 +106,11 @@ def _okx_rows_to_candles(rows: list[list[float]]) -> list[Candle]:
             )
         )
     return out
+
+
+# Back-compat aliases (worker + backtest share the same converter).
+_okx_rows_to_candles = okx_rows_to_candles
+_candles_from_rows = okx_rows_to_candles
 
 
 def _use_okx_public_candles(
