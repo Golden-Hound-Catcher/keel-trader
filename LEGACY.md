@@ -109,6 +109,13 @@ Install / enable **only** `keel-*.service`.
 | `r20_backend/admin.html` / `admin_auth.py` / `/api/v1/admin/*` | **Deleted** with package |
 | `frontend/` monitor | **Supported** client of `keel.api` (`/`, `/monitor`) |
 
+
+## Removed docs assets
+
+| Path | Status |
+|------|--------|
+| `docs/images/*.png` | **Deleted** — unreferenced legacy R20/admin/v600 marketing screenshots (~4MB); not used by README/SPEC/ARCHITECTURE/LEGACY/STANDALONE |
+
 ## Verification
 
 ```sh
