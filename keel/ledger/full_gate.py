@@ -514,3 +514,61 @@ def compute_full_gate_markout(
             "(E0 freeze)."
         ),
     }
+
+
+def summarize_full_gate_markout(result: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Compact quality-API / Monitor shape from ``compute_full_gate_markout``.
+
+    Prefer horizon 300s fields at the top level; still include 60/900 when present.
+    """
+    if not isinstance(result, dict):
+        return {
+            "count": 0,
+            "sample_count": 0,
+            "horizon_seconds": DEFAULT_CLEAR_HORIZON_SECONDS,
+            "win_rate_net_roundtrip": None,
+            "avg_net_roundtrip_markout_bps": None,
+            "frac_clear_net_rt_hurdle": None,
+            "clear_hurdle_bps": DEFAULT_CLEAR_HURDLE_BPS,
+            "horizons": [],
+        }
+    horizons_in = []
+    markout = result.get("markout") if isinstance(result.get("markout"), dict) else {}
+    for row in markout.get("horizons") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            h = int(row.get("horizon_seconds") or 0)
+        except (TypeError, ValueError):
+            continue
+        if h <= 0:
+            continue
+        horizons_in.append(
+            {
+                "horizon_seconds": h,
+                "sample_count": int(row.get("sample_count") or 0),
+                "win_rate_net_roundtrip": row.get("win_rate_net_roundtrip"),
+                "avg_net_roundtrip_markout_bps": row.get("avg_net_roundtrip_markout_bps"),
+                "frac_clear_net_rt_hurdle": row.get("frac_clear_net_rt_hurdle"),
+                "clear_hurdle_bps": row.get("clear_hurdle_bps", result.get("clear_hurdle_bps")),
+            }
+        )
+    by_h = {int(r["horizon_seconds"]): r for r in horizons_in}
+    primary = by_h.get(300) or (horizons_in[0] if horizons_in else {})
+    return {
+        "count": int(result.get("count") or 0),
+        "sample_count": int(primary.get("sample_count") or 0),
+        "horizon_seconds": int(primary.get("horizon_seconds") or DEFAULT_CLEAR_HORIZON_SECONDS),
+        "win_rate_net_roundtrip": primary.get("win_rate_net_roundtrip"),
+        "avg_net_roundtrip_markout_bps": primary.get("avg_net_roundtrip_markout_bps"),
+        "frac_clear_net_rt_hurdle": primary.get("frac_clear_net_rt_hurdle"),
+        "clear_hurdle_bps": float(
+            primary.get("clear_hurdle_bps")
+            if primary.get("clear_hurdle_bps") is not None
+            else result.get("clear_hurdle_bps", DEFAULT_CLEAR_HURDLE_BPS)
+        ),
+        "horizons": horizons_in,
+        "by_action": dict(result.get("by_action") or {}),
+        "cohort": str(result.get("cohort") or "full_gate"),
+    }

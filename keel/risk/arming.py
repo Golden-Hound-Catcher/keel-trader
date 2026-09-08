@@ -28,6 +28,9 @@ _SHADOW_REHEARSAL_MSG = "no recent shadow_fill rehearsal"
 INSUFFICIENT_SHADOW_MARKOUT_SAMPLE = "insufficient_shadow_markout_sample"
 PROBE_WIN_RATE_BELOW = "probe_win_rate_net_roundtrip_below_threshold"
 AVG_NET_RT_BELOW = "avg_net_roundtrip_markout_bps_below_threshold"
+# E3: prefer full-gate markout metrics when fire count reaches this threshold.
+FULL_GATE_ECON_PREFER_MIN = 20
+FULL_GATE_WIN_RATE_BELOW = "full_gate_win_rate_net_roundtrip_below_threshold"
 
 
 @dataclass(frozen=True)
@@ -228,12 +231,16 @@ def evaluate_economic_gates(
         "by_instrument": {},
         "economic_sample_source": "insufficient",
         "full_gate_fires": 0,
+        "full_gate_sample_count": 0,
+        "full_gate_win_rate_net_roundtrip": None,
+        "full_gate_avg_net_roundtrip_markout_bps": None,
+        "full_gate_frac_clear_net_rt_hurdle": None,
         "note": (
             "Kill-switch is never auto-cleared; economic gates are read-only. "
             "Probe skips dominated by below_hurdle do not block alone. "
             "by_instrument is diagnostic only; overall gate remains aggregate. "
-            "E1: prefer full-gate markout when n≥20 and 5m netRT win≥0.55; "
-            "keep near_probe off until then (E0 freeze)."
+            "E3: when full_gate_fires≥20 prefer fee-aware full-gate 5m netRT "
+            "markout for blockers (still E0 freeze — no near_probe / no kill clear)."
         ),
     }
 
@@ -281,7 +288,51 @@ def evaluate_economic_gates(
                 fg_n = int(fg_block)
         except Exception:
             fg_n = 0
-    if fg_n > 0 and probe_count == 0 and probe_sample == 0:
+    # E3: when full-gate fires ≥20, load fee-aware FG markout (no network) and
+    # prefer those 5m netRT metrics for economic blockers.
+    fg_sample = 0
+    fg_wr = None
+    fg_avg = None
+    fg_frac = None
+    prefer_fg = False
+    if fg_n >= FULL_GATE_ECON_PREFER_MIN and ledger is not None:
+        try:
+            getter = getattr(ledger, "get_full_gate_markout", None)
+            if callable(getter):
+                fg_raw = getter(
+                    hours=hours,
+                    horizons=(int(horizon),),
+                    apply_funding=False,
+                    settings=settings,
+                )
+            else:
+                from keel.ledger.full_gate import compute_full_gate_markout
+
+                conn = ledger._get_conn()
+                fg_raw = compute_full_gate_markout(
+                    conn,
+                    hours=hours,
+                    horizons=(int(horizon),),
+                    apply_funding=False,
+                    settings=settings,
+                )
+            hrow_fg = _horizon_row(
+                fg_raw.get("markout") if isinstance(fg_raw, dict) else None,
+                horizon,
+            )
+            fg_sample = int(hrow_fg.get("sample_count") or 0)
+            fg_wr = hrow_fg.get("win_rate_net_roundtrip")
+            fg_avg = hrow_fg.get("avg_net_roundtrip_markout_bps")
+            fg_frac = hrow_fg.get("frac_clear_net_rt_hurdle")
+            if fg_frac is None and isinstance(fg_raw, dict):
+                fg_frac = fg_raw.get("frac_clear_net_rt_hurdle")
+            prefer_fg = fg_sample >= min_sample
+        except Exception:
+            prefer_fg = False
+
+    if prefer_fg:
+        sample_source = "full_gate"
+    elif fg_n > 0 and probe_count == 0 and probe_sample == 0:
         sample_source = "full_gate"
     elif probe_count > 0 or probe_sample > 0:
         sample_source = "probe" if fg_n == 0 else "mixed"
@@ -289,6 +340,14 @@ def evaluate_economic_gates(
         sample_source = "shadow_non_probe"
     else:
         sample_source = "insufficient"
+
+    if prefer_fg:
+        # FG evidence can satisfy sample/fills when shadow probe cohort is thin.
+        fills_ok = True
+        sample_ok = True
+        overall_wr = fg_wr if fg_wr is not None else overall_wr
+        avg_net = fg_avg if fg_avg is not None else avg_net
+        sample_count = fg_sample if fg_sample else sample_count
 
     summary.update(
         {
@@ -305,6 +364,10 @@ def evaluate_economic_gates(
             "by_instrument": _economic_by_instrument(raw, horizon_seconds=horizon),
             "economic_sample_source": sample_source,
             "full_gate_fires": fg_n,
+            "full_gate_sample_count": fg_sample,
+            "full_gate_win_rate_net_roundtrip": fg_wr,
+            "full_gate_avg_net_roundtrip_markout_bps": fg_avg,
+            "full_gate_frac_clear_net_rt_hurdle": fg_frac,
         }
     )
 
@@ -312,9 +375,16 @@ def evaluate_economic_gates(
         blockers.append(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE)
         return blockers, summary
 
-    # Prefer probe net-RT win rate when probe sample is large enough; else overall.
+    # Prefer FG net-RT when sample sufficient; else probe; else overall shadow.
     wr: float | None
-    if probe_sample >= min_sample and probe_wr is not None:
+    wr_blocker = PROBE_WIN_RATE_BELOW
+    if prefer_fg and fg_wr is not None:
+        try:
+            wr = float(fg_wr)
+            wr_blocker = FULL_GATE_WIN_RATE_BELOW
+        except (TypeError, ValueError):
+            wr = None
+    elif probe_sample >= min_sample and probe_wr is not None:
         try:
             wr = float(probe_wr)
         except (TypeError, ValueError):
@@ -333,7 +403,7 @@ def evaluate_economic_gates(
         return blockers, summary
 
     if wr < min_win:
-        blockers.append(PROBE_WIN_RATE_BELOW)
+        blockers.append(wr_blocker)
 
     if avg_net is None:
         blockers.append(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE)

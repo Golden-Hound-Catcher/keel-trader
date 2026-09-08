@@ -297,6 +297,47 @@ class TestFullGateQualityAndMarkout(unittest.TestCase):
         sources = result.get("entry_sources") or {}
         self.assertTrue(any("shadow_fill" in k for k in sources))
 
+    def test_quality_api_full_gate_markout(self):
+        """E3: quality scorecard includes full_gate_markout fields."""
+        ts = self.t0
+        inst = "BTC-USDT-SWAP"
+        self._seed_fire(ts=ts, inst_id=inst, action="BUY_LONG", price=100.0)
+        for h, px in ((60, 100.4), (300, 101.0), (900, 101.5)):
+            self.ledger.record_factor_snapshot(
+                FactorSnapshot(
+                    timestamp=ts + h + 5,
+                    inst_id=inst,
+                    price=px,
+                    ema_9=px,
+                    ema_21=px,
+                    rsi_14=50.0,
+                    atr_14=1.0,
+                    volume_ratio=1.0,
+                )
+            )
+        r = self.client.get("/api/v1/stats/quality?hours=24")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertIn("full_gate_markout", body)
+        mo = body["full_gate_markout"]
+        self.assertIsInstance(mo, dict)
+        for key in (
+            "sample_count",
+            "win_rate_net_roundtrip",
+            "avg_net_roundtrip_markout_bps",
+            "frac_clear_net_rt_hurdle",
+            "horizons",
+        ):
+            self.assertIn(key, mo)
+        self.assertIsInstance(mo["horizons"], list)
+        hs = {int(h["horizon_seconds"]) for h in mo["horizons"]}
+        self.assertIn(300, hs)
+        self.assertGreaterEqual(int(mo.get("sample_count") or 0), 1)
+        direct = self.ledger.get_quality_stats(hours=24.0)
+        self.assertIn("full_gate_markout", direct)
+        self.assertIn("sample_count", direct["full_gate_markout"])
+
+
 
 if __name__ == "__main__":
     unittest.main()

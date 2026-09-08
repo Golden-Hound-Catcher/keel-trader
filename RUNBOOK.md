@@ -442,7 +442,34 @@ PYTHONPATH=. python scripts/tf_full_gate_replay.py \
 
 Reports n snapshots, full_gate count/rate by instrument+action, top missing gates under TF, and 1-missing near fires. Fee-aware markout of counterfactual replay hits is skipped — use E1 `scripts/full_gate_markout.py` for live full-gate rows. Helpers: `keel.ledger.tf_fire_replay`.
 
+### Phase E3 — rule fire cooldown + quality full-gate markout (gen-2)
+
+Live TF observe (as of **2026-09-08**) showed spray/overtrade: `full_gate_fires≈54` in 24h (all `SELL_SHORT`; BTC 37 / SOL 17) while 15m+1h stayed bearish — fires repeating every ~cycle (~300s). Fee-aware full-gate markout 300s: `win_rate_net_roundtrip≈0.24` (need ≥0.55), `avg_net_rt≈-9.7` bps, `frac_clear_10bps≈0.15`. **E1 success criteria still fail** (~24% net win). E0 freeze still: no `near_probe` on, no hurdle cut, no kill clear, no `.env` commit.
+
+**A) Per-instrument rule fire cooldown (TF + MR)**
+
+| Knob | Default | Role |
+|------|---------|------|
+| `KEEL_RULE_FIRE_COOLDOWN_SECONDS` | **900** | After a full-gate `BUY_LONG`/`SELL_SHORT` is recorded, suppress another same-instrument full-gate entry. Clamp **0–7200**; **0** disables. |
+
+During cooldown the worker returns **WAIT** with reason mentioning cooldown; `signal_diag` stays attached (`fire_cooldown_active`, `fire_cooldown_seconds`) so near UX still works, but the row must **not** count as `full_gate_fire` and must **not** produce a shadow fill for the suppressed entry. Implementation: `keel.execution.fire_cooldown` + worker cycle (ledger recent decisions; same pattern as near_probe cooldown).
+
+**B) Full-gate markout on quality API + Monitor**
+
+`GET /api/v1/stats/quality?hours=` now includes `full_gate_markout` (fee-aware, **no network**): horizons 60/300/900 with `sample_count`, `win_rate_net_roundtrip`, `avg_net_roundtrip_markout_bps`, `frac_clear_net_rt_hurdle` (10 bps). Primary convenience fields mirror the **300s** row. Monitor Quality bar shows lightweight **FG 5m net** chip.
+
+**Arming economic (read-only):** when `full_gate_fires ≥ 20`, prefer full-gate 5m netRT metrics in the economic block / blockers (`full_gate_win_rate_net_roundtrip_*`); still never auto-clears kill. Keep near_probe off (E0).
+
+```bash
+# Quality + FG markout (API)
+curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" \
+  | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('full_gate_fires')); print(d.get('full_gate_markout'))"
+```
+
+Optional later (**E3.1**): hard-require 4h trend alignment — out of scope for E3.
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
+
 
 Do **not** blindly set `KEEL_RULE_RSI_SHORT_MIN=40`. Instead, grid-search modest RSI / volume / `rsi_relax` knobs on the observed `okx_public` ledger cohort and keep only combos whose full fires clear the ~10 bps OKX taker round-trip fee hurdle without flooding.
 

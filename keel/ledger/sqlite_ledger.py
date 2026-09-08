@@ -554,15 +554,34 @@ class KeelLedger:
             horizons=horizons,
         )
 
+    def get_full_gate_markout(
+        self,
+        hours: float = 24.0,
+        horizons: tuple[int, ...] | list[int] | None = None,
+        *,
+        apply_funding: bool = False,
+        settings: Any | None = None,
+    ) -> dict[str, Any]:
+        """Fee-aware full-gate markout (local ledger; default no network funding)."""
+        from keel.ledger.full_gate import compute_full_gate_markout
+
+        return compute_full_gate_markout(
+            self._get_conn(),
+            hours=max(0.0, float(hours)),
+            horizons=horizons,
+            apply_funding=bool(apply_funding),
+            settings=settings,
+        )
+
     def get_quality_stats(self, hours: float = 24.0) -> dict[str, Any]:
         """
         Compact observation quality scorecard for the last ``hours`` window.
 
         Composes decision aggregates, market_source breakdown, near_signal_rate
         (WAIT rows whose signal_diag.nearest is long/short), E1 full_gate_fires
-        (BUY_LONG/SELL_SHORT with signal_diag.missing==[]), shadow_fill stats,
-        cheap cycle timing, and optional ``by_instrument`` breakdown —
-        read-only, no trading side effects.
+        (BUY_LONG/SELL_SHORT with signal_diag.missing==[]), E3 full_gate_markout
+        (fee-aware, no network), shadow_fill stats, cheap cycle timing, and
+        optional ``by_instrument`` breakdown — read-only, no trading side effects.
         """
         hours_f = max(0.0, float(hours))
         since = time.time() - hours_f * 3600.0
@@ -613,10 +632,26 @@ class KeelLedger:
         near_signal_rate = (near_n / wait_n) if wait_n else 0.0
 
         # E1: full-gate fires (BUY_LONG/SELL_SHORT + empty missing + rule policy).
-        from keel.ledger.full_gate import aggregate_full_gate_fires
+        # E3: compact fee-aware full_gate_markout (local ledger only; no network).
+        from keel.ledger.full_gate import (
+            aggregate_full_gate_fires,
+            compute_full_gate_markout,
+            summarize_full_gate_markout,
+        )
 
         full_gate = aggregate_full_gate_fires(conn, since=since)
         full_gate_by_inst = dict(full_gate.get("by_instrument") or {})
+        try:
+            fg_markout_raw = compute_full_gate_markout(
+                conn,
+                hours=hours_f,
+                horizons=(60, 300, 900),
+                apply_funding=False,
+                settings=None,
+            )
+            full_gate_markout = summarize_full_gate_markout(fg_markout_raw)
+        except Exception:
+            full_gate_markout = summarize_full_gate_markout(None)
 
         # Per-instrument quality breakdown (diagnosis for multi-inst observe).
         by_instrument: dict[str, dict[str, Any]] = {}
@@ -758,6 +793,7 @@ class KeelLedger:
                 "by_action": dict(full_gate.get("by_action") or {}),
                 "by_instrument": full_gate_by_inst,
             },
+            "full_gate_markout": full_gate_markout,
             "economic_evidence": econ_evidence,
             "shadow": {
                 "count": int(shadow.get("count", 0)),

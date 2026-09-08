@@ -9,6 +9,8 @@ from keel.api.deps import get_ledger
 from keel.api.schemas import (
     DecisionStatsResponse,
     FullGateFiresBlock,
+    FullGateMarkoutBlock,
+    FullGateMarkoutHorizon,
     ProbeSkipsBlock,
     QualityInstrumentStats,
     QualityShadowBlock,
@@ -124,6 +126,45 @@ def _probe_skips(raw: dict[str, Any] | None) -> ProbeSkipsBlock | None:
         last_timestamp=raw.get("last_timestamp"),
     )
 
+
+
+
+def _full_gate_markout(raw: dict[str, Any] | None) -> FullGateMarkoutBlock | None:
+    """Map ledger full_gate_markout nest into API schema (soft-fail None)."""
+    if not isinstance(raw, dict):
+        return None
+    horizons: list[FullGateMarkoutHorizon] = []
+    for row in raw.get("horizons") or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            h = int(row.get("horizon_seconds") or 0)
+        except (TypeError, ValueError):
+            continue
+        if h <= 0:
+            continue
+        horizons.append(
+            FullGateMarkoutHorizon(
+                horizon_seconds=h,
+                sample_count=int(row.get("sample_count") or 0),
+                win_rate_net_roundtrip=row.get("win_rate_net_roundtrip"),
+                avg_net_roundtrip_markout_bps=row.get("avg_net_roundtrip_markout_bps"),
+                frac_clear_net_rt_hurdle=row.get("frac_clear_net_rt_hurdle"),
+                clear_hurdle_bps=row.get("clear_hurdle_bps"),
+            )
+        )
+    return FullGateMarkoutBlock(
+        count=int(raw.get("count") or 0),
+        sample_count=int(raw.get("sample_count") or 0),
+        horizon_seconds=int(raw.get("horizon_seconds") or 300),
+        win_rate_net_roundtrip=raw.get("win_rate_net_roundtrip"),
+        avg_net_roundtrip_markout_bps=raw.get("avg_net_roundtrip_markout_bps"),
+        frac_clear_net_rt_hurdle=raw.get("frac_clear_net_rt_hurdle"),
+        clear_hurdle_bps=float(raw.get("clear_hurdle_bps") or 10.0),
+        horizons=horizons,
+        by_action={str(k): int(v) for k, v in dict(raw.get("by_action") or {}).items()},
+        cohort=str(raw.get("cohort") or "full_gate"),
+    )
 
 
 def _quality_by_instrument(raw: dict[str, Any] | None) -> dict[str, QualityInstrumentStats]:
@@ -249,6 +290,7 @@ def get_quality_stats(
     raw = ledger.get_quality_stats(hours=float(hours))
     shadow_raw = raw.get("shadow") or {}
     fg_raw = raw.get("full_gate_fires") if isinstance(raw.get("full_gate_fires"), dict) else {}
+    fg_mo = raw.get("full_gate_markout") if isinstance(raw.get("full_gate_markout"), dict) else None
     return QualityStatsResponse(
         hours=hours,
         market_source=dict(raw.get("market_source") or {}),
@@ -264,6 +306,7 @@ def get_quality_stats(
                 for k, v in dict(fg_raw.get("by_instrument") or {}).items()
             },
         ),
+        full_gate_markout=_full_gate_markout(fg_mo),
         economic_evidence=str(raw.get("economic_evidence") or "none"),
         shadow=QualityShadowBlock(
             count=int(shadow_raw.get("count", 0)),
