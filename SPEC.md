@@ -320,12 +320,15 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 **E3.1 (TF require 4h):** Quality filter after E3 cooldown. Under `trend_follow` only, `KEEL_RULE_TF_REQUIRE_4H` default **1** hard-requires `trend_15m`+`trend_1h`+`trend_4h` same direction (long all bullish / short all bearish), folded into `trend_bullish`/`trend_bearish`; `trend_gate=15m+1h+4h`; diag `require_4h_trend` / `trend_4h_confirm`; status/config `tf_require_4h`. Set `0` for E2A 15m+1h-only. `mean_revert` ignores. Cooldown defaults unchanged; still E0 freeze. See RUNBOOK.
 
+**F2a (TF extension ATR filter):** Under `trend_follow` only, `KEEL_RULE_TF_MAX_EXTENSION_ATR` default **1.5** (clamp 0.5–5; **0 disables**) rejects entries already extended vs `ema_21`: long `(price-ema_21)/atr_14 > max`, short `(ema_21-price)/atr_14 > max`. Gate `extension_ok` in `signal_diag` (+ `extension_atr` / `max_extension_atr` / `extension_headroom_atr`); `atr_14<=0` fail-closed when enabled. `mean_revert` ignores. Full-gate / backtest use diagnose. Still E0 freeze. See RUNBOOK.
+
 **F1 (isolate pre-E3.1 FG cohort):** Live economic/arming was poisoned by pre-E3.1 spray (majority `trend_4h=neutral`, ~24% 5m netRT). Tag full-gate fires as `post_e31`/`strict_tf` when `signal_diag.require_4h_trend` truthy **or** `trend_gate` contains `4h`; else `pre_e31`/`stale_pre_e31`. `/stats/quality` exposes `full_gate_fires.by_cohort`, primary `full_gate_markout` = **post_e31 only**, audit `full_gate_markout_pre_e31`. Headline `economic_evidence` / FG 5m metrics must not use pre_e31 when post exists (pre-only → `stale_pre_e31` + empty primary). Arming FG win-rate gates use post_e31 markout only; if prefer path (total FG fires≥20) but post_e31 markout sample < `min_markout_sample` (default **5**) → blocker `insufficient_post_e31_full_gate_sample` (never pre_e31 24%). Prefer threshold stays `FULL_GATE_ECON_PREFER_MIN=20`. Monitor FG chip = post primary + optional stale hint. Still E0 freeze. See RUNBOOK.
 
 ## 16. Changelog
 
 | Date | Note |
 |------|------|
+| 2026-09-08 | **F2a TF extension ATR filter**: `KEEL_RULE_TF_MAX_EXTENSION_ATR` default 1.5 (clamp 0.5–5; 0 disables); gate `extension_ok` vs ema_21/atr_14; MR ignores; E0 freeze unchanged |
 | 2026-09-08 | **F1 isolate pre-E3.1 FG**: cohort tag post_e31/strict_tf vs pre_e31/stale; quality primary markout=post_e31 + `full_gate_markout_pre_e31`; arming uses post_e31 only (`insufficient_post_e31_full_gate_sample` when n<min_markout_sample); Monitor FG chip; E0 freeze unchanged |
 | 2026-09-08 | **E3.1 TF require 4h**: `KEEL_RULE_TF_REQUIRE_4H` default 1 under trend_follow; `trend_gate=15m+1h+4h`; folds into trend_* gates; status `tf_require_4h`; MR ignores; quality filter after E3 cooldown; E0 freeze unchanged |
 | 2026-09-08 | **E3 fire cooldown + FG markout**: `KEEL_RULE_FIRE_COOLDOWN_SECONDS` (default 900) per-inst full-gate spray control; `/stats/quality.full_gate_markout`; Monitor FG 5m net; economic prefers FG when n≥20; E1 still fail (~24% net win observe); E0 freeze unchanged |

@@ -6,6 +6,7 @@ from keel.policy.stub import (
     diagnose_rule_signal,
     resolve_rule_variant,
     resolve_tf_require_4h,
+    resolve_tf_max_extension_atr,
     rule_based_decision,
 )
 from keel.policy.llm_policy import LLMDecisionPolicy
@@ -21,6 +22,7 @@ __all__ = [
     "diagnose_rule_signal",
     "resolve_rule_variant",
     "resolve_tf_require_4h",
+    "resolve_tf_max_extension_atr",
     "rule_based_decision",
     "build_decision_policy",
     "describe_policy",

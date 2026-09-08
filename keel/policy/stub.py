@@ -28,6 +28,10 @@ E3.1 (trend_follow only): ``KEEL_RULE_TF_REQUIRE_4H`` (default 1) hard-requires
 ``trend_4h`` same direction as 15m+1h (``trend_gate=15m+1h+4h``); set 0 to keep
 E2A 15m+1h-only. Folded into ``trend_bullish``/``trend_bearish``. mean_revert
 ignores this env.
+F2a (trend_follow only): ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 1.5, clamp
+0.5–5; **0 disables**) rejects entries already extended vs ``ema_21`` in ATR
+units — long ``(price-ema_21)/atr_14``, short ``(ema_21-price)/atr_14``. Gate
+``extension_ok``; atr_14<=0 fail-closed when enabled. mean_revert unchanged.
 """
 from __future__ import annotations
 
@@ -51,6 +55,10 @@ _1H_EDGE_BOOST_CAP_BPS = 5.0
 _TF_MACD_LAG_BPS_DEFAULT = 3.0
 _TF_MACD_LAG_BPS_MIN = 0.0
 _TF_MACD_LAG_BPS_MAX = 15.0
+# F2a: TF max extension from ema_21 in ATR units (0 disables).
+_TF_MAX_EXTENSION_ATR_DEFAULT = 1.5
+_TF_MAX_EXTENSION_ATR_MIN = 0.5
+_TF_MAX_EXTENSION_ATR_MAX = 5.0
 # R7/R8: near-signal edge_hint geometry (distance-to-threshold + ATR).
 # R8 defaults: slightly higher near p + softer penalty fracs so low-ATR
 # (≈18–40 bps) can still clear the 10 bps probe hurdle when residuals are modest.
@@ -71,6 +79,7 @@ _BINARY_MISSING_GATES = frozenset(
         "macd_short_ok",
         "ema_long_ok",
         "ema_short_ok",
+        "extension_ok",
     }
 )
 
@@ -172,6 +181,70 @@ def resolve_tf_require_4h() -> bool:
     return _env_bool("KEEL_RULE_TF_REQUIRE_4H", True)
 
 
+def _clamp_tf_max_extension_atr(raw: float) -> float:
+    """
+    F2a: clamp ``KEEL_RULE_TF_MAX_EXTENSION_ATR``.
+
+    ``<=0`` disables the filter (returns 0). Otherwise clamp into [0.5, 5].
+    """
+    try:
+        m = float(raw)
+    except (TypeError, ValueError):
+        m = _TF_MAX_EXTENSION_ATR_DEFAULT
+    if m != m:  # NaN
+        return _TF_MAX_EXTENSION_ATR_DEFAULT
+    if m <= 0.0:
+        return 0.0
+    return max(_TF_MAX_EXTENSION_ATR_MIN, min(_TF_MAX_EXTENSION_ATR_MAX, m))
+
+
+def resolve_tf_max_extension_atr() -> float:
+    """
+    F2a: effective TF max-extension ATR for status/config echo.
+
+    Under ``trend_follow``: clamped env (default 1.5; 0 disables).
+    Always 0.0 under ``mean_revert`` (env ignored).
+    """
+    if _rule_variant() != "trend_follow":
+        return 0.0
+    return _clamp_tf_max_extension_atr(
+        _env_float("KEEL_RULE_TF_MAX_EXTENSION_ATR", _TF_MAX_EXTENSION_ATR_DEFAULT)
+    )
+
+
+def _tf_extension_metrics(
+    snapshot: MarketSnapshot,
+    *,
+    side: str,
+    max_extension_atr: float,
+) -> tuple[bool, float | None]:
+    """
+    F2a extension vs ema_21 in ATR units.
+
+    long: (price - ema_21) / atr_14
+    short: (ema_21 - price) / atr_14
+
+    When ``max_extension_atr <= 0`` the filter is off (ok=True) but extension_atr
+    is still reported when atr_14 > 0. When enabled and atr_14 <= 0: fail-closed.
+    """
+    atr = float(getattr(snapshot, "atr_14", 0.0) or 0.0)
+    price = float(getattr(snapshot, "price", 0.0) or 0.0)
+    ema = float(getattr(snapshot, "ema_21", 0.0) or 0.0)
+    ext: float | None
+    if atr <= 0.0:
+        ext = None
+        if max_extension_atr <= 0.0:
+            return True, ext
+        return False, ext
+    if side == "short":
+        ext = (ema - price) / atr
+    else:
+        ext = (price - ema) / atr
+    if max_extension_atr <= 0.0:
+        return True, ext
+    return bool(ext <= max_extension_atr), ext
+
+
 def _rule_thresholds() -> dict[str, float | bool | str]:
     """
     Rule v3+ thresholds (env-overridable, backward-compatible KEEL_RULE_*).
@@ -214,6 +287,8 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         "tf_macd_lag_bps": 0.0,
         # E3.1: TF-only 4h hard-require (ignored / False under mean_revert).
         "require_4h_trend": False,
+        # F2a: TF-only max extension ATR (0 under mean_revert / when disabled).
+        "max_extension_atr": 0.0,
     }
     if variant == "trend_follow":
         # E2A: RSI = not overbought (long) / not oversold (short); force 15m+1h.
@@ -228,6 +303,12 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         )
         # E3.1: hard-require 4h same direction (default on; 0 = E2A 15m+1h only).
         th["require_4h_trend"] = _env_bool("KEEL_RULE_TF_REQUIRE_4H", True)
+        # F2a: reject already-extended TF entries (default 1.5 ATR; 0 disables).
+        th["max_extension_atr"] = _clamp_tf_max_extension_atr(
+            _env_float(
+                "KEEL_RULE_TF_MAX_EXTENSION_ATR", _TF_MAX_EXTENSION_ATR_DEFAULT
+            )
+        )
     return th
 
 
@@ -617,6 +698,9 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     ``macd_lag_bps`` / ``macd_lag_ok`` for TF MACD hist lag tolerance.
     E3.1: TF ``require_4h_trend`` / ``trend_4h_confirm``; when on, folds 4h
     into ``trend_bullish``/``trend_bearish`` and ``trend_gate=15m+1h+4h``.
+    F2a: TF ``max_extension_atr`` / ``extension_atr`` / ``extension_ok`` /
+    ``extension_headroom_atr`` — reject when price is already extended vs
+    ``ema_21`` beyond ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 1.5; 0 off).
     R7/R8: ``edge_hint_mode`` (``full``|``near``|``none``) plus
     ``edge_hint_sized_ev`` / ``edge_hint_distance_penalty_bps`` /
     ``edge_hint_distance_components`` / ``edge_hint_penalty_scale_bps``
@@ -698,6 +782,17 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     )
     ema_long_ok = snapshot.ema_9 >= snapshot.ema_21
     ema_short_ok = snapshot.ema_9 <= snapshot.ema_21
+
+    # F2a: TF extension vs ema_21 (ATR units); MR / disabled → ok always.
+    max_extension_atr = float(th.get("max_extension_atr") or 0.0)
+    if not is_tf:
+        max_extension_atr = 0.0
+    extension_ok_long, extension_atr_long = _tf_extension_metrics(
+        snapshot, side="long", max_extension_atr=max_extension_atr
+    )
+    extension_ok_short, extension_atr_short = _tf_extension_metrics(
+        snapshot, side="short", max_extension_atr=max_extension_atr
+    )
 
     # Volume soft uses *hard* RSI in the other-four (same as pre-relax).
     long_four = rsi_long_hard and trend_bullish and macd_long_ok and ema_long_ok
@@ -803,6 +898,13 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         "require_1h_trend": require_1h,
         "require_4h_trend": require_4h,
         "rule_variant": str(th.get("rule_variant") or "mean_revert"),
+        "max_extension_atr": max_extension_atr,
+        # Side-agnostic placeholders; refined after nearest is known.
+        "extension_atr": extension_atr_long,
+        "extension_ok": extension_ok_long if max_extension_atr <= 0 else (
+            extension_ok_long and extension_ok_short
+        ),
+        "extension_headroom_atr": None,
     }
 
     if not data_ok:
@@ -843,7 +945,42 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         nearest, missing = "long", long_missing
 
     gates["nearest"] = nearest
+    # F2a: fold extension_ok into missing for the nearest / full-gate side.
+    if max_extension_atr > 0:
+        if not extension_ok_long and "extension_ok" not in long_missing:
+            long_missing = list(long_missing) + ["extension_ok"]
+        if not extension_ok_short and "extension_ok" not in short_missing:
+            short_missing = list(short_missing) + ["extension_ok"]
+        # Recompute nearest/missing with extension included (same tie-break).
+        n_long, n_short = len(long_missing), len(short_missing)
+        if n_long == 0 and n_short == 0:
+            nearest, missing = "long", []
+        elif n_long == 0:
+            nearest, missing = "long", []
+        elif n_short == 0:
+            nearest, missing = "short", []
+        elif n_long < n_short:
+            nearest, missing = "long", long_missing
+        elif n_short < n_long:
+            nearest, missing = "short", short_missing
+        else:
+            nearest, missing = "long", long_missing
+    if nearest == "short":
+        extension_atr = extension_atr_short
+        extension_ok = extension_ok_short
+    else:
+        extension_atr = extension_atr_long
+        extension_ok = extension_ok_long
+    gates["nearest"] = nearest
     gates["missing"] = missing
+    gates["extension_atr"] = extension_atr
+    gates["extension_ok"] = extension_ok
+    if max_extension_atr > 0 and extension_atr is not None:
+        gates["extension_headroom_atr"] = float(max_extension_atr) - float(
+            extension_atr
+        )
+    else:
+        gates["extension_headroom_atr"] = None
     # Staged near_ready: only volume blocks (soft floor) OR only RSI blocks within relax band.
     near_vol = (
         missing == ["volume_ok"]
@@ -859,7 +996,13 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         and rsi_relax_enable
         and snapshot.rsi_14 >= rsi_relax_short_min
     )
-    gates["near_ready"] = near_vol or near_rsi_long or near_rsi_short
+    near_extension = (
+        missing == ["extension_ok"]
+        and max_extension_atr > 0
+        and extension_atr is not None
+        and float(extension_atr) <= float(max_extension_atr) + 0.25
+    )
+    gates["near_ready"] = near_vol or near_rsi_long or near_rsi_short or near_extension
     gates.update(
         apply_1h_edge_boost(
             _edge_hints(
@@ -906,6 +1049,8 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     bands (not-overbought / not-oversold); default ``mean_revert`` is unchanged.
     E2B (TF only): volume soft via trend+macd+ema (``soft_tf``, no RSI extreme);
     MACD lag ``KEEL_RULE_TF_MACD_LAG_BPS`` (default 3.0) for small adverse hist.
+    F2a (TF only): ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 1.5; 0 disables)
+    blocks entries already extended vs ``ema_21`` (gate ``extension_ok``).
     """
     diag = diagnose_rule_signal(snapshot)
 
@@ -921,12 +1066,20 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     atr = snapshot.atr_14
     margin = 50.0
 
+    max_ext = float(diag.get("max_extension_atr") or 0.0)
+    ext_long_ok, _ = _tf_extension_metrics(
+        snapshot, side="long", max_extension_atr=max_ext
+    )
+    ext_short_ok, _ = _tf_extension_metrics(
+        snapshot, side="short", max_extension_atr=max_ext
+    )
     long_ok = (
         diag["rsi_long_ok"]
         and diag["trend_bullish"]
         and diag["macd_long_ok"]
         and diag["ema_long_ok"]
         and diag["volume_ok"]
+        and ext_long_ok
     )
     if long_ok:
         entry = price
@@ -956,6 +1109,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         and diag["macd_short_ok"]
         and diag["ema_short_ok"]
         and diag["volume_ok"]
+        and ext_short_ok
     )
     if short_ok:
         entry = price
