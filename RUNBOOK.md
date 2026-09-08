@@ -502,6 +502,28 @@ curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" \
   | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('full_gate_fires')); print(d.get('full_gate_markout')); print(d.get('full_gate_markout_pre_e31')); print(d.get('economic_evidence'))"
 ```
 
+### Phase F0b — historical OKX candle backtest (offline)
+
+Jo: why wait for live `post_e31` n≈4 when public candles can replay the same gates? F0b pulls OKX **public** candles (paginated), builds worker-like 15m/1H/4H snapshots, runs **TF + `require_4h` + E2B soft_tf/MACD lag + fire cooldown (900s)**, and fee-aware markout on future 15m closes (taker RT ~10 bps; funding ignored).
+
+| Piece | Location |
+|-------|----------|
+| Paginated public candles | `keel.exchange.okx_public.fetch_candles` (`after`/`before`) + `fetch_candles_paginated` |
+| Walk + cooldown + markout | `keel.backtest.okx_history_rule.walk_forward_backtest` |
+| CLI | `scripts/okx_history_rule_backtest.py` |
+
+```bash
+# Public API only — strips OKX keys / KEEL_SKIP_DOTENV (never writes .env)
+PYTHONPATH=. python scripts/okx_history_rule_backtest.py \
+  --inst-ids BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP \
+  --bars-15m 700 --cooldown-seconds 900 --variant trend_follow \
+  --json-out /tmp/keel_f0b_okx_history.json
+```
+
+**vs live post_e31 n=4:** live ledger full-gates before E3.1 are pre-4h contaminated; arming waits on a tiny post_e31 sample (`insufficient_post_e31_full_gate_sample`). F0b expands closed-bar n_steps under current E3.1 rules so fire rate + 5m netRT are measurable offline. Residuals: 15m path interpolation for 60/300s, API page limits, funding ignored, no order-book fill model.
+
+**Still E0 freeze** (no near_probe, no hurdle cut, no kill clear, no push/merge/restart).
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 
