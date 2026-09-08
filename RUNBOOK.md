@@ -573,6 +573,7 @@ Kill-switch on, no orders — continuous iteration on live observation.
 - Does not disable KEEL_KILL_SWITCH (leave it 1 for read-only hanging).
 - Live without OKX triple: warn only (paper fallback likely); does not hard-refuse.
 - Vite Monitor is optional and separate: see frontend/README.md (dev server port 5173). Not started by observe scripts.
+- Monitor UI is **中文优先** ops surface（总览 status hero / 中文 tabs）；engineer chip grids live under 「技术细节」.
 
 ### Observation checklist
 
