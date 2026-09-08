@@ -40,6 +40,7 @@ from keel.exchange.okx_rest import OkxRestAdapter
 from keel.exchange.paper import PaperAdapter, PaperExchange
 from keel.exchange.protocol import ExchangeProtocol, Ticker
 from keel.execution.orchestrator import ExecutionOrchestrator, ExecutionResult
+from keel.execution.fire_cooldown import apply_rule_fire_cooldown
 from keel.execution.near_probe import (
     evaluate_near_probe,
     record_near_probe_skip,
@@ -663,6 +664,16 @@ def run_paper_cycle(
                 )
             elif action == "WAIT":
                 decision = Decision(inst_id=inst_id, action="WAIT", reason="forced wait")
+
+        # E3: per-instrument full-gate fire cooldown (TF + MR) — suppress spray.
+        # WAIT + signal_diag kept for near UX; must not count as full_gate_fire.
+        decision = apply_rule_fire_cooldown(
+            decision,
+            ledger=ledger,
+            cooldown_seconds=settings.rule_fire_cooldown_seconds,
+            now=now,
+            policy_name=audit_policy,
+        )
 
         decisions[inst_id] = decision
         ledger.record_decision(

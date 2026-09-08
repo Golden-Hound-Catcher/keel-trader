@@ -389,6 +389,32 @@ class FullGateFiresBlock(BaseModel):
     by_instrument: dict[str, int] = Field(default_factory=dict)
 
 
+class FullGateMarkoutHorizon(BaseModel):
+    """One horizon row inside quality full_gate_markout (E3)."""
+
+    horizon_seconds: int = 300
+    sample_count: int = 0
+    win_rate_net_roundtrip: float | None = None
+    avg_net_roundtrip_markout_bps: float | None = None
+    frac_clear_net_rt_hurdle: float | None = None
+    clear_hurdle_bps: float | None = None
+
+
+class FullGateMarkoutBlock(BaseModel):
+    """E3 fee-aware full-gate markout summary on quality scorecard (no network)."""
+
+    count: int = 0
+    sample_count: int = 0
+    horizon_seconds: int = 300
+    win_rate_net_roundtrip: float | None = None
+    avg_net_roundtrip_markout_bps: float | None = None
+    frac_clear_net_rt_hurdle: float | None = None
+    clear_hurdle_bps: float = 10.0
+    horizons: list[FullGateMarkoutHorizon] = Field(default_factory=list)
+    by_action: dict[str, int] = Field(default_factory=dict)
+    cohort: str = "full_gate"
+
+
 class QualityStatsResponse(BaseModel):
     """Compact observation quality scorecard (read-only)."""
 
@@ -400,6 +426,8 @@ class QualityStatsResponse(BaseModel):
     near_signal_rate: float = 0.0
     # E1: distinct from WAIT/near — rule fires with signal_diag.missing==[].
     full_gate_fires: FullGateFiresBlock = Field(default_factory=FullGateFiresBlock)
+    # E3: fee-aware full-gate markout (60/300/900; primary = 300s).
+    full_gate_markout: FullGateMarkoutBlock | None = None
     # Hint whether economic/shadow sample is probe vs full-gate (Monitor label).
     economic_evidence: str = "none"
     shadow: QualityShadowBlock = Field(default_factory=QualityShadowBlock)

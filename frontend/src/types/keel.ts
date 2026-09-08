@@ -90,6 +90,11 @@ export interface KeelArmingEconomic {
   economic_sample_source?: string
   /** E1: full-gate fire count in economic lookback (flag; gates unchanged). */
   full_gate_fires?: number
+  /** E3: when n≥20, preferred FG 5m netRT metrics (read-only). */
+  full_gate_sample_count?: number
+  full_gate_win_rate_net_roundtrip?: number | null
+  full_gate_avg_net_roundtrip_markout_bps?: number | null
+  full_gate_frac_clear_net_rt_hurdle?: number | null
   note?: string
 }
 
@@ -430,6 +435,29 @@ export interface KeelFullGateFires {
   by_instrument?: Record<string, number>
 }
 
+/** E3 fee-aware full-gate markout nest on quality scorecard. */
+export interface KeelFullGateMarkoutHorizon {
+  horizon_seconds: number
+  sample_count: number
+  win_rate_net_roundtrip?: number | null
+  avg_net_roundtrip_markout_bps?: number | null
+  frac_clear_net_rt_hurdle?: number | null
+  clear_hurdle_bps?: number | null
+}
+
+export interface KeelFullGateMarkout {
+  count: number
+  sample_count: number
+  horizon_seconds?: number
+  win_rate_net_roundtrip?: number | null
+  avg_net_roundtrip_markout_bps?: number | null
+  frac_clear_net_rt_hurdle?: number | null
+  clear_hurdle_bps?: number
+  horizons?: KeelFullGateMarkoutHorizon[]
+  by_action?: Record<string, number>
+  cohort?: string
+}
+
 export interface KeelQualityStats {
   hours: number
   market_source: Record<string, number>
@@ -439,6 +467,8 @@ export interface KeelQualityStats {
   near_signal_rate: number
   /** E1: BUY_LONG/SELL_SHORT with signal_diag.missing==[]. */
   full_gate_fires?: KeelFullGateFires
+  /** E3: fee-aware full-gate markout (primary = 300s). */
+  full_gate_markout?: KeelFullGateMarkout | null
   /** E1: none | probe | full_gate | mixed — economic sample provenance hint. */
   economic_evidence?: string
   shadow: KeelQualityShadow

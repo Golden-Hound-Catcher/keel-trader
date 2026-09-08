@@ -335,6 +335,18 @@ const qualityFullGateCount = computed(() => {
   const n = qualityStats.value?.full_gate_fires?.count
   return typeof n === 'number' && Number.isFinite(n) ? n : null
 })
+/** E3: FG 5m fee-aware netRT win rate from quality.full_gate_markout. */
+const qualityFgNetWin = computed(() => {
+  const mo = qualityStats.value?.full_gate_markout
+  const wr = mo?.win_rate_net_roundtrip
+  if (typeof wr !== 'number' || !Number.isFinite(wr)) return null
+  return wr
+})
+const qualityFgNetWinLabel = computed(() => {
+  const wr = qualityFgNetWin.value
+  if (wr == null) return '—'
+  return wr.toFixed(2)
+})
 const qualityEconomicEvidence = computed(() => {
   const e = qualityStats.value?.economic_evidence
   return typeof e === 'string' && e ? e : 'none'
@@ -1315,8 +1327,13 @@ const configStrip = computed(() => {
                 <span
                   v-if="armingEconomic.economic_sample_source"
                   class="text-[10px] font-mono text-amber-300"
-                  :title="`E1 economic sample source; full_gate_fires=${armingEconomic.full_gate_fires ?? 0}`"
+                  :title="`E3 economic sample source; full_gate_fires=${armingEconomic.full_gate_fires ?? 0}; FG 5m net wr=${armingEconomic.full_gate_win_rate_net_roundtrip ?? '—'}`"
                 >src {{ armingEconomic.economic_sample_source }}</span>
+                <span
+                  v-if="armingEconomic.full_gate_win_rate_net_roundtrip != null"
+                  class="text-[10px] font-mono text-lime-300"
+                  :title="`E3 preferred FG 5m netRT when fires≥20; n=${armingEconomic.full_gate_sample_count ?? 0}`"
+                >FG 5m net {{ Number(armingEconomic.full_gate_win_rate_net_roundtrip).toFixed(2) }}</span>
                 <span>mk{{ armingEconomic.horizon_seconds ?? 300 }}s n=<span class="text-white">{{ armingEconomic.sample_count ?? '—' }}</span></span>
                 <span>netRT wr <span class="text-white">{{
                   armingEconomic.probe_win_rate_net_roundtrip != null
@@ -1617,6 +1634,10 @@ const configStrip = computed(() => {
               class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-lime-500/40 text-lime-300"
               :title="`E1 full-gate fires (BUY_LONG/SELL_SHORT, missing==[]) n=${qualityFullGateCount ?? 0}`"
             >full-gate {{ qualityFullGateCount ?? 0 }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-lime-500/30 text-lime-200/90"
+              :title="`E3 FG 5m netRT win (fee-aware); n=${qualityStats.full_gate_markout?.sample_count ?? 0}; need ≥0.55`"
+            >FG 5m net {{ qualityFgNetWinLabel }}</span>
             <span
               class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/40 text-amber-300"
               :title="`Economic sample provenance: ${qualityEconomicEvidence} (full-gate vs old probes); keep near_probe off`"

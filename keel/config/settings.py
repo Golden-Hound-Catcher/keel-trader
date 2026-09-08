@@ -96,6 +96,8 @@ class Settings:
     # Q3.4: fee-aware min edge hurdle for near-probe (None → use RT/open fee bps).
     shadow_near_probe_min_edge_bps: float | None = None
     shadow_near_probe_edge_mode: str = "round_trip"  # round_trip|open
+    # E3: per-instrument full-gate rule fire cooldown (0 disables; clamp 0–7200).
+    rule_fire_cooldown_seconds: int = 900
     # Q3.3 fee-aware shadow markout (OKX USDT-SWAP makerU/takerU).
     # Role default taker — shadow/near_probe assume immediate fill.
     shadow_fee_role: str = "taker"  # taker|maker
@@ -234,6 +236,15 @@ OBSERVE_PRESET_SECONDS: dict[str, int] = {
     "fast": 300,
     "slow": 1800,
 }
+
+
+def clamp_rule_fire_cooldown_seconds(value: int) -> int:
+    """Clamp KEEL_RULE_FIRE_COOLDOWN_SECONDS into [0, 7200]; 0 disables (E3)."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        v = 900
+    return max(0, min(7200, v))
 
 
 def clamp_cycle_interval_seconds(value: int) -> int:
@@ -441,6 +452,9 @@ def get_settings() -> Settings:
         shadow_near_probe_min_confidence=_env_float("KEEL_SHADOW_NEAR_PROBE_MIN_CONFIDENCE", 0.0),
         shadow_near_probe_min_edge_bps=_env_optional_float("KEEL_SHADOW_NEAR_PROBE_MIN_EDGE_BPS"),
         shadow_near_probe_edge_mode=_env_shadow_near_probe_edge_mode(),
+        rule_fire_cooldown_seconds=clamp_rule_fire_cooldown_seconds(
+            _env_int("KEEL_RULE_FIRE_COOLDOWN_SECONDS", 900)
+        ),
         shadow_fee_role=_env_shadow_fee_role(),
         shadow_maker_fee_bps=_env_optional_float("KEEL_SHADOW_MAKER_FEE_BPS"),
         shadow_taker_fee_bps=_env_optional_float("KEEL_SHADOW_TAKER_FEE_BPS"),
