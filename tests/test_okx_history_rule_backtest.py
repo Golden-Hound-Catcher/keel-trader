@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from keel.backtest.okx_history_rule import (
+    barrier_exit_markout,
     build_snapshot_at,
     fee_aware_markouts,
     forced_e31_rule_env,
@@ -83,6 +84,8 @@ class TestRequire4hPath(unittest.TestCase):
             "KEEL_RULE_VARIANT",
             "KEEL_RULE_TF_REQUIRE_4H",
             "KEEL_RULE_TF_MACD_LAG_BPS",
+            "KEEL_RULE_TF_MAX_EXTENSION_ATR",
+            "KEEL_RULE_TF_PULLBACK",
         ):
             os.environ.pop(k, None)
 
@@ -126,6 +129,8 @@ class TestCooldownWalk(unittest.TestCase):
             "KEEL_RULE_VARIANT",
             "KEEL_RULE_TF_REQUIRE_4H",
             "KEEL_RULE_TF_MACD_LAG_BPS",
+            "KEEL_RULE_TF_MAX_EXTENSION_ATR",
+            "KEEL_RULE_TF_PULLBACK",
         ):
             os.environ.pop(k, None)
 
@@ -226,6 +231,171 @@ class TestScriptSmoke(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("bars-15m", proc.stdout)
+
+    def test_compare_script_help(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        env = dict(os.environ)
+        env["KEEL_SKIP_DOTENV"] = "1"
+        for k in (
+            "KEEL_OKX_API_KEY",
+            "KEEL_OKX_SECRET_KEY",
+            "KEEL_OKX_PASSPHRASE",
+            "OKX_API_KEY",
+            "OKX_SECRET_KEY",
+            "OKX_PASSPHRASE",
+        ):
+            env[k] = ""
+        env["PYTHONPATH"] = str(root)
+        proc = subprocess.run(
+            [sys.executable, str(root / "scripts" / "okx_history_strategy_compare.py"), "--help"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("cooldown-seconds", proc.stdout)
+
+
+class TestBarrierExitMarkout(unittest.TestCase):
+    """F2c: ATR barrier TP/SL/timeout on subsequent 15m OHLC path."""
+
+    def test_long_hits_tp(self):
+        # entry at close of bar0 (ts=900); next bar high clears TP.
+        atr = 1.0
+        entry = 100.0
+        tp = entry + 2.2 * atr  # 102.2
+        candles = [
+            Candle(0.0, 100, 100.5, 99.5, 100.0, 1.0),
+            Candle(900.0, 100, 103.0, 99.8, 102.5, 1.0),  # high hits TP
+        ]
+        row = barrier_exit_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=900.0,
+            atr_14=atr,
+            candles_15m=candles,
+            open_fee_bps=5.0,
+            clear_hurdle_bps=10.0,
+        )
+        self.assertTrue(row["available"])
+        self.assertEqual(row["exit_reason"], "tp")
+        self.assertAlmostEqual(row["exit_price"], tp, places=5)
+        # gross = (102.2-100)/100 * 1e4 = 220 bps; net_rt = 220 - 10 = 210
+        self.assertAlmostEqual(row["gross_bps"], 220.0, places=4)
+        self.assertAlmostEqual(row["net_rt_bps"], 210.0, places=4)
+        self.assertTrue(row["clears_hurdle"])
+
+    def test_long_hits_sl_before_tp_same_bar(self):
+        atr = 1.0
+        entry = 100.0
+        sl = entry - 1.0 * atr  # 99.0
+        candles = [
+            Candle(0.0, 100, 100.5, 99.5, 100.0, 1.0),
+            Candle(900.0, 100, 103.0, 98.5, 101.0, 1.0),  # both SL+TP → SL first
+        ]
+        row = barrier_exit_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=900.0,
+            atr_14=atr,
+            candles_15m=candles,
+            open_fee_bps=5.0,
+        )
+        self.assertTrue(row["available"])
+        self.assertEqual(row["exit_reason"], "sl")
+        self.assertAlmostEqual(row["exit_price"], sl, places=5)
+
+    def test_timeout_uses_horizon_price(self):
+        atr = 1.0
+        entry = 100.0
+        # Next bars never hit TP/SL; timeout at 900s → close of next bar path.
+        candles = [
+            Candle(0.0, 100, 100.2, 99.8, 100.0, 1.0),
+            Candle(900.0, 100, 100.4, 99.7, 100.1, 1.0),  # +10 bps at close
+        ]
+        row = barrier_exit_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=900.0,
+            atr_14=atr,
+            candles_15m=candles,
+            timeout_seconds=900,
+            open_fee_bps=5.0,
+        )
+        self.assertTrue(row["available"])
+        self.assertEqual(row["exit_reason"], "timeout")
+        self.assertAlmostEqual(row["gross_bps"], 10.0, places=4)
+        self.assertAlmostEqual(row["net_rt_bps"], 0.0, places=4)
+
+    def test_short_hits_tp(self):
+        atr = 2.0
+        entry = 200.0
+        tp = entry - 2.2 * atr  # 195.6
+        candles = [
+            Candle(0.0, 200, 201, 199, 200.0, 1.0),
+            Candle(900.0, 200, 200.5, 195.0, 196.0, 1.0),
+        ]
+        row = barrier_exit_markout(
+            action="SELL_SHORT",
+            entry_price=entry,
+            entry_ts=900.0,
+            atr_14=atr,
+            candles_15m=candles,
+            open_fee_bps=5.0,
+        )
+        self.assertTrue(row["available"])
+        self.assertEqual(row["exit_reason"], "tp")
+        self.assertAlmostEqual(row["exit_price"], tp, places=5)
+
+
+class TestWalkForwardBarrierFlag(unittest.TestCase):
+    def tearDown(self) -> None:
+        for k in (
+            "KEEL_RULE_VARIANT",
+            "KEEL_RULE_TF_REQUIRE_4H",
+            "KEEL_RULE_TF_MACD_LAG_BPS",
+            "KEEL_RULE_TF_MAX_EXTENSION_ATR",
+            "KEEL_RULE_TF_PULLBACK",
+        ):
+            os.environ.pop(k, None)
+
+    def test_include_barrier_key_present(self):
+        # Minimal synthetic rising series — may or may not fire; just ensure
+        # summarize exposes barrier=None/dict without crashing when flag on.
+        start = 1_700_000_000_000.0
+        rows_15 = _rising_rows(80, start_ms=start, step_ms=900_000.0)
+        rows_1h = _rising_rows(40, start_ms=start, step_ms=3_600_000.0)
+        rows_4h = _rising_rows(30, start_ms=start, step_ms=14_400_000.0)
+        series = rows_to_series("BTC-USDT-SWAP", rows_15, rows_1h, rows_4h)
+        with patch(
+            "keel.backtest.okx_history_rule.rule_based_decision",
+            return_value=Decision(
+                inst_id="BTC-USDT-SWAP",
+                action="WAIT",
+                confidence=0.0,
+                reason="test",
+                entry_price=0.0,
+                take_profit=0.0,
+                stop_loss=0.0,
+                signal_diag={"missing": ["rsi_ok"]},
+            ),
+        ):
+            summary = walk_forward_backtest(
+                [series],
+                variant="trend_follow",
+                cooldown_seconds=900,
+                include_barrier=True,
+            )
+        self.assertIn("barrier", summary["markout"])
+        # No fires → barrier summary still built with n_available=0
+        b = summary["markout"]["barrier"]
+        self.assertIsNotNone(b)
+        self.assertEqual(b["n_available"], 0)
 
 
 if __name__ == "__main__":
