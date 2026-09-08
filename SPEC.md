@@ -324,6 +324,8 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 **F2b (TF RSI pullback):** Under `trend_follow` only, master `KEEL_RULE_TF_PULLBACK` default **0** (off after over-filter backtest; set `1` to enable). Long requires `rsi_14 <= KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX` (default **52**); short requires `rsi_14 >= KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN` (default **48**); clamp 20–80. Gate `pullback_ok` in `signal_diag` (+ `rsi_pullback_long_max` / `rsi_pullback_short_min` / `tf_pullback_enabled`). `mean_revert` ignores. Full-gate / backtest use diagnose. Still E0 freeze. See RUNBOOK.
 
+**F4 (multi-TF horizon-aligned train/valid):** Per entry T∈{5m,15m,30m,1H,4H} same Jo calendar split; markout/barrier = bar multiples of T (no short/long mix); modest train-only grid → one frozen valid score per T. CLI `scripts/okx_multitf_train_valid.py`. E0 freeze. See RUNBOOK.
+
 **F3 (train/valid strategy):** Jo split train[-14d,-7d) / valid[-7d,now); grid + select on train only (max 5m netRT win, FG≥10, avg≥−5bps); freeze one config; validate once vs F0b baseline on valid. CLI `scripts/okx_train_valid_strategy.py`. No peeking; E0 freeze. See RUNBOOK.
 
 **F2c (strategy compare):** Offline side-by-side on same OKX candles: (A) TF E3.1 ext=0 pullback=0 fixed-horizon markout; (B) mean_revert same cooldown; (C) optional TF ATR barrier exit (TP 2.2×ATR / SL 1.0×ATR / timeout 900s on 15m OHLC; measurement only). CLI `scripts/okx_history_strategy_compare.py`. Still E0 freeze — no live variant/exit flip from F2c alone. See RUNBOOK.
@@ -334,6 +336,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 | Date | Note |
 |------|------|
+| 2026-09-08 | **F4 multi-TF horizon-aligned train/valid**: short-vs-short/long-vs-long; bar-scaled markout per T; `okx_multitf_train_valid.py`; E0 freeze |
 | 2026-09-08 | **F3 train/valid strategy**: Jo [-14d,-7d)/[-7d,now) split; train-only grid+select; one frozen valid score vs F0b; `okx_train_valid_strategy.py`; E0 freeze |
 | 2026-09-08 | **F2c strategy compare**: same-candle TF E3.1 vs mean_revert vs optional TF barrier markout (TP 2.2 / SL 1.0 ATR / 900s); CLI `okx_history_strategy_compare.py`; measurement only; E0 freeze unchanged |
 | 2026-09-08 | **F2b TF RSI pullback**: `KEEL_RULE_TF_PULLBACK` default 0 (off after over-filter); long `rsi<=52` / short `rsi>=48` (`KEEL_RULE_TF_RSI_PULLBACK_*`); gate `pullback_ok`; MR ignores; E0 freeze unchanged |

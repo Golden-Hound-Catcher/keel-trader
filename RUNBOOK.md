@@ -545,6 +545,43 @@ PYTHONPATH=. python scripts/okx_history_rule_backtest.py \
 
 Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear).
 
+### Phase F4 — multi-TF short-vs-short / long-vs-long train/valid
+
+Jo's point (mandatory): **do not mix horizons**. Short entry TF uses short hold/markout; long entry TF uses long hold/markout. Entry bars (OKX): **5m, 15m, 30m, 1H, 4H**.
+
+**Protocol per entry timeframe T**
+
+1. Fetch OKX public candles for T + confirm mid/high (practical): 5m→15m/1H; 15m→1H/4H; 30m→1H/4H; 1H→4H/1D; 4H→4H/1D.
+2. **Same calendar split** for all T: train **[-14d, -7d)**, valid **[-7d, now)**.
+3. **Markout / barrier horizons scale with T** (bar multiples — not fixed 300s wall-clock when that mismatches T):
+   - 5m → primary 3–6 bars (15–30m), selection primary **4 bars / 1200s**, secondary ~12 bars
+   - 15m → primary ~4–8 bars (1–2h), selection **6 bars / 5400s**
+   - 30m → primary ~4–8 bars, selection **6 bars / 10800s**
+   - 1H → primary ~4–8 bars (4–8h), selection **6 bars / 21600s**
+   - 4H → primary ~3–6 bars (12–24h), selection **4 bars / 57600s**
+   Fee-aware net RT still applied (taker RT ~10bps; funding ignored).
+4. Modest grid **per T on train only**; freeze ONE config; validate once on holdout.
+5. CLI prints a table per T: train best + valid win/avg/n.
+
+| Piece | Location |
+|-------|----------|
+| Horizon map + per-T grid | `keel.backtest.multitf` |
+| Walk accepts `entry_bar` + bar-scaled horizons | `walk_forward_backtest` |
+| CLI | `scripts/okx_multitf_train_valid.py` |
+| Unit tests | `tests/test_okx_multitf_horizons.py` |
+
+**Offline result (BTC, all five TFs, modest grid=15/T, skip-barrier):** no cell met train avg_net≥−5bps on any T. Valid primary wins: **5m 23.4%** (n=77, avg −16.4bps) / **15m 15.8%** (n=19) / **30m 38.5%** (n=13) / **1H 50%** (n=2, tiny) / **4H 0%** (n=3, tiny). All ≪0.55 (or n too small) — do not claim success / do not arm.
+
+```bash
+# Public API only — strips OKX keys / KEEL_SKIP_DOTENV (never writes .env)
+PYTHONPATH=. python scripts/okx_multitf_train_valid.py \
+  --inst-ids BTC-USDT-SWAP \
+  --entry-bars 5m,15m,30m,1H,4H \
+  --json-out /tmp/keel_f4_multitf.json
+```
+
+**Residuals:** horizon alignment is the point of F4 (short-vs-short / long-vs-long); closed-bar higher-TF + train truncate; per-T grid selection bias — valid is the only honest score. Still **E0 freeze**.
+
 ### Phase F3 — train / validation strategy pipeline (no peeking)
 
 Jo protocol (offline, public OKX candles only):
