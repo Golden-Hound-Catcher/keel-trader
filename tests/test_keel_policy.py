@@ -1407,6 +1407,7 @@ class TestE2ATrendFollowVariant(unittest.TestCase):
         "KEEL_RULE_VARIANT",
         "KEEL_RULE_TF_RSI_LONG_MAX",
         "KEEL_RULE_TF_RSI_SHORT_MIN",
+        "KEEL_RULE_TF_REQUIRE_4H",
         "KEEL_RULE_REQUIRE_1H_TREND",
         "KEEL_RULE_RSI_RELAX_ENABLE",
         "KEEL_RULE_MIN_VOLUME_RATIO",
@@ -1458,6 +1459,8 @@ class TestE2ATrendFollowVariant(unittest.TestCase):
         os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
         # Prove TF forces 1h even when this is explicitly off.
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
+        # E3.1 default is on; keep E2A suite on 15m+1h-only (4h covered separately).
+        os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "0"
 
     def test_default_mean_revert_mid_rsi_waits(self):
         """Without variant env, mid RSI still needs mean-reversion extreme."""
@@ -1593,6 +1596,7 @@ class TestE2BTrendFollowVolumeMacdLag(unittest.TestCase):
         "KEEL_RULE_TF_RSI_LONG_MAX",
         "KEEL_RULE_TF_RSI_SHORT_MIN",
         "KEEL_RULE_TF_MACD_LAG_BPS",
+        "KEEL_RULE_TF_REQUIRE_4H",
         "KEEL_RULE_REQUIRE_1H_TREND",
         "KEEL_RULE_RSI_RELAX_ENABLE",
         "KEEL_RULE_MIN_VOLUME_RATIO",
@@ -1649,6 +1653,8 @@ class TestE2BTrendFollowVolumeMacdLag(unittest.TestCase):
         os.environ["KEEL_RULE_VOLUME_SOFT_FLOOR"] = "0.35"
         os.environ["KEEL_RULE_TF_MACD_LAG_BPS"] = str(macd_lag)
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
+        # Isolate E2B from E3.1 4h default (suite snaps often use trend_4h=neutral).
+        os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "0"
 
     def test_tf_soft_volume_mid_rsi_fires(self):
         """TF: mid RSI + vol above soft floor + trend/macd/ema → soft_tf full gate."""
@@ -1819,5 +1825,181 @@ class TestE2BTrendFollowVolumeMacdLag(unittest.TestCase):
             self.assertFalse(d.signal_diag["macd_short_ok"])
             self.assertAlmostEqual(d.signal_diag["macd_lag_bps"], 0.0)
             self.assertFalse(d.signal_diag["macd_lag_ok"])
+        finally:
+            self._restore(prev)
+
+class TestE31TfRequire4h(unittest.TestCase):
+    """E3.1: KEEL_RULE_TF_REQUIRE_4H (default on) under trend_follow only."""
+
+    _KEYS = (
+        "KEEL_RULE_VARIANT",
+        "KEEL_RULE_TF_REQUIRE_4H",
+        "KEEL_RULE_TF_RSI_LONG_MAX",
+        "KEEL_RULE_TF_RSI_SHORT_MIN",
+        "KEEL_RULE_TF_MACD_LAG_BPS",
+        "KEEL_RULE_REQUIRE_1H_TREND",
+        "KEEL_RULE_RSI_RELAX_ENABLE",
+        "KEEL_RULE_MIN_VOLUME_RATIO",
+        "KEEL_RULE_MIN_VOLUME_PERCENTILE",
+        "KEEL_RULE_VOLUME_SOFT_ENABLE",
+    )
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="ETH-USDT-SWAP",
+            name="ETH",
+            timestamp=1.0,
+            price=3500.0,
+            atr_14=40.0,
+            rsi_14=50.0,
+            trend_15m="bullish",
+            trend_1h="bullish",
+            trend_4h="bullish",
+            macd_histogram=2.0,
+            ema_9=3510.0,
+            ema_21=3490.0,
+            volume_ratio=1.2,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def _save(self):
+        import os
+
+        return {k: os.environ.get(k) for k in self._KEYS}
+
+    def _restore(self, prev):
+        import os
+
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _enable_tf(self, *, require_4h: str | None = None):
+        import os
+
+        os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
+        os.environ["KEEL_RULE_MIN_VOLUME_RATIO"] = "0.5"
+        os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+        os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
+        os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
+        if require_4h is None:
+            os.environ.pop("KEEL_RULE_TF_REQUIRE_4H", None)  # default on
+        else:
+            os.environ["KEEL_RULE_TF_REQUIRE_4H"] = require_4h
+
+    def test_default_require4h_blocks_neutral_4h(self):
+        """TF default: 15m+1h bullish but 4h neutral → trend_bullish missing."""
+        prev = self._save()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(self._snap(trend_4h="neutral"))
+            self.assertEqual(d.action, "WAIT")
+            self.assertTrue(d.signal_diag["require_4h_trend"])
+            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h+4h")
+            self.assertFalse(d.signal_diag["trend_4h_confirm"])
+            self.assertFalse(d.signal_diag["trend_bullish"])
+            self.assertIn("trend_bullish", d.signal_diag["missing"])
+        finally:
+            self._restore(prev)
+
+    def test_default_require4h_blocks_mismatch_4h(self):
+        prev = self._save()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(self._snap(trend_4h="bearish"))
+            self.assertEqual(d.action, "WAIT")
+            self.assertIn("trend_bullish", d.signal_diag["missing"])
+            self.assertFalse(d.signal_diag["trend_4h_confirm"])
+        finally:
+            self._restore(prev)
+
+    def test_all_three_align_fires_long(self):
+        prev = self._save()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(self._snap())
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertTrue(d.signal_diag["require_4h_trend"])
+            self.assertTrue(d.signal_diag["trend_4h_confirm"])
+            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h+4h")
+            self.assertTrue(d.signal_diag["trend_bullish"])
+        finally:
+            self._restore(prev)
+
+    def test_all_three_align_fires_short(self):
+        prev = self._save()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(
+                self._snap(
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    trend_4h="bearish",
+                    macd_histogram=-2.0,
+                    ema_9=3490.0,
+                    ema_21=3510.0,
+                )
+            )
+            self.assertEqual(d.action, "SELL_SHORT")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h+4h")
+            self.assertTrue(d.signal_diag["trend_bearish"])
+            self.assertTrue(d.signal_diag["trend_4h_confirm"])
+        finally:
+            self._restore(prev)
+
+    def test_require4h_off_allows_neutral_4h(self):
+        """KEEL_RULE_TF_REQUIRE_4H=0 keeps E2A 15m+1h-only behavior."""
+        prev = self._save()
+        try:
+            self._enable_tf(require_4h="0")
+            d = rule_based_decision(self._snap(trend_4h="neutral"))
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertFalse(d.signal_diag["require_4h_trend"])
+            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h")
+            self.assertFalse(d.signal_diag["trend_4h_confirm"])
+            self.assertTrue(d.signal_diag["trend_bullish"])
+        finally:
+            self._restore(prev)
+
+    def test_mean_revert_ignores_require4h_env(self):
+        """MR ignores KEEL_RULE_TF_REQUIRE_4H; soft 15m gate unchanged."""
+        import os
+        from keel.policy import diagnose_rule_signal, resolve_tf_require_4h
+
+        prev = self._save()
+        try:
+            for k in self._KEYS:
+                os.environ.pop(k, None)
+            os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "1"
+            os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+            os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
+            # MR mid RSI waits; 4h env must not flip require_4h_trend on.
+            diag = diagnose_rule_signal(self._snap(rsi_14=50.0, trend_4h="neutral"))
+            self.assertEqual(diag["rule_variant"], "mean_revert")
+            self.assertFalse(diag["require_4h_trend"])
+            self.assertEqual(diag["trend_gate"], "15m")
+            self.assertFalse(resolve_tf_require_4h())
+        finally:
+            self._restore(prev)
+
+    def test_resolve_tf_require_4h_echo(self):
+        import os
+        from keel.policy import resolve_tf_require_4h
+
+        prev = self._save()
+        try:
+            for k in self._KEYS:
+                os.environ.pop(k, None)
+            self.assertFalse(resolve_tf_require_4h())
+            os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
+            self.assertTrue(resolve_tf_require_4h())
+            os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "0"
+            self.assertFalse(resolve_tf_require_4h())
         finally:
             self._restore(prev)

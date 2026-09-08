@@ -390,7 +390,7 @@ Live observe showed `full_gate_fires=0` under default **mean-reversion** RSI (WA
 | `KEEL_RULE_TF_RSI_SHORT_MIN` | `32` | Short OK when RSI **not oversold** (`rsi_14 ≥ min`) |
 
 When `trend_follow`:
-- **Hard-require** 15m+1h same direction (forces `require_1h` behavior regardless of `KEEL_RULE_REQUIRE_1H_TREND`).
+- **Hard-require** 15m+1h same direction (forces `require_1h` behavior regardless of `KEEL_RULE_REQUIRE_1H_TREND`). E3.1 adds optional/default 4h via `KEEL_RULE_TF_REQUIRE_4H`.
 - Keep MACD / EMA / volume gates (volume soft path still OK).
 - RSI side gate **keys** stay `rsi_long_ok` / `rsi_short_ok` so E1 full_gate + near-signal UX keep working.
 - `signal_diag.rule_variant` + reason strings mention `trend_follow` when firing.
@@ -466,7 +466,23 @@ curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" \
   | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('full_gate_fires')); print(d.get('full_gate_markout'))"
 ```
 
-Optional later (**E3.1**): hard-require 4h trend alignment — out of scope for E3.
+### Phase E3.1 — TF require 4h trend alignment (quality filter)
+
+After E3 cooldown, FG markout still fails (~24% 5m netRT win). Many historical `SELL_SHORT` full-gates had `trend_4h=neutral` while 15m+1h were bearish. Recent ETH `BUY_LONG` already had t15/t1h/t4h all bullish — that is the cohort to keep.
+
+| Knob | Default | Notes |
+|------|---------|--------|
+| `KEEL_RULE_TF_REQUIRE_4H` | **1** | `trend_follow` only. When on: long needs `trend_15m`+`trend_1h`+`trend_4h` all bullish; short all bearish. Folded into `trend_bullish`/`trend_bearish` (same missing keys). `trend_gate=15m+1h+4h`. Set **0** to restore E2A 15m+1h-only. **mean_revert ignores** this env. |
+
+Audit: `signal_diag.require_4h_trend`, `trend_4h_confirm`, `trend_gate`. Status/config echo `tf_require_4h` (effective; False under MR). Cooldown defaults unchanged. **Still E0 freeze** (no near_probe, no hurdle cut, no kill clear).
+
+```bash
+# Local .env only — never commit
+KEEL_RULE_VARIANT=trend_follow
+# KEEL_RULE_TF_REQUIRE_4H=1   # default; set 0 to disable 4h hard gate
+```
+
+Restart worker after edit. No live orders.
 
 ### Phase R4 — fee-aware Rule param suggest (offline)
 

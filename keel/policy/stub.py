@@ -24,6 +24,10 @@ E2B (trend_follow only): volume soft path without RSI extreme when
 trend+macd+ema align (``volume_path=soft_tf``); small MACD histogram lag
 tolerance via ``KEEL_RULE_TF_MACD_LAG_BPS`` (default 3.0, clamp 0–15).
 mean_revert volume soft + strict MACD sign unchanged.
+E3.1 (trend_follow only): ``KEEL_RULE_TF_REQUIRE_4H`` (default 1) hard-requires
+``trend_4h`` same direction as 15m+1h (``trend_gate=15m+1h+4h``); set 0 to keep
+E2A 15m+1h-only. Folded into ``trend_bullish``/``trend_bearish``. mean_revert
+ignores this env.
 """
 from __future__ import annotations
 
@@ -142,7 +146,7 @@ def _rule_variant() -> str:
     E2A: rule semantics variant (env ``KEEL_RULE_VARIANT``).
 
     - ``mean_revert`` (default): existing RSI extremes + soft 1h confirm.
-    - ``trend_follow``: hard 15m+1h alignment; RSI = not overbought/oversold.
+    - ``trend_follow``: hard 15m+1h (+4h when TF_REQUIRE_4H); RSI = not OB/OS.
     Unknown values fall back to ``mean_revert``.
     """
     raw = (os.environ.get("KEEL_RULE_VARIANT") or "mean_revert").strip().lower()
@@ -154,6 +158,18 @@ def _rule_variant() -> str:
 def resolve_rule_variant() -> str:
     """Public alias for status/config echo (same as diagnose ``rule_variant``)."""
     return _rule_variant()
+
+
+def resolve_tf_require_4h() -> bool:
+    """
+    E3.1: effective TF 4h hard-require for status/config echo.
+
+    True only under ``trend_follow`` when ``KEEL_RULE_TF_REQUIRE_4H`` is on
+    (default on). Always False under ``mean_revert`` (env ignored).
+    """
+    if _rule_variant() != "trend_follow":
+        return False
+    return _env_bool("KEEL_RULE_TF_REQUIRE_4H", True)
 
 
 def _rule_thresholds() -> dict[str, float | bool | str]:
@@ -196,6 +212,8 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         "rule_variant": variant,
         # E2B: TF-only MACD lag (0 under mean_revert).
         "tf_macd_lag_bps": 0.0,
+        # E3.1: TF-only 4h hard-require (ignored / False under mean_revert).
+        "require_4h_trend": False,
     }
     if variant == "trend_follow":
         # E2A: RSI = not overbought (long) / not oversold (short); force 15m+1h.
@@ -208,6 +226,8 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         th["tf_macd_lag_bps"] = _clamp_tf_macd_lag_bps(
             _env_float("KEEL_RULE_TF_MACD_LAG_BPS", _TF_MACD_LAG_BPS_DEFAULT)
         )
+        # E3.1: hard-require 4h same direction (default on; 0 = E2A 15m+1h only).
+        th["require_4h_trend"] = _env_bool("KEEL_RULE_TF_REQUIRE_4H", True)
     return th
 
 
@@ -586,7 +606,8 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     ``volume_percentile``, ``rsi_soft_pass``, ``rsi_path``, ``near_ready``,
     ``atr_bps`` / ``expected_tp_bps`` / ``edge_hint_bps``.
     R5: ``trend_15m`` / ``trend_1h`` / ``trend_4h``, ``trend_gate``
-    (``15m`` or ``15m+1h``), ``trend_1h_confirm``, ``require_1h_trend``.
+    (``15m`` / ``15m+1h`` / ``15m+1h+4h``), ``trend_1h_confirm``,
+    ``require_1h_trend``.
     R6: optional 1h-confirm ``edge_hint`` boost (``edge_hint_1h_boosted``,
     ``edge_hint_boost_mult``, ``edge_hint_bps_raw`` when applied).
     E2A: ``rule_variant`` (``mean_revert``|``trend_follow``); TF forces
@@ -594,6 +615,8 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     ``rsi_long_ok`` / ``rsi_short_ok``).
     E2B: TF ``volume_path=soft_tf`` (trend+macd+ema, no RSI extreme);
     ``macd_lag_bps`` / ``macd_lag_ok`` for TF MACD hist lag tolerance.
+    E3.1: TF ``require_4h_trend`` / ``trend_4h_confirm``; when on, folds 4h
+    into ``trend_bullish``/``trend_bearish`` and ``trend_gate=15m+1h+4h``.
     R7/R8: ``edge_hint_mode`` (``full``|``near``|``none``) plus
     ``edge_hint_sized_ev`` / ``edge_hint_distance_penalty_bps`` /
     ``edge_hint_distance_components`` / ``edge_hint_penalty_scale_bps``
@@ -617,15 +640,27 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     rsi_long_hard = snapshot.rsi_14 <= rsi_long_max
     rsi_short_hard = snapshot.rsi_14 >= rsi_short_min
     require_1h = bool(th["require_1h_trend"])
+    require_4h = bool(th.get("require_4h_trend", False))
     trend_15m = str(snapshot.trend_15m or "neutral")
     trend_1h = str(getattr(snapshot, "trend_1h", "neutral") or "neutral")
     trend_4h = str(getattr(snapshot, "trend_4h", "neutral") or "neutral")
-    # Entry gate is always 15m; optional hard 1h same-direction confirmation.
+    # Entry gate is always 15m; optional hard 1h / 4h same-direction confirmation.
     trend_15m_bullish = trend_15m == "bullish"
     trend_15m_bearish = trend_15m == "bearish"
     trend_1h_confirm_long = trend_1h == "bullish"
     trend_1h_confirm_short = trend_1h == "bearish"
-    if require_1h:
+    trend_4h_confirm_long = trend_4h == "bullish"
+    trend_4h_confirm_short = trend_4h == "bearish"
+    if require_1h and require_4h:
+        # E3.1 TF default: 15m+1h+4h all same direction (folded into trend_*).
+        trend_bullish = (
+            trend_15m_bullish and trend_1h_confirm_long and trend_4h_confirm_long
+        )
+        trend_bearish = (
+            trend_15m_bearish and trend_1h_confirm_short and trend_4h_confirm_short
+        )
+        trend_gate = "15m+1h+4h"
+    elif require_1h:
         trend_bullish = trend_15m_bullish and trend_1h_confirm_long
         trend_bearish = trend_15m_bearish and trend_1h_confirm_short
         trend_gate = "15m+1h"
@@ -633,13 +668,16 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         trend_bullish = trend_15m_bullish
         trend_bearish = trend_15m_bearish
         trend_gate = "15m"
-    # Soft confirm flag: 1h matches directional 15m (audit only when require=0).
+    # Soft confirm flags: higher TF matches directional 15m (audit when soft).
     if trend_15m_bullish:
         trend_1h_confirm = trend_1h_confirm_long
+        trend_4h_confirm = trend_4h_confirm_long
     elif trend_15m_bearish:
         trend_1h_confirm = trend_1h_confirm_short
+        trend_4h_confirm = trend_4h_confirm_short
     else:
         trend_1h_confirm = False
+        trend_4h_confirm = False
     # E2B: TF MACD lag — allow small adverse hist (bps of price); MR strict.
     variant = str(th.get("rule_variant") or "mean_revert")
     is_tf = variant == "trend_follow"
@@ -761,7 +799,9 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         "trend_4h": trend_4h,
         "trend_gate": trend_gate,
         "trend_1h_confirm": trend_1h_confirm,
+        "trend_4h_confirm": trend_4h_confirm,
         "require_1h_trend": require_1h,
+        "require_4h_trend": require_4h,
         "rule_variant": str(th.get("rule_variant") or "mean_revert"),
     }
 
