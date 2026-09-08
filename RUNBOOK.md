@@ -502,6 +502,23 @@ curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" \
   | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('full_gate_fires')); print(d.get('full_gate_markout')); print(d.get('full_gate_markout_pre_e31')); print(d.get('economic_evidence'))"
 ```
 
+### Phase F2a — TF extension ATR entry filter (quality)
+
+Jo: F0b offline under TF+4h+cooldown → ~60 FG / ~7d BTC+ETH+SOL but **5m netRT win ≈10%**, avg ≈−11 bps, frac_clear_10bps 0% — still ≪0.55. F2a is entry quality: do not chase an already-extended move.
+
+| Env | Default | Behavior |
+|-----|---------|----------|
+| `KEEL_RULE_TF_MAX_EXTENSION_ATR` | **0** (off) | `trend_follow` only. Long rejects when `(price-ema_21)/atr_14 > max`; short when `(ema_21-price)/atr_14 > max`. Clamp **0.5–5** when enabled; **0 disables**. `atr_14<=0` → fail-closed for this gate when enabled. **mean_revert ignores**. |
+
+Audit: `signal_diag.extension_atr`, `max_extension_atr`, `extension_ok`, `extension_headroom_atr` (soft near distance). Folded into `missing` / full-gate (diagnose + `rule_based_decision`). Backtest picks it up automatically via diagnose.
+
+```bash
+# Optional local .env (never commit). 0 disables for A/B.
+# KEEL_RULE_TF_MAX_EXTENSION_ATR=1.5
+```
+
+Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). Out of scope: F2b hold horizon / F2c alt strategy.
+
 ### Phase F0b — historical OKX candle backtest (offline)
 
 Jo: why wait for live `post_e31` n≈4 when public candles can replay the same gates? F0b pulls OKX **public** candles (paginated), builds worker-like 15m/1H/4H snapshots, runs **TF + `require_4h` + E2B soft_tf/MACD lag + fire cooldown (900s)**, and fee-aware markout on future 15m closes (taker RT ~10 bps; funding ignored).

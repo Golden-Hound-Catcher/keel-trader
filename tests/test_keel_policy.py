@@ -1408,6 +1408,7 @@ class TestE2ATrendFollowVariant(unittest.TestCase):
         "KEEL_RULE_TF_RSI_LONG_MAX",
         "KEEL_RULE_TF_RSI_SHORT_MIN",
         "KEEL_RULE_TF_REQUIRE_4H",
+        "KEEL_RULE_TF_MAX_EXTENSION_ATR",
         "KEEL_RULE_REQUIRE_1H_TREND",
         "KEEL_RULE_RSI_RELAX_ENABLE",
         "KEEL_RULE_MIN_VOLUME_RATIO",
@@ -1834,6 +1835,7 @@ class TestE31TfRequire4h(unittest.TestCase):
     _KEYS = (
         "KEEL_RULE_VARIANT",
         "KEEL_RULE_TF_REQUIRE_4H",
+        "KEEL_RULE_TF_MAX_EXTENSION_ATR",
         "KEEL_RULE_TF_RSI_LONG_MAX",
         "KEEL_RULE_TF_RSI_SHORT_MIN",
         "KEEL_RULE_TF_MACD_LAG_BPS",
@@ -2001,5 +2003,187 @@ class TestE31TfRequire4h(unittest.TestCase):
             self.assertTrue(resolve_tf_require_4h())
             os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "0"
             self.assertFalse(resolve_tf_require_4h())
+        finally:
+            self._restore(prev)
+
+
+class TestF2aTfExtensionFilter(unittest.TestCase):
+    """F2a: KEEL_RULE_TF_MAX_EXTENSION_ATR blocks already-extended TF entries."""
+
+    _KEYS = (
+        "KEEL_RULE_VARIANT",
+        "KEEL_RULE_TF_MAX_EXTENSION_ATR",
+        "KEEL_RULE_TF_REQUIRE_4H",
+        "KEEL_RULE_TF_RSI_LONG_MAX",
+        "KEEL_RULE_TF_RSI_SHORT_MIN",
+        "KEEL_RULE_TF_MACD_LAG_BPS",
+        "KEEL_RULE_REQUIRE_1H_TREND",
+        "KEEL_RULE_RSI_RELAX_ENABLE",
+        "KEEL_RULE_MIN_VOLUME_RATIO",
+        "KEEL_RULE_MIN_VOLUME_PERCENTILE",
+        "KEEL_RULE_VOLUME_SOFT_ENABLE",
+    )
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=1.0,
+            price=65000.0,
+            atr_14=500.0,
+            rsi_14=50.0,
+            trend_15m="bullish",
+            trend_1h="bullish",
+            trend_4h="bullish",
+            macd_histogram=10.0,
+            ema_9=65100.0,
+            ema_21=64900.0,
+            volume_ratio=1.2,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def _save(self):
+        import os
+
+        return {k: os.environ.get(k) for k in self._KEYS}
+
+    def _restore(self, prev):
+        import os
+
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _enable_tf(self, *, max_extension: str | None = None, require_4h: str = "1"):
+        import os
+
+        os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
+        os.environ["KEEL_RULE_MIN_VOLUME_RATIO"] = "0.5"
+        os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+        os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
+        os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
+        os.environ["KEEL_RULE_TF_REQUIRE_4H"] = require_4h
+        if max_extension is None:
+            os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "1.5"  # product default is 0=off
+        else:
+            os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = max_extension
+
+    def test_extended_long_blocked(self):
+        """price already >> ema_21 in ATR → WAIT + missing extension_ok."""
+        prev = self._save()
+        try:
+            self._enable_tf()
+            # (66000-64900)/500 = 2.2 > 1.5
+            d = rule_based_decision(
+                self._snap(price=66000.0, ema_9=65900.0, ema_21=64900.0)
+            )
+            self.assertEqual(d.action, "WAIT")
+            self.assertIn("extension_ok", d.signal_diag["missing"])
+            self.assertFalse(d.signal_diag["extension_ok"])
+            self.assertAlmostEqual(d.signal_diag["extension_atr"], 2.2)
+            self.assertAlmostEqual(d.signal_diag["max_extension_atr"], 1.5)
+            self.assertLess(d.signal_diag["extension_headroom_atr"], 0.0)
+        finally:
+            self._restore(prev)
+
+    def test_modest_pullback_to_ema_allowed(self):
+        """price near ema_21 (0.2 ATR) → BUY_LONG full gate under default 1.5."""
+        prev = self._save()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(self._snap())
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertTrue(d.signal_diag["extension_ok"])
+            self.assertAlmostEqual(d.signal_diag["extension_atr"], 0.2)
+            self.assertAlmostEqual(d.signal_diag["max_extension_atr"], 1.5)
+            self.assertGreater(d.signal_diag["extension_headroom_atr"], 0.0)
+        finally:
+            self._restore(prev)
+
+    def test_mean_revert_unaffected(self):
+        """MR ignores KEEL_RULE_TF_MAX_EXTENSION_ATR (max_extension_atr=0)."""
+        import os
+        from keel.policy import diagnose_rule_signal, resolve_tf_max_extension_atr
+
+        prev = self._save()
+        try:
+            for k in self._KEYS:
+                os.environ.pop(k, None)
+            os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "1.5"
+            os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+            os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
+            # Extreme extension should NOT add extension_ok under MR.
+            snap = self._snap(
+                price=68000.0,
+                ema_9=67900.0,
+                ema_21=64900.0,
+                rsi_14=30.0,  # MR long RSI ok
+            )
+            diag = diagnose_rule_signal(snap)
+            self.assertEqual(diag["rule_variant"], "mean_revert")
+            self.assertAlmostEqual(diag["max_extension_atr"], 0.0)
+            self.assertTrue(diag["extension_ok"])
+            self.assertNotIn("extension_ok", diag.get("missing") or [])
+            self.assertEqual(resolve_tf_max_extension_atr(), 0.0)
+            # MR can still fire long on RSI extreme + gates (extension ignored).
+            d = rule_based_decision(snap)
+            self.assertEqual(d.action, "BUY_LONG")
+        finally:
+            self._restore(prev)
+
+    def test_disabled_at_zero(self):
+        """KEEL_RULE_TF_MAX_EXTENSION_ATR=0 disables filter; extended long fires."""
+        prev = self._save()
+        try:
+            self._enable_tf(max_extension="0")
+            d = rule_based_decision(
+                self._snap(price=66000.0, ema_9=65900.0, ema_21=64900.0)
+            )
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertTrue(d.signal_diag["extension_ok"])
+            self.assertAlmostEqual(d.signal_diag["max_extension_atr"], 0.0)
+            self.assertIsNone(d.signal_diag["extension_headroom_atr"])
+            # extension_atr still reported for audit
+            self.assertAlmostEqual(d.signal_diag["extension_atr"], 2.2)
+        finally:
+            self._restore(prev)
+
+    def test_atr_nonpositive_fail_closed_when_enabled(self):
+        """atr_14<=0 with filter on → extension_ok false (data_valid also fails)."""
+        from keel.policy import diagnose_rule_signal
+
+        prev = self._save()
+        try:
+            self._enable_tf()
+            diag = diagnose_rule_signal(self._snap(atr_14=0.0, data_valid=True))
+            self.assertFalse(diag["data_valid"])
+            self.assertFalse(diag["extension_ok"])
+            self.assertAlmostEqual(diag["max_extension_atr"], 1.5)
+        finally:
+            self._restore(prev)
+
+    def test_resolve_tf_max_extension_atr_echo(self):
+        import os
+        from keel.policy import resolve_tf_max_extension_atr
+
+        prev = self._save()
+        try:
+            for k in self._KEYS:
+                os.environ.pop(k, None)
+            self.assertEqual(resolve_tf_max_extension_atr(), 0.0)
+            os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
+            self.assertEqual(resolve_tf_max_extension_atr(), 0.0)  # product default off
+            os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "0"
+            self.assertEqual(resolve_tf_max_extension_atr(), 0.0)
+            os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "9"
+            self.assertAlmostEqual(resolve_tf_max_extension_atr(), 5.0)
+            os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "0.1"
+            self.assertAlmostEqual(resolve_tf_max_extension_atr(), 0.5)
         finally:
             self._restore(prev)
