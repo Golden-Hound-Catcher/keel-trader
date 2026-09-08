@@ -306,7 +306,7 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 ---
 
-## 15b. Phase E0/E1/E2A/E2B/E3 — full-gate measurement + trend-follow + fire cooldown (gen-2)
+## 15b. Phase E0/E1/E2A/E2B/E3/E3.1 — full-gate measurement + trend-follow + fire cooldown + 4h filter (gen-2)
 
 **E0 freeze:** do not re-enable `KEEL_SHADOW_NEAR_PROBE`, do not lower the ~10 bps fee hurdle, do not clear kill from near-probe evidence, do not add near-probe tweaks.
 
@@ -316,12 +316,15 @@ No mass-delete without inventory check against `LEGACY.md`.
 
 **E2B (TF volume soft + MACD lag):** Under `trend_follow` only: (1) volume soft path when soft enable + trend+macd+ema align + `volume_ratio ≥ soft_floor` → `volume_path=soft_tf` (no RSI extreme; hard/percentile unchanged; mean_revert soft still needs RSI extreme); (2) `KEEL_RULE_TF_MACD_LAG_BPS` default 3.0 (clamp 0–15) — long OK if `hist≥0` OR `(hist/price)*1e4 ≥ -lag`, short symmetric; `lag=0` = strict; audit `macd_lag_bps` / `macd_lag_ok`. Policy name stays `rule`. E0 freeze unchanged. See RUNBOOK.
 
-**E3 (fire cooldown + quality FG markout):** Live TF spray (2026-09-08 observe: ~54 full-gate fires / 24h, 5m netRT win≈**24%** — E1 criteria still fail). `KEEL_RULE_FIRE_COOLDOWN_SECONDS` default **900** (clamp 0–7200; 0 disables) suppresses same-instrument full-gate re-entry; cooldown → WAIT + `signal_diag.fire_cooldown_*` (not a full_gate_fire; no shadow fill). `/stats/quality` adds `full_gate_markout` (60/300/900, fee-aware, no network). Monitor FG 5m net chip. Economic arming prefers FG 5m netRT when fires≥20 (read-only; E0 freeze unchanged). Optional 4h hard gate = E3.1. See RUNBOOK.
+**E3 (fire cooldown + quality FG markout):** Live TF spray (2026-09-08 observe: ~54 full-gate fires / 24h, 5m netRT win≈**24%** — E1 criteria still fail). `KEEL_RULE_FIRE_COOLDOWN_SECONDS` default **900** (clamp 0–7200; 0 disables) suppresses same-instrument full-gate re-entry; cooldown → WAIT + `signal_diag.fire_cooldown_*` (not a full_gate_fire; no shadow fill). `/stats/quality` adds `full_gate_markout` (60/300/900, fee-aware, no network). Monitor FG 5m net chip. Economic arming prefers FG 5m netRT when fires≥20 (read-only; E0 freeze unchanged). See RUNBOOK.
+
+**E3.1 (TF require 4h):** Quality filter after E3 cooldown. Under `trend_follow` only, `KEEL_RULE_TF_REQUIRE_4H` default **1** hard-requires `trend_15m`+`trend_1h`+`trend_4h` same direction (long all bullish / short all bearish), folded into `trend_bullish`/`trend_bearish`; `trend_gate=15m+1h+4h`; diag `require_4h_trend` / `trend_4h_confirm`; status/config `tf_require_4h`. Set `0` for E2A 15m+1h-only. `mean_revert` ignores. Cooldown defaults unchanged; still E0 freeze. See RUNBOOK.
 
 ## 16. Changelog
 
 | Date | Note |
 |------|------|
+| 2026-09-08 | **E3.1 TF require 4h**: `KEEL_RULE_TF_REQUIRE_4H` default 1 under trend_follow; `trend_gate=15m+1h+4h`; folds into trend_* gates; status `tf_require_4h`; MR ignores; quality filter after E3 cooldown; E0 freeze unchanged |
 | 2026-09-08 | **E3 fire cooldown + FG markout**: `KEEL_RULE_FIRE_COOLDOWN_SECONDS` (default 900) per-inst full-gate spray control; `/stats/quality.full_gate_markout`; Monitor FG 5m net; economic prefers FG when n≥20; E1 still fail (~24% net win observe); E0 freeze unchanged |
 | 2026-09-07 | **E2B TF volume soft + MACD lag**: TF `volume_path=soft_tf` (trend+macd+ema, no RSI extreme); `KEEL_RULE_TF_MACD_LAG_BPS` default 3.0; `macd_lag_*` audit; MR unchanged; E0 freeze unchanged |
 | 2026-09-07 | **E2A trend-follow rule variant**: `KEEL_RULE_VARIANT=mean_revert\|trend_follow`; TF forces 15m+1h + RSI not-OB/OS (68/32); policy name stays `rule`; status/config `rule_variant`; E0 freeze unchanged |

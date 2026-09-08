@@ -118,6 +118,8 @@ class StatusResponse(BaseModel):
     decision_policy: str = "rule"
     # E2A: mean_revert (default) | trend_follow — inside rule policy; name stays rule.
     rule_variant: str = "mean_revert"
+    # E3.1: TF 4h hard-require effective flag (False under mean_revert).
+    tf_require_4h: bool = False
     last_cycle: LastCycleSummary | None = None
     seconds_since_last_cycle: int | None = None
     worker_stale: bool = False
@@ -157,6 +159,8 @@ class ConfigResponse(BaseModel):
     decision_policy: str = "rule"
     # E2A: mean_revert (default) | trend_follow — inside rule policy; name stays rule.
     rule_variant: str = "mean_revert"
+    # E3.1: TF 4h hard-require effective flag (False under mean_revert).
+    tf_require_4h: bool = False
     instruments: list[str] = Field(default_factory=list)
     notify_configured: bool = False
     notify_alerts_only: bool = False

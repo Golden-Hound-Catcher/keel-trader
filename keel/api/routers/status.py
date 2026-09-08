@@ -14,7 +14,12 @@ from keel.exchange.capability import probe_okx_capability
 from keel.execution.near_probe import resolve_near_probe_hurdle_bps
 from keel.risk.arming import build_first_live, evaluate_arming
 from keel.domain.instruments import InstrumentPool
-from keel.policy import build_decision_policy, describe_policy, resolve_rule_variant
+from keel.policy import (
+    build_decision_policy,
+    describe_policy,
+    resolve_rule_variant,
+    resolve_tf_require_4h,
+)
 
 router = APIRouter()
 
@@ -71,6 +76,7 @@ def status() -> StatusResponse:
         **_near_probe_hurdle_fields(settings),
         decision_policy=_active_decision_policy_name(settings),
         rule_variant=resolve_rule_variant(),
+        tf_require_4h=resolve_tf_require_4h(),
         last_cycle=last_cycle,
         seconds_since_last_cycle=lag,
         worker_stale=stale,
@@ -127,6 +133,7 @@ def config() -> ConfigResponse:
         **_near_probe_hurdle_fields(settings),
         decision_policy=_active_decision_policy_name(settings),
         rule_variant=resolve_rule_variant(),
+        tf_require_4h=resolve_tf_require_4h(),
         instruments=instruments,
         notify_configured=settings.notify_configured,
         notify_alerts_only=settings.notify_alerts_only,
