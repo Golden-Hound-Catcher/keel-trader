@@ -33,7 +33,7 @@ clamp 0.5–5 when >0) rejects entries already extended vs ``ema_21`` in ATR
 units — long ``(price-ema_21)/atr_14``, short ``(ema_21-price)/atr_14``. Gate
 ``extension_ok``; atr_14<=0 fail-closed when enabled. mean_revert unchanged.
 F2b (trend_follow only): RSI pullback gate so we do not buy strength already
-spent — ``KEEL_RULE_TF_PULLBACK`` master (default **1** on); long
+spent — ``KEEL_RULE_TF_PULLBACK`` master (default **0** off (F2b backtest over-filtered)); long
 ``rsi_14 <= KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX`` (default 52); short
 ``rsi_14 >= KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN`` (default 48). Gate
 ``pullback_ok``; set master 0 to disable both. mean_revert unchanged.
@@ -64,8 +64,8 @@ _TF_MACD_LAG_BPS_MAX = 15.0
 _TF_MAX_EXTENSION_ATR_DEFAULT = 0.0
 _TF_MAX_EXTENSION_ATR_MIN = 0.5
 _TF_MAX_EXTENSION_ATR_MAX = 5.0
-# F2b: TF RSI pullback (master on by default under TF).
-_TF_PULLBACK_DEFAULT = True
+# F2b: TF RSI pullback (master off by default; F2b over-filtered).
+_TF_PULLBACK_DEFAULT = False
 _TF_RSI_PULLBACK_LONG_MAX_DEFAULT = 52.0
 _TF_RSI_PULLBACK_SHORT_MIN_DEFAULT = 48.0
 _TF_RSI_PULLBACK_MIN = 20.0
@@ -240,7 +240,7 @@ def resolve_tf_pullback_enabled() -> bool:
     F2b: whether TF RSI pullback gate is active.
 
     True only under ``trend_follow`` when ``KEEL_RULE_TF_PULLBACK`` is on
-    (default True). Always False under ``mean_revert``.
+    (default False). Always False under ``mean_revert``.
     """
     if _rule_variant() != "trend_follow":
         return False
@@ -396,7 +396,7 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
                 "KEEL_RULE_TF_MAX_EXTENSION_ATR", _TF_MAX_EXTENSION_ATR_DEFAULT
             )
         )
-        # F2b: RSI pullback (master default on).
+        # F2b: RSI pullback (master default off).
         pb_on = _env_bool("KEEL_RULE_TF_PULLBACK", _TF_PULLBACK_DEFAULT)
         th["tf_pullback_enabled"] = pb_on
         th["rsi_pullback_long_max"] = _clamp_tf_rsi_pullback(
@@ -808,7 +808,7 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     F2b: TF ``pullback_ok`` / ``rsi_pullback_long_max`` /
     ``rsi_pullback_short_min`` — reject when RSI shows strength already spent
     (long ``rsi<=long_max`` default 52; short ``rsi>=short_min`` default 48);
-    master ``KEEL_RULE_TF_PULLBACK`` (default 1; 0 disables).
+    master ``KEEL_RULE_TF_PULLBACK`` (default 0 off; set 1 to enable).
     R7/R8: ``edge_hint_mode`` (``full``|``near``|``none``) plus
     ``edge_hint_sized_ev`` / ``edge_hint_distance_penalty_bps`` /
     ``edge_hint_distance_components`` / ``edge_hint_penalty_scale_bps``
@@ -1221,7 +1221,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     MACD lag ``KEEL_RULE_TF_MACD_LAG_BPS`` (default 3.0) for small adverse hist.
     F2a (TF only): ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 0=off; >0 enables)
     blocks entries already extended vs ``ema_21`` (gate ``extension_ok``).
-    F2b (TF only): RSI pullback gate (``KEEL_RULE_TF_PULLBACK`` default 1;
+    F2b (TF only): RSI pullback gate (``KEEL_RULE_TF_PULLBACK`` default 0;
     long ``rsi<=52``, short ``rsi>=48``; gate ``pullback_ok``).
     """
     diag = diagnose_rule_signal(snapshot)

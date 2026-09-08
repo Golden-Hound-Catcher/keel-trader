@@ -521,11 +521,11 @@ Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). See F2b RSI p
 
 ### Phase F2b — TF RSI pullback gate (quality)
 
-Jo: F2a extension@1.5 hurt 5m net (10%→6.1%); product default extension stays **0=off**. F2b instead requires a modest RSI pullback so TF does not buy strength already spent.
+Jo: F2a extension@1.5 hurt 5m net (10%→6.1%); product default extension stays **0=off**. F2b RSI pullback@52/48 **over-filtered** offline (FG ~60→2, 5m win 0%) — product default `KEEL_RULE_TF_PULLBACK` stays **0=off**. Set `1` to A/B enable.
 
 | Env | Default | Behavior |
 |-----|---------|----------|
-| `KEEL_RULE_TF_PULLBACK` | **1** (on) | Master switch for TF pullback. `0` disables both side filters. `trend_follow` only; **mean_revert ignores**. |
+| `KEEL_RULE_TF_PULLBACK` | **0** (off) | Master switch for TF pullback. `0` disables both side filters. `trend_follow` only; **mean_revert ignores**. |
 | `KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX` | **52** | Long: `rsi_14 <= max` → `pullback_ok`. Clamp 20–80. |
 | `KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN` | **48** | Short: `rsi_14 >= min` → `pullback_ok`. Clamp 20–80. |
 

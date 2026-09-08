@@ -1463,7 +1463,7 @@ class TestE2ATrendFollowVariant(unittest.TestCase):
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
         # E3.1 default is on; keep E2A suite on 15m+1h-only (4h covered separately).
         os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "0"
-        # Isolate E2A from F2b RSI pullback (default on under TF).
+        # Isolate E2A from F2b RSI pullback (explicit off; product default also off).
         os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
 
     def test_default_mean_revert_mid_rsi_waits(self):
@@ -1660,7 +1660,7 @@ class TestE2BTrendFollowVolumeMacdLag(unittest.TestCase):
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
         # Isolate E2B from E3.1 4h default (suite snaps often use trend_4h=neutral).
         os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "0"
-        # Isolate E2B from F2b RSI pullback default-on.
+        # Isolate E2B from F2b RSI pullback (explicit off).
         os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
 
     def test_tf_soft_volume_mid_rsi_fires(self):
@@ -1895,7 +1895,7 @@ class TestE31TfRequire4h(unittest.TestCase):
         os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
         os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
-        # Isolate E3.1 from F2b RSI pullback default-on.
+        # Isolate E3.1 from F2b RSI pullback (explicit off).
         os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
         if require_4h is None:
             os.environ.pop("KEEL_RULE_TF_REQUIRE_4H", None)  # default on
@@ -2077,7 +2077,7 @@ class TestF2aTfExtensionFilter(unittest.TestCase):
         os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
         os.environ["KEEL_RULE_TF_REQUIRE_4H"] = require_4h
-        # Isolate F2a from F2b RSI pullback default-on.
+        # Isolate F2a from F2b RSI pullback (explicit off).
         os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
         if max_extension is None:
             os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "1.5"  # product default is 0=off
@@ -2401,7 +2401,11 @@ class TestF2bTfRsiPullback(unittest.TestCase):
                 os.environ.pop(k, None)
             self.assertFalse(resolve_tf_pullback_enabled())
             os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
-            self.assertTrue(resolve_tf_pullback_enabled())  # product default on
+            self.assertFalse(resolve_tf_pullback_enabled())  # product default off
+            self.assertEqual(resolve_tf_rsi_pullback_long_max(), 0.0)
+            self.assertEqual(resolve_tf_rsi_pullback_short_min(), 0.0)
+            os.environ["KEEL_RULE_TF_PULLBACK"] = "1"
+            self.assertTrue(resolve_tf_pullback_enabled())
             self.assertAlmostEqual(resolve_tf_rsi_pullback_long_max(), 52.0)
             self.assertAlmostEqual(resolve_tf_rsi_pullback_short_min(), 48.0)
             os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
