@@ -23,6 +23,13 @@ import {
   Crosshair,
   Rocket,
 } from 'lucide-vue-next'
+import {
+  blockerToZh,
+  buildStatusHero,
+  economicEvidenceZh,
+  HERO_HEADLINE_CLASS,
+  HERO_TONE_CLASS,
+} from '../utils/monitorZh'
 
 const store = useMonitorStore()
 
@@ -69,12 +76,12 @@ function nearSignalMissing(d: { action?: string; signal_diag?: Record<string, un
 }
 
 const tabs = [
-  { id: 'overview', label: 'Overview', icon: Activity },
-  { id: 'positions', label: 'Positions', icon: LayoutGrid },
-  { id: 'decisions', label: 'Decisions', icon: Brain },
-  { id: 'trades', label: 'Trades', icon: Receipt },
-  { id: 'events', label: 'Events', icon: ScrollText },
-  { id: 'factors', label: 'Factors', icon: LineChart },
+  { id: 'overview', label: '总览', icon: Activity },
+  { id: 'positions', label: '持仓', icon: LayoutGrid },
+  { id: 'decisions', label: '决策', icon: Brain },
+  { id: 'trades', label: '成交', icon: Receipt },
+  { id: 'events', label: '事件', icon: ScrollText },
+  { id: 'factors', label: '因子', icon: LineChart },
 ] as const
 
 const equity = computed(() => fmt(store.balance?.total_equity))
@@ -355,7 +362,7 @@ const qualityFgStaleHint = computed(() => {
   const pre = qualityStats.value?.full_gate_markout_pre_e31
   const postN = typeof mo?.count === 'number' ? mo.count : 0
   const preN = typeof pre?.count === 'number' ? pre.count : 0
-  if (postN === 0 && preN > 0) return `stale pre_e31 n=${preN} excluded from primary`
+  if (postN === 0 && preN > 0) return `旧样本(pre_e31) n=${preN} 未计入主指标`
   return null
 })
 const qualityFgPostCount = computed(() => {
@@ -886,6 +893,62 @@ const workerStaleBannerText = computed(() => {
   return `Worker 可能停滞 · ${lag} · ${cycle}`
 })
 
+
+/** Overview status hero — one calm answer in 中文 (replaces stacked EN banners). */
+const statusHero = computed(() => {
+  const econ = armingEconomic.value
+  const econEnabled = !(econ && econ.enabled === false)
+  let econPassed: boolean | null = null
+  if (econ && econEnabled) econPassed = Boolean(econ.passed)
+  return buildStatusHero({
+    killSwitch: killSwitchOn.value,
+    shadowMode: shadowModeOn.value,
+    nearProbe: shadowNearProbeOn.value,
+    environment: String(envLabel.value || ''),
+    policy: String(
+      store.config?.decision_policy || store.status?.decision_policy || '—',
+    ),
+    armingReady: armingReady.value,
+    armingBlockers: armingBlockers.value || [],
+    firstLiveAllowed: firstLiveAllowed.value,
+    firstLiveBlockers: firstLiveBlockers.value || [],
+    economicPassed: econPassed,
+    economicEnabled: econEnabled,
+    workerStale: workerLagStale.value,
+  })
+})
+const statusHeroToneClass = computed(
+  () => HERO_TONE_CLASS[statusHero.value.tone] || HERO_TONE_CLASS.zinc,
+)
+const statusHeroHeadlineClass = computed(
+  () => HERO_HEADLINE_CLASS[statusHero.value.tone] || HERO_HEADLINE_CLASS.zinc,
+)
+
+/** Humanized quality / economic strip labels. */
+const qualityEconomicEvidenceZh = computed(() =>
+  economicEvidenceZh(qualityEconomicEvidence.value),
+)
+const qualityFgStaleHintZh = computed(() => {
+  const h = qualityFgStaleHint.value
+  if (!h) return null
+  if (h.startsWith('旧样本')) return h
+  const m = h.match(/stale pre_e31 n=(\d+)/i)
+  if (m) return `旧样本(pre_e31) n=${m[1]} 未计入主指标`
+  return h
+})
+const armingBlockersZh = computed(() =>
+  (armingBlockers.value || []).map((b) => ({ raw: b, zh: blockerToZh(b) })),
+)
+const armingWarningsZh = computed(() =>
+  (armingWarnings.value || []).map((w) => ({ raw: w, zh: blockerToZh(w) })),
+)
+const firstLiveBlockersZh = computed(() =>
+  (firstLiveBlockers.value || []).map((b) => ({ raw: b, zh: blockerToZh(b) })),
+)
+const armingEconBlockersZh = computed(() =>
+  (armingEconBlockers.value || []).map((b) => blockerToZh(b)),
+)
+
 const configStrip = computed(() => {
   const c = store.config
   const env = c?.environment || store.status?.environment || store.health?.environment || '—'
@@ -958,8 +1021,8 @@ const configStrip = computed(() => {
           <div class="min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
               <h1 class="font-extrabold text-sm tracking-wide text-white">Keel Trader</h1>
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                MONITOR U1
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-500/10 text-cyan-400/90 border border-cyan-500/20" title="Keel Monitor U1">
+                监控
               </span>
               <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-500/10 text-zinc-400 border border-zinc-500/20 uppercase">
                 {{ envLabel }}
@@ -967,53 +1030,53 @@ const configStrip = computed(() => {
               <span
                 v-if="killSwitchOn"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-extrabold bg-rose-500/15 text-rose-400 border border-rose-500/40 tracking-wide"
-                title="KEEL_KILL_SWITCH armed — trading frozen (env-only)"
+                title="杀开关开启 · 交易冻结（仅环境变量）"
               >
                 <Ban class="w-3 h-3" />
-                KILL SWITCH ON
+                杀开关
               </span>
               <span
                 v-if="shadowModeOn"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-extrabold bg-violet-500/15 text-violet-300 border border-violet-500/40 tracking-wide"
-                title="KEEL_SHADOW_MODE — decisions ledger shadow_fill; no exchange place_order (kill-switch still blocks real orders only)"
+                title="影子模式 · 只记影子成交，不下真实单"
               >
                 <Ghost class="w-3 h-3" />
-                SHADOW MODE
+                影子
               </span>
               <span
                 v-if="shadowNearProbeOn"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-extrabold bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/40 tracking-wide"
                 :title="shadowNearProbeCooldown != null
-                  ? `KEEL_SHADOW_NEAR_PROBE — near-signal → shadow_fill rehearsal; cooldown ${shadowNearProbeCooldown}s; never live orders`
-                  : 'KEEL_SHADOW_NEAR_PROBE — near-signal → shadow_fill rehearsal; never live orders'"
+                  ? `近探开启 · 近信号影子排练 · 冷却 ${shadowNearProbeCooldown}s · 从不实盘下单`
+                  : '近探开启 · 近信号影子排练 · 从不实盘下单'"
               >
                 <Crosshair class="w-3 h-3" />
-                NEAR PROBE
+                近探
               </span>
             </div>
-            <p class="text-[10px] text-[#707E94] font-mono flex items-center gap-1.5">
+            <p class="text-[10px] text-[#707E94] flex items-center gap-1.5">
               <span
                 class="inline-block w-1.5 h-1.5 rounded-full"
                 :class="store.isConnected ? 'bg-emerald-400' : 'bg-rose-500'"
               />
-              <span>read-only · keel.api · {{ store.status?.version || store.health?.version || '…' }}</span>
-              <span v-if="store.status">· up {{ store.uptimeLabel }}</span>
+              <span>只读监控 · {{ store.status?.version || store.health?.version || '…' }}</span>
+              <span v-if="store.status">· 运行 {{ store.uptimeLabel }}</span>
             </p>
           </div>
         </div>
 
         <div class="flex items-center gap-2 shrink-0">
-          <div class="hidden sm:block text-[10px] font-mono text-[#707E94]">
-            updated {{ lastUpdatedLabel }}
+          <div class="hidden sm:block text-[10px] text-[#707E94]">
+            更新于 {{ lastUpdatedLabel }}
           </div>
           <button
             type="button"
-            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#1A2232] bg-[#0D121B] text-xs font-mono text-zinc-300 hover:text-white hover:border-cyan-500/40 transition cursor-pointer"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#1A2232] bg-[#0D121B] text-xs text-zinc-300 hover:text-white hover:border-cyan-500/40 transition cursor-pointer"
             :disabled="store.isRefreshing"
             @click="store.fetchAll(false)"
           >
             <RefreshCw class="w-3.5 h-3.5" :class="store.isRefreshing ? 'animate-spin' : ''" />
-            Refresh
+            刷新
           </button>
         </div>
       </div>
@@ -1024,7 +1087,7 @@ const configStrip = computed(() => {
           v-for="tab in tabs"
           :key="tab.id"
           type="button"
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-bold whitespace-nowrap transition cursor-pointer"
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer"
           :class="
             store.activeTab === tab.id
               ? 'bg-[#1C2436] text-white border border-cyan-500/50'
@@ -1047,97 +1110,80 @@ const configStrip = computed(() => {
         {{ store.error }}
       </div>
 
-      <div v-if="store.loading" class="py-16 text-center text-sm font-mono text-[#707E94]">
-        Loading Keel API…
+      <div v-if="store.loading" class="py-16 text-center text-sm text-[#707E94]">
+        加载中…
       </div>
 
       <template v-else>
         <!-- OVERVIEW -->
         <div v-show="store.activeTab === 'overview'" class="space-y-4">
+          <!-- Status hero: one clear answer (replaces stacked KILL/SHADOW/NEAR banners) -->
           <div
-            v-if="killSwitchOn"
-            class="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 flex items-start gap-3"
+            class="rounded-xl border px-4 py-4 flex items-start gap-3"
+            :class="statusHeroToneClass"
             role="status"
             aria-live="polite"
           >
-            <Ban class="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-            <div class="min-w-0">
-              <div class="text-sm font-mono font-extrabold text-rose-300 tracking-wide">
-                KILL SWITCH ON
+            <div class="min-w-0 flex-1">
+              <div
+                class="text-base sm:text-lg font-bold tracking-wide"
+                :class="statusHeroHeadlineClass"
+              >
+                {{ statusHero.headline }}
               </div>
-              <div class="text-xs font-mono text-rose-200/80 mt-0.5">
-                交易已冻结 · risk gates deny all trading · env-only (KEEL_KILL_SWITCH) · no admin toggle
-              </div>
-            </div>
-          </div>
-
-          <div
-            v-if="shadowModeOn"
-            class="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3 flex items-start gap-3"
-            role="status"
-            aria-live="polite"
-          >
-            <Ghost class="w-5 h-5 text-violet-300 shrink-0 mt-0.5" />
-            <div class="min-w-0">
-              <div class="text-sm font-mono font-extrabold text-violet-200 tracking-wide">
-                SHADOW MODE ON
-              </div>
-              <div class="text-xs font-mono text-violet-100/80 mt-0.5">
-                影子成交 · risk-pass decisions ledger shadow_fill · no OKX place_order · env-only (KEEL_SHADOW_MODE)
-              </div>
-            </div>
-          </div>
-
-          <div
-            v-if="shadowNearProbeOn"
-            class="rounded-xl border border-fuchsia-500/40 bg-fuchsia-500/10 px-4 py-3 flex items-start gap-3"
-            role="status"
-            aria-live="polite"
-          >
-            <Crosshair class="w-5 h-5 text-fuchsia-300 shrink-0 mt-0.5" />
-            <div class="min-w-0">
-              <div class="text-sm font-mono font-extrabold text-fuchsia-200 tracking-wide">
-                NEAR PROBE ON
-              </div>
-              <div class="text-xs font-mono text-fuchsia-100/80 mt-0.5">
-                近信号影子排练 · WAIT+near → shadow_fill · requires kill+shadow ·
-                cooldown {{ shadowNearProbeCooldown ?? '—' }}s · env-only (KEEL_SHADOW_NEAR_PROBE)
-              </div>
-            </div>
-          </div>
-
-          <div
-            v-if="workerLagStale"
-            class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 flex items-start gap-3"
-            role="status"
-            aria-live="polite"
-          >
-            <AlertTriangle class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div class="min-w-0">
-              <div class="text-sm font-mono font-extrabold text-amber-300 tracking-wide">
-                WORKER STALE
-              </div>
-              <div class="text-xs font-mono text-amber-200/80 mt-0.5">
+              <dl class="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1.5 text-sm">
+                <div
+                  v-for="(line, i) in statusHero.lines"
+                  :key="'hero-' + i"
+                  class="flex items-baseline gap-2 min-w-0"
+                >
+                  <dt class="text-[#707E94] shrink-0 text-xs">{{ line.label }}</dt>
+                  <dd
+                    class="truncate"
+                    :class="line.emphasize ? 'text-white font-medium' : 'text-[#A8B3C7]'"
+                    :title="line.value"
+                  >{{ line.value }}</dd>
+                </div>
+              </dl>
+              <p
+                v-if="workerLagStale"
+                class="mt-2 text-xs text-amber-200/90 flex items-center gap-1.5"
+              >
+                <AlertTriangle class="w-3.5 h-3.5 shrink-0" />
                 {{ workerStaleBannerText }}
-              </div>
+              </p>
+            </div>
+            <div class="hidden sm:flex flex-col items-end gap-1.5 shrink-0">
+              <span
+                v-if="killSwitchOn"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/40"
+              ><Ban class="w-3 h-3" />杀开关</span>
+              <span
+                v-if="shadowModeOn"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-500/15 text-violet-300 border border-violet-500/40"
+              ><Ghost class="w-3 h-3" />影子</span>
+              <span
+                v-if="shadowNearProbeOn"
+                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/40"
+              ><Crosshair class="w-3 h-3" />近探</span>
             </div>
           </div>
 
           <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <Wallet class="w-4 h-4 text-cyan-400" />
-                Equity
+                权益
               </div>
               <div class="text-2xl font-black font-mono text-white">${{ equity }}</div>
-              <div class="text-[11px] font-mono text-[#707E94] mt-1">
-                avail ${{ available }} · src {{ store.balance?.source || '—' }}
+              <div class="text-[11px] text-[#707E94] mt-1">
+                可用 ${{ available }} · {{ store.balance?.source || '—' }}
               </div>
             </div>
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <Activity class="w-4 h-4 text-emerald-400" />
-                Unrealized PnL
+                未实现盈亏
               </div>
               <div
                 class="text-2xl font-black font-mono"
@@ -1145,10 +1191,10 @@ const configStrip = computed(() => {
               >
                 ${{ upl }}
               </div>
-              <div class="text-[11px] font-mono text-[#707E94] mt-1">margin {{ marginPct }}%</div>
+              <div class="text-[11px] text-[#707E94] mt-1">保证金占用 {{ marginPct }}%</div>
             </div>
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <TrendingUp class="w-4 h-4 text-amber-400" />
                 今日已实现盈亏
               </div>
@@ -1172,12 +1218,12 @@ const configStrip = computed(() => {
               </div>
             </div>
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <LayoutGrid class="w-4 h-4 text-blue-400" />
-                Positions
+                持仓数
               </div>
               <div class="text-2xl font-black font-mono text-white">{{ store.positionCount }}</div>
-              <div class="text-[11px] font-mono text-[#707E94] mt-1">
+              <div class="text-[11px] text-[#707E94] mt-1">
                 {{ store.positionsSource || '—' }}
               </div>
             </div>
@@ -1189,7 +1235,7 @@ const configStrip = computed(() => {
                   ? 'border-amber-500/40'
                   : 'border-[#1A2232]'"
             >
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <Gauge
                   class="w-4 h-4"
                   :class="riskBudgetCritical
@@ -1234,7 +1280,7 @@ const configStrip = computed(() => {
               </div>
             </div>
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <Waves class="w-4 h-4 text-sky-400" />
                 持仓浮动盈亏
               </div>
@@ -1249,22 +1295,22 @@ const configStrip = computed(() => {
               </div>
             </div>
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono mb-2">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <Shield class="w-4 h-4 text-indigo-400" />
-                Credentials
+                凭证
               </div>
-              <div class="text-sm font-mono text-white space-y-1">
+              <div class="text-sm text-white space-y-1">
                 <div class="flex items-center gap-2 flex-wrap">
-                  <span>OKX: {{ store.status?.credentials?.okx ? 'yes' : 'no' }}</span>
+                  <span>OKX: {{ store.status?.credentials?.okx ? '有' : '无' }}</span>
                   <span
                     class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
                     :class="okxCapabilityClass"
                     :title="okxCapabilityTitle"
                   >{{ okxCapabilityLabel }}</span>
                 </div>
-                <div>LLM: {{ store.status?.credentials?.llm ? 'yes' : 'no' }}</div>
+                <div>LLM: {{ store.status?.credentials?.llm ? '有' : '无' }}</div>
               </div>
-              <div class="text-[11px] font-mono text-[#707E94] mt-1 truncate" :title="store.status?.ledger_db">
+              <div class="text-[11px] text-[#707E94] mt-1 truncate" :title="store.status?.ledger_db">
                 {{ store.status?.mode || '—' }}
               </div>
             </div>
@@ -1278,71 +1324,71 @@ const configStrip = computed(() => {
             aria-live="polite"
           >
             <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs">
                 <ClipboardCheck
                   class="w-4 h-4"
                   :class="armingReady ? 'text-emerald-400' : 'text-amber-400'"
                 />
-                <span class="text-white font-bold uppercase tracking-wide">实盘准入</span>
-                <span class="text-[#707E94] font-normal normal-case">arming + economic gates · read-only</span>
+                <span class="text-white font-bold tracking-wide">实盘准入</span>
+                <span class="text-[#707E94] font-normal">只读清单</span>
               </div>
               <span
-                class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-extrabold border tracking-wide"
+                class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border tracking-wide"
                 :class="armingReady
                   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
                   : 'bg-amber-500/15 text-amber-400 border-amber-500/40'"
                 :title="armingReady
-                  ? 'Prerequisites met — still set KEEL_KILL_SWITCH=0 manually to arm'
-                  : 'Not ready — resolve blockers before clearing kill-switch'"
+                  ? '前置已满足 — 仍需手动设 KEEL_KILL_SWITCH=0'
+                  : '未就绪 — 先消除阻断再关杀开关'"
               >
-                {{ armingReady ? 'READY' : 'NOT READY' }}
+                {{ armingReady ? '可武装' : '暂不可' }}
               </span>
             </div>
-            <div class="text-[11px] font-mono text-[#A8B3C7] mb-2">
-              capability
+            <div class="text-[11px] text-[#A8B3C7] mb-2">
+              能力
               <span class="text-white">{{ arming.capability || '—' }}</span>
-              · kill
+              · 杀开关
               <span :class="arming.kill_switch ? 'text-rose-400' : 'text-emerald-400'">
-                {{ arming.kill_switch ? 'ON' : 'off' }}
+                {{ arming.kill_switch ? '开' : '关' }}
               </span>
-              · never auto-clears env
+              · 不会自动清环境变量
             </div>
-            <div v-if="armingBlockers.length" class="flex flex-wrap gap-1.5 mb-1.5">
+            <div v-if="armingBlockersZh.length" class="flex flex-wrap gap-1.5 mb-1.5">
               <span
-                v-for="(b, i) in armingBlockers"
+                v-for="(b, i) in armingBlockersZh"
                 :key="'ab-' + i"
-                class="inline-flex max-w-full items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border bg-rose-500/10 text-rose-300 border-rose-500/30 truncate"
-                :title="b"
-              >{{ b }}</span>
+                class="inline-flex max-w-full items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-rose-500/10 text-rose-300 border-rose-500/30 truncate"
+                :title="b.raw"
+              >{{ b.zh }}</span>
             </div>
-            <div v-if="armingWarnings.length" class="flex flex-wrap gap-1.5">
+            <div v-if="armingWarningsZh.length" class="flex flex-wrap gap-1.5">
               <span
-                v-for="(w, i) in armingWarnings"
+                v-for="(w, i) in armingWarningsZh"
                 :key="'aw-' + i"
-                class="inline-flex max-w-full items-center px-1.5 py-0.5 rounded text-[10px] font-mono border bg-amber-500/10 text-amber-200/90 border-amber-500/25 truncate"
-                :title="w"
-              >{{ w }}</span>
+                class="inline-flex max-w-full items-center px-1.5 py-0.5 rounded text-[10px] border bg-amber-500/10 text-amber-200/90 border-amber-500/25 truncate"
+                :title="w.raw"
+              >{{ w.zh }}</span>
             </div>
             <div
               v-if="armingEconomic && armingEconomic.enabled !== false"
               class="mt-2 pt-2 border-t border-[#1A2232] text-[10px] font-mono text-[#A8B3C7] space-y-1"
             >
               <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span class="text-white font-bold uppercase tracking-wide">Economic</span>
+                <span class="text-white font-bold tracking-wide">经济门禁</span>
                 <span
                   class="inline-flex items-center px-1.5 py-0.5 rounded border text-[10px] font-extrabold"
                   :class="armingEconomic.passed
                     ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
                     : 'bg-rose-500/15 text-rose-300 border-rose-500/40'"
-                  :title="armingEconomic.note || 'Shadow markout economic gates'"
-                >{{ armingEconomic.passed ? 'PASS' : 'FAIL' }}</span>
-                <span v-if="armingEconBlockers.length" class="text-rose-300 truncate" :title="armingEconBlockers.join('; ')">
-                  {{ armingEconBlockers.join(' · ') }}
+                  :title="armingEconomic.note || '影子标记收益经济门禁'"
+                >{{ armingEconomic.passed ? '通过' : '未过' }}</span>
+                <span v-if="armingEconBlockersZh.length" class="text-rose-300 truncate" :title="armingEconBlockers.join('; ')">
+                  {{ armingEconBlockersZh.join(' · ') }}
                 </span>
               </div>
               <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-[#707E94]">
-                <span>fills <span class="text-white">{{ armingEconomic.fill_count ?? '—' }}</span>/<span>{{ armingEconomic.min_fills ?? 10 }}</span></span>
-                <span>probe <span class="text-white">{{ armingEconomic.probe_count ?? '—' }}</span>/<span>{{ armingEconomic.min_probe_fills ?? 5 }}</span></span>
+                <span>成交 <span class="text-white">{{ armingEconomic.fill_count ?? '—' }}</span>/<span>{{ armingEconomic.min_fills ?? 10 }}</span></span>
+                <span>近探 <span class="text-white">{{ armingEconomic.probe_count ?? '—' }}</span>/<span>{{ armingEconomic.min_probe_fills ?? 5 }}</span></span>
                 <span
                   v-if="armingEconomic.economic_sample_source"
                   class="text-[10px] font-mono text-amber-300"
@@ -1352,7 +1398,7 @@ const configStrip = computed(() => {
                   v-if="armingEconomic.full_gate_win_rate_net_roundtrip != null"
                   class="text-[10px] font-mono text-lime-300"
                   :title="`F1 post_e31 FG 5m netRT when fires≥20; cohort=${armingEconomic.full_gate_cohort_used ?? '—'}; n=${armingEconomic.full_gate_sample_count ?? 0}; post=${armingEconomic.full_gate_fires_post_e31 ?? 0} pre=${armingEconomic.full_gate_fires_pre_e31 ?? 0}`"
-                >FG 5m net {{ Number(armingEconomic.full_gate_win_rate_net_roundtrip).toFixed(2) }}</span>
+                >5分钟净胜率 {{ Number(armingEconomic.full_gate_win_rate_net_roundtrip).toFixed(2) }}</span>
                 <span>mk{{ armingEconomic.horizon_seconds ?? 300 }}s n=<span class="text-white">{{ armingEconomic.sample_count ?? '—' }}</span></span>
                 <span>netRT wr <span class="text-white">{{
                   armingEconomic.probe_win_rate_net_roundtrip != null
@@ -1385,7 +1431,7 @@ const configStrip = computed(() => {
               v-if="armingReady && !armingBlockers.length"
               class="text-[10px] font-mono text-emerald-400/80 mt-1"
             >
-              Checklist + economic gates green — rehearse with KEEL_SHADOW_MODE=1 (kill may stay ON; shadow still records), then set KEEL_KILL_SWITCH=0 manually (no UI toggle).
+              清单与经济门禁已绿 — 可用影子模式排练，再手动关杀开关（界面无开关）。
             </div>
           </div>
 
@@ -1397,72 +1443,141 @@ const configStrip = computed(() => {
             aria-live="polite"
           >
             <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs font-mono">
+              <div class="flex items-center gap-1.5 text-[#707E94] text-xs">
                 <Rocket
                   class="w-4 h-4"
                   :class="firstLiveAllowed ? 'text-emerald-400' : 'text-sky-400'"
                 />
-                <span class="text-white font-bold uppercase tracking-wide">First live</span>
-                <span class="text-[#707E94] font-normal normal-case">Stage T gate · read-only</span>
+                <span class="text-white font-bold tracking-wide">首笔实盘</span>
+                <span class="text-[#707E94] font-normal">只读门禁</span>
               </div>
               <span
-                class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono font-extrabold border tracking-wide"
+                class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border tracking-wide"
                 :class="firstLiveAllowed
                   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
                   : 'bg-sky-500/10 text-sky-300 border-sky-500/30'"
-                :title="firstLive.note || 'allowed_now false while kill on or economic not passed'"
+                :title="firstLive.note || '杀开关开启或经济门禁未过时不可实盘'"
               >
-                {{ firstLiveAllowed ? 'ALLOWED' : 'NOT NOW' }}
+                {{ firstLiveAllowed ? '可以' : '暂缓' }}
               </span>
             </div>
-            <div class="text-[11px] font-mono text-[#A8B3C7] mb-2 flex flex-wrap gap-x-3 gap-y-1">
-              <span>allowed_now
+            <div class="text-[11px] text-[#A8B3C7] mb-2 flex flex-wrap gap-x-3 gap-y-1">
+              <span>现在可否
                 <span :class="firstLiveAllowed ? 'text-emerald-400' : 'text-amber-300'">
-                  {{ firstLive.allowed_now ? 'true' : 'false' }}
+                  {{ firstLive.allowed_now ? '是' : '否' }}
                 </span>
               </span>
-              <span>economic
+              <span>经济
                 <span
                   :class="firstLiveEconPassed === true
                     ? 'text-emerald-400'
                     : (firstLiveEconPassed === false ? 'text-rose-300' : 'text-[#707E94]')"
-                >{{ firstLiveEconPassed === true ? 'PASS' : (firstLiveEconPassed === false ? 'FAIL' : '—') }}</span>
+                >{{ firstLiveEconPassed === true ? '通过' : (firstLiveEconPassed === false ? '未过' : '—') }}</span>
               </span>
-              <span>kill
+              <span>杀开关
                 <span :class="firstLive.kill_switch ? 'text-rose-400' : 'text-emerald-400'">
-                  {{ firstLive.kill_switch ? 'ON' : 'off' }}
+                  {{ firstLive.kill_switch ? '开' : '关' }}
                 </span>
               </span>
-              <span>cap <span class="text-white">{{ firstLive.capability || '—' }}</span></span>
+              <span>能力 <span class="text-white">{{ firstLive.capability || '—' }}</span></span>
               <span v-if="firstLive.suggested_live_caps">
-                live caps
+                建议实盘上限
                 <span class="text-white">${{ firstLive.suggested_live_caps.live_max_notional_per_instrument ?? '—' }}</span>
                 /
-                <span class="text-white">{{ firstLive.suggested_live_caps.live_max_contracts_per_instrument ?? '—' }}</span> ct
+                <span class="text-white">{{ firstLive.suggested_live_caps.live_max_contracts_per_instrument ?? '—' }}</span> 张
               </span>
             </div>
-            <div v-if="firstLiveBlockers.length" class="flex flex-wrap gap-1.5 mb-1.5">
+            <div v-if="firstLiveBlockersZh.length" class="flex flex-wrap gap-1.5 mb-1.5">
               <span
-                v-for="(b, i) in firstLiveBlockers"
+                v-for="(b, i) in firstLiveBlockersZh"
                 :key="'flb-' + i"
-                class="inline-flex max-w-full items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border bg-rose-500/10 text-rose-300 border-rose-500/30 truncate"
-                :title="b"
-              >{{ b }}</span>
+                class="inline-flex max-w-full items-center px-1.5 py-0.5 rounded text-[10px] font-medium border bg-rose-500/10 text-rose-300 border-rose-500/30 truncate"
+                :title="b.raw"
+              >{{ b.zh }}</span>
               <span
                 v-if="(firstLive.blockers || []).length > firstLiveBlockers.length"
-                class="text-[10px] font-mono text-[#707E94]"
-              >+{{ (firstLive.blockers || []).length - firstLiveBlockers.length }} more</span>
+                class="text-[10px] text-[#707E94]"
+              >+{{ (firstLive.blockers || []).length - firstLiveBlockers.length }} 项</span>
             </div>
-            <div class="text-[10px] font-mono text-[#707E94]">
-              never auto-clears kill · see RUNBOOK First live (Stage T gate)
+            <div class="text-[10px] text-[#707E94]">
+              不会自动关杀开关 · 详见 RUNBOOK 首笔实盘
             </div>
           </div>
 
+          <div
+            v-if="qualityStats"
+            class="bg-[#0D121B] border border-[#1A2232] rounded-xl px-4 py-3 flex flex-wrap items-center gap-2"
+            title="观测质量摘要（只读）"
+          >
+            <span class="text-xs font-semibold text-[#A8B3C7] mr-1">
+              质量
+              <span class="text-[#707E94] font-normal">({{ qualityStats.hours }}小时)</span>
+            </span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border border-cyan-500/40 text-cyan-300"
+              :title="`等待率 · ${qualityStats.decision_count} 条决策`"
+            >等待 {{ qualityWaitPct }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border border-emerald-500/40 text-emerald-300"
+              title="近信号占比"
+            >近信号 {{ qualityNearPct }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border border-violet-500/40 text-violet-300"
+              :title="qualityStats.shadow?.last_timestamp
+                ? `影子成交 n=${qualityShadowCount} 最近 ${fmtTs(qualityStats.shadow.last_timestamp)}`
+                : `影子成交 n=${qualityShadowCount ?? 0}`"
+            >影子 {{ qualityShadowCount ?? 0 }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border border-fuchsia-500/40 text-fuchsia-300"
+              :title="`近探影子成交 n=${qualityProbeCount ?? 0}`"
+            >近探 {{ qualityProbeCount ?? 0 }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border border-lime-500/40 text-lime-300"
+              :title="`满门(新队列)触发次数 n=${qualityFullGateCount ?? 0}`"
+            >满门(新队列) {{ qualityFullGateCount ?? 0 }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border border-lime-500/30 text-lime-200/90"
+              :title="`5分钟净胜率（扣费）· 样本 ${qualityStats.full_gate_markout?.sample_count ?? 0}`"
+            >5分钟净胜率 {{ qualityFgNetWinLabel }}</span>
+            <span
+              v-if="qualityFgStaleHintZh"
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border border-amber-500/30 text-amber-200/80"
+              :title="qualityFgStaleHintZh"
+            >{{ qualityFgStaleHintZh }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border border-amber-500/40 text-amber-300"
+              :title="`经济样本来源: ${qualityEconomicEvidence}`"
+            >经济样本 {{ qualityEconomicEvidenceZh }}</span>
+            <span
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border border-sky-500/40 text-sky-300"
+              :title="`OKX 公共行情占比`"
+            >OKX占比 {{ qualityOkxSharePct }}</span>
+          </div>
+
+          <details class="group rounded-xl border border-[#1A2232] bg-[#0D121B]/80 open:bg-[#0D121B]">
+            <summary class="cursor-pointer list-none px-4 py-3 text-sm text-[#A8B3C7] hover:text-white flex items-center justify-between gap-2 select-none">
+              <span class="font-semibold">技术细节</span>
+              <span class="text-[11px] text-[#707E94] group-open:hidden">展开芯片 / 周期 / 雷达</span>
+              <span class="text-[11px] text-[#707E94] hidden group-open:inline">收起</span>
+            </summary>
+            <div class="px-4 pb-4 space-y-4 border-t border-[#1A2232] pt-3">
+              <div
+                v-if="qualityByInstrumentChips.length"
+                class="flex flex-wrap items-center gap-2 text-[11px]"
+              >
+                <span class="text-[#707E94]">分品种质量</span>
+                <span
+                  v-for="chip in qualityByInstrumentChips"
+                  :key="'qi-' + chip.inst"
+                  class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[#2A3548] text-[#A8B3C7] font-mono"
+                  :title="chip.title"
+                ><span class="text-white font-bold">{{ chip.label }}</span> 等待{{ chip.wait }} 近{{ chip.near }} 满门{{ chip.fg }}</span>
+              </div>
           <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl px-4 py-3 flex flex-col gap-2 text-[11px] font-mono">
             <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
             <div class="flex items-center gap-1.5 text-[#707E94]">
               <Settings2 class="w-3.5 h-3.5 text-cyan-400" />
-              <span class="text-white font-bold">Config</span>
+              <span class="text-white font-bold">配置</span>
             </div>
             <span class="text-[#A8B3C7]">env <span class="text-white">{{ configStrip.env }}</span></span>
             <span class="text-[#A8B3C7]">mode <span class="text-white">{{ configStrip.mode }}</span></span>
@@ -1520,7 +1635,7 @@ const configStrip = computed(() => {
             v-if="lastCycle"
             class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
           >
-            <h2 class="text-xs font-mono font-bold text-white uppercase mb-2">Last worker cycle</h2>
+            <h2 class="text-xs font-semibold text-white mb-2">最近 Worker 周期</h2>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
               <div>
                 <div class="text-[#707E94]">When</div>
@@ -1622,72 +1737,14 @@ const configStrip = computed(() => {
             </div>
           </div>
 
-          <div
-            v-if="qualityStats"
-            class="bg-[#0D121B] border border-[#1A2232] rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-2"
-            title="Observation quality scorecard (read-only)"
-          >
-            <span class="text-[10px] font-mono font-bold text-[#A8B3C7] uppercase tracking-wide mr-1">
-              Quality
-              <span class="text-[#707E94] font-normal normal-case">({{ qualityStats.hours }}h)</span>
-            </span>
-            <span
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-cyan-500/40 text-cyan-300"
-              :title="`wait_rate among ${qualityStats.decision_count} decisions`"
-            >wait {{ qualityWaitPct }}</span>
-            <span
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-emerald-500/40 text-emerald-300"
-              title="WAIT rows with signal_diag.nearest in {long,short}"
-            >near {{ qualityNearPct }}</span>
-            <span
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-violet-500/40 text-violet-300"
-              :title="qualityStats.shadow?.last_timestamp
-                ? `shadow_fill n=${qualityShadowCount} last @ ${fmtTs(qualityStats.shadow.last_timestamp)}`
-                : `shadow_fill n=${qualityShadowCount ?? 0}`"
-            >shadow {{ qualityShadowCount ?? 0 }}</span>
-            <span
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-fuchsia-500/40 text-fuchsia-300"
-              :title="`near-probe shadow_fill n=${qualityProbeCount ?? 0}`"
-            >probe {{ qualityProbeCount ?? 0 }}</span>
-            <span
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-lime-500/40 text-lime-300"
-              :title="`E1 full-gate fires (BUY_LONG/SELL_SHORT, missing==[]) n=${qualityFullGateCount ?? 0}`"
-            >full-gate {{ qualityFullGateCount ?? 0 }}</span>
-            <span
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-lime-500/30 text-lime-200/90"
-              :title="`F1 primary post_e31 FG 5m netRT (fee-aware); sample=${qualityStats.full_gate_markout?.sample_count ?? 0}; fires post=${qualityFgPostCount ?? 0} pre=${qualityFgPreCount ?? 0}; need ≥0.55${qualityFgStaleHint ? ' · ' + qualityFgStaleHint : ''}`"
-            >FG 5m net {{ qualityFgNetWinLabel }}</span>
-            <span
-              v-if="qualityFgStaleHint"
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/30 text-amber-200/80"
-              :title="qualityFgStaleHint"
-            >stale pre_e31 {{ qualityFgPreCount ?? 0 }}</span>
-            <span
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/40 text-amber-300"
-              :title="`Economic sample provenance: ${qualityEconomicEvidence} (full-gate vs old probes); keep near_probe off`"
-            >econ {{ qualityEconomicEvidence }}</span>
-            <span
-              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-sky-500/40 text-sky-300"
-              :title="`okx_public ${qualityStats.market_source?.okx_public ?? 0} / synthetic ${qualityStats.market_source?.synthetic ?? 0} / unknown ${qualityStats.market_source?.unknown ?? 0}`"
-            >okx {{ qualityOkxSharePct }}</span>
-            <template v-if="qualityByInstrumentChips.length">
-              <span class="text-[10px] font-mono text-[#707E94] ml-1">by inst</span>
-              <span
-                v-for="chip in qualityByInstrumentChips"
-                :key="'qi-' + chip.inst"
-                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-[#2A3548] text-[#A8B3C7]"
-                :title="chip.title"
-              ><span class="text-white font-bold">{{ chip.label }}</span> w{{ chip.wait }} n{{ chip.near }} fg{{ chip.fg }}</span>
-            </template>
-          </div>
 
           <div
             v-if="decisionStats"
             class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
           >
             <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <h2 class="text-xs font-mono font-bold text-white uppercase">
-                Decision quality ({{ decisionStats.hours }}h)
+              <h2 class="text-xs font-semibold text-white">
+                决策质量 ({{ decisionStats.hours }}小时)
               </h2>
               <span
                 v-if="shadowStats"
@@ -1827,7 +1884,7 @@ const configStrip = computed(() => {
 
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <h2 class="text-xs font-mono font-bold text-white uppercase mb-3">Recent decisions</h2>
+              <h2 class="text-xs font-semibold text-white mb-3">最近决策</h2>
               <div v-if="!store.decisions.length" class="text-xs font-mono text-[#707E94] py-6 text-center border border-dashed border-[#1A2232] rounded-lg">
                 No ledger decisions yet — run <code class="text-cyan-400">python -m keel.worker --once</code>
               </div>
@@ -1849,7 +1906,7 @@ const configStrip = computed(() => {
               </ul>
             </div>
             <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <h2 class="text-xs font-mono font-bold text-white uppercase mb-3">Recent events</h2>
+              <h2 class="text-xs font-semibold text-white mb-3">最近事件</h2>
               <div v-if="!store.events.length" class="text-xs font-mono text-[#707E94] py-6 text-center border border-dashed border-[#1A2232] rounded-lg">
                 No ledger events yet
               </div>
@@ -1863,7 +1920,9 @@ const configStrip = computed(() => {
                 </li>
               </ul>
             </div>
-          </div>
+          </div>            </div>
+          </details>
+
         </div>
 
         <!-- POSITIONS -->
