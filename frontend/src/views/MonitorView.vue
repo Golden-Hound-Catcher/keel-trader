@@ -335,7 +335,7 @@ const qualityFullGateCount = computed(() => {
   const n = qualityStats.value?.full_gate_fires?.count
   return typeof n === 'number' && Number.isFinite(n) ? n : null
 })
-/** E3: FG 5m fee-aware netRT win rate from quality.full_gate_markout. */
+/** E3/F1: FG 5m fee-aware netRT win from primary post_e31 full_gate_markout. */
 const qualityFgNetWin = computed(() => {
   const mo = qualityStats.value?.full_gate_markout
   const wr = mo?.win_rate_net_roundtrip
@@ -346,6 +346,25 @@ const qualityFgNetWinLabel = computed(() => {
   const wr = qualityFgNetWin.value
   if (wr == null) return '—'
   return wr.toFixed(2)
+})
+/** F1: optional stale hint when primary post_e31 empty but pre_e31 exists. */
+const qualityFgStaleHint = computed(() => {
+  const mo = qualityStats.value?.full_gate_markout
+  const note = mo?.stale_pre_e31_note
+  if (typeof note === 'string' && note) return note
+  const pre = qualityStats.value?.full_gate_markout_pre_e31
+  const postN = typeof mo?.count === 'number' ? mo.count : 0
+  const preN = typeof pre?.count === 'number' ? pre.count : 0
+  if (postN === 0 && preN > 0) return `stale pre_e31 n=${preN} excluded from primary`
+  return null
+})
+const qualityFgPostCount = computed(() => {
+  const n = qualityStats.value?.full_gate_fires?.by_cohort?.post_e31?.count
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
+})
+const qualityFgPreCount = computed(() => {
+  const n = qualityStats.value?.full_gate_fires?.by_cohort?.pre_e31?.count
+  return typeof n === 'number' && Number.isFinite(n) ? n : null
 })
 const qualityEconomicEvidence = computed(() => {
   const e = qualityStats.value?.economic_evidence
@@ -1332,7 +1351,7 @@ const configStrip = computed(() => {
                 <span
                   v-if="armingEconomic.full_gate_win_rate_net_roundtrip != null"
                   class="text-[10px] font-mono text-lime-300"
-                  :title="`E3 preferred FG 5m netRT when fires≥20; n=${armingEconomic.full_gate_sample_count ?? 0}`"
+                  :title="`F1 post_e31 FG 5m netRT when fires≥20; cohort=${armingEconomic.full_gate_cohort_used ?? '—'}; n=${armingEconomic.full_gate_sample_count ?? 0}; post=${armingEconomic.full_gate_fires_post_e31 ?? 0} pre=${armingEconomic.full_gate_fires_pre_e31 ?? 0}`"
                 >FG 5m net {{ Number(armingEconomic.full_gate_win_rate_net_roundtrip).toFixed(2) }}</span>
                 <span>mk{{ armingEconomic.horizon_seconds ?? 300 }}s n=<span class="text-white">{{ armingEconomic.sample_count ?? '—' }}</span></span>
                 <span>netRT wr <span class="text-white">{{
@@ -1636,8 +1655,13 @@ const configStrip = computed(() => {
             >full-gate {{ qualityFullGateCount ?? 0 }}</span>
             <span
               class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-lime-500/30 text-lime-200/90"
-              :title="`E3 FG 5m netRT win (fee-aware); n=${qualityStats.full_gate_markout?.sample_count ?? 0}; need ≥0.55`"
+              :title="`F1 primary post_e31 FG 5m netRT (fee-aware); sample=${qualityStats.full_gate_markout?.sample_count ?? 0}; fires post=${qualityFgPostCount ?? 0} pre=${qualityFgPreCount ?? 0}; need ≥0.55${qualityFgStaleHint ? ' · ' + qualityFgStaleHint : ''}`"
             >FG 5m net {{ qualityFgNetWinLabel }}</span>
+            <span
+              v-if="qualityFgStaleHint"
+              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/30 text-amber-200/80"
+              :title="qualityFgStaleHint"
+            >stale pre_e31 {{ qualityFgPreCount ?? 0 }}</span>
             <span
               class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/40 text-amber-300"
               :title="`Economic sample provenance: ${qualityEconomicEvidence} (full-gate vs old probes); keep near_probe off`"

@@ -90,11 +90,16 @@ export interface KeelArmingEconomic {
   economic_sample_source?: string
   /** E1: full-gate fire count in economic lookback (flag; gates unchanged). */
   full_gate_fires?: number
-  /** E3: when n≥20, preferred FG 5m netRT metrics (read-only). */
+  /** E3/F1: when n≥20, preferred post_e31 FG 5m netRT metrics (read-only). */
   full_gate_sample_count?: number
   full_gate_win_rate_net_roundtrip?: number | null
   full_gate_avg_net_roundtrip_markout_bps?: number | null
   full_gate_frac_clear_net_rt_hurdle?: number | null
+  /** F1 cohort fire counts. */
+  full_gate_fires_post_e31?: number
+  full_gate_fires_pre_e31?: number
+  /** F1: which cohort drove the FG gate (post_e31 | post_e31_insufficient | null). */
+  full_gate_cohort_used?: string | null
   note?: string
 }
 
@@ -429,10 +434,18 @@ export interface KeelQualityInstrumentStats {
   market_source?: Record<string, number>
 }
 
+export interface KeelFullGateCohortCounts {
+  count: number
+  by_action?: Record<string, number>
+  by_instrument?: Record<string, number>
+}
+
 export interface KeelFullGateFires {
   count: number
   by_action?: Record<string, number>
   by_instrument?: Record<string, number>
+  /** F1: post_e31 vs pre_e31. */
+  by_cohort?: Record<string, KeelFullGateCohortCounts>
 }
 
 /** E3 fee-aware full-gate markout nest on quality scorecard. */
@@ -455,7 +468,10 @@ export interface KeelFullGateMarkout {
   clear_hurdle_bps?: number
   horizons?: KeelFullGateMarkoutHorizon[]
   by_action?: Record<string, number>
+  /** F1: post_e31 (primary) or pre_e31 (audit). */
   cohort?: string
+  cohort_synonym?: string | null
+  stale_pre_e31_note?: string | null
 }
 
 export interface KeelQualityStats {
@@ -467,9 +483,11 @@ export interface KeelQualityStats {
   near_signal_rate: number
   /** E1: BUY_LONG/SELL_SHORT with signal_diag.missing==[]. */
   full_gate_fires?: KeelFullGateFires
-  /** E3: fee-aware full-gate markout (primary = 300s). */
+  /** E3/F1: primary post_e31 fee-aware markout (primary = 300s). */
   full_gate_markout?: KeelFullGateMarkout | null
-  /** E1: none | probe | full_gate | mixed — economic sample provenance hint. */
+  /** F1 audit: stale pre_e31 markout (does not poison primary). */
+  full_gate_markout_pre_e31?: KeelFullGateMarkout | null
+  /** E1/F1: none | probe | full_gate | mixed | stale_pre_e31 */
   economic_evidence?: string
   shadow: KeelQualityShadow
   cycle_count: number

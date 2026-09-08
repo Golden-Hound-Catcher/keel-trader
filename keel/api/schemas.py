@@ -385,12 +385,22 @@ class QualityInstrumentStats(BaseModel):
     market_source: dict[str, int] = Field(default_factory=dict)
 
 
+class FullGateCohortCounts(BaseModel):
+    """F1 per-cohort full-gate fire counts (post_e31 vs pre_e31)."""
+
+    count: int = 0
+    by_action: dict[str, int] = Field(default_factory=dict)
+    by_instrument: dict[str, int] = Field(default_factory=dict)
+
+
 class FullGateFiresBlock(BaseModel):
     """E1 full-gate fire counts (all entry gates pass → BUY_LONG/SELL_SHORT)."""
 
     count: int = 0
     by_action: dict[str, int] = Field(default_factory=dict)
     by_instrument: dict[str, int] = Field(default_factory=dict)
+    # F1: post_e31 (strict_tf) vs pre_e31 (stale_pre_e31) split.
+    by_cohort: dict[str, FullGateCohortCounts] = Field(default_factory=dict)
 
 
 class FullGateMarkoutHorizon(BaseModel):
@@ -405,7 +415,7 @@ class FullGateMarkoutHorizon(BaseModel):
 
 
 class FullGateMarkoutBlock(BaseModel):
-    """E3 fee-aware full-gate markout summary on quality scorecard (no network)."""
+    """E3/F1 fee-aware full-gate markout summary on quality scorecard (no network)."""
 
     count: int = 0
     sample_count: int = 0
@@ -416,7 +426,9 @@ class FullGateMarkoutBlock(BaseModel):
     clear_hurdle_bps: float = 10.0
     horizons: list[FullGateMarkoutHorizon] = Field(default_factory=list)
     by_action: dict[str, int] = Field(default_factory=dict)
-    cohort: str = "full_gate"
+    cohort: str = "post_e31"
+    cohort_synonym: str | None = "strict_tf"
+    stale_pre_e31_note: str | None = None
 
 
 class QualityStatsResponse(BaseModel):
@@ -430,8 +442,10 @@ class QualityStatsResponse(BaseModel):
     near_signal_rate: float = 0.0
     # E1: distinct from WAIT/near — rule fires with signal_diag.missing==[].
     full_gate_fires: FullGateFiresBlock = Field(default_factory=FullGateFiresBlock)
-    # E3: fee-aware full-gate markout (60/300/900; primary = 300s).
+    # E3/F1: primary = post_e31 fee-aware markout (60/300/900; primary = 300s).
     full_gate_markout: FullGateMarkoutBlock | None = None
+    # F1 audit: pre_e31 / stale_pre_e31 markout (never poisons primary headline).
+    full_gate_markout_pre_e31: FullGateMarkoutBlock | None = None
     # Hint whether economic/shadow sample is probe vs full-gate (Monitor label).
     economic_evidence: str = "none"
     shadow: QualityShadowBlock = Field(default_factory=QualityShadowBlock)

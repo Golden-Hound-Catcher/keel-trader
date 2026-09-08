@@ -561,8 +561,12 @@ class KeelLedger:
         *,
         apply_funding: bool = False,
         settings: Any | None = None,
+        cohort: str | None = None,
     ) -> dict[str, Any]:
-        """Fee-aware full-gate markout (local ledger; default no network funding)."""
+        """Fee-aware full-gate markout (local ledger; default no network funding).
+
+        F1: pass ``cohort='post_e31'`` / ``'pre_e31'`` to isolate TF+4h vs stale.
+        """
         from keel.ledger.full_gate import compute_full_gate_markout
 
         return compute_full_gate_markout(
@@ -571,6 +575,7 @@ class KeelLedger:
             horizons=horizons,
             apply_funding=bool(apply_funding),
             settings=settings,
+            cohort=cohort,
         )
 
     def get_quality_stats(self, hours: float = 24.0) -> dict[str, Any]:
@@ -579,7 +584,8 @@ class KeelLedger:
 
         Composes decision aggregates, market_source breakdown, near_signal_rate
         (WAIT rows whose signal_diag.nearest is long/short), E1 full_gate_fires
-        (BUY_LONG/SELL_SHORT with signal_diag.missing==[]), E3 full_gate_markout
+        (BUY_LONG/SELL_SHORT with signal_diag.missing==[]), F1 cohort split
+        (post_e31 vs pre_e31), E3/F1 full_gate_markout preferring post_e31
         (fee-aware, no network), shadow_fill stats, cheap cycle timing, and
         optional ``by_instrument`` breakdown — read-only, no trading side effects.
         """
@@ -634,24 +640,44 @@ class KeelLedger:
         # E1: full-gate fires (BUY_LONG/SELL_SHORT + empty missing + rule policy).
         # E3: compact fee-aware full_gate_markout (local ledger only; no network).
         from keel.ledger.full_gate import (
+            COHORT_POST_E31,
+            COHORT_PRE_E31,
             aggregate_full_gate_fires,
             compute_full_gate_markout,
             summarize_full_gate_markout,
+            summarize_full_gate_markout_primary,
         )
 
         full_gate = aggregate_full_gate_fires(conn, since=since)
         full_gate_by_inst = dict(full_gate.get("by_instrument") or {})
+        full_gate_by_cohort = dict(full_gate.get("by_cohort") or {})
         try:
-            fg_markout_raw = compute_full_gate_markout(
+            fg_post_raw = compute_full_gate_markout(
                 conn,
                 hours=hours_f,
                 horizons=(60, 300, 900),
                 apply_funding=False,
                 settings=None,
+                cohort=COHORT_POST_E31,
             )
-            full_gate_markout = summarize_full_gate_markout(fg_markout_raw)
+            fg_pre_raw = compute_full_gate_markout(
+                conn,
+                hours=hours_f,
+                horizons=(60, 300, 900),
+                apply_funding=False,
+                settings=None,
+                cohort=COHORT_PRE_E31,
+            )
+            full_gate_markout, full_gate_markout_pre = (
+                summarize_full_gate_markout_primary(fg_post_raw, fg_pre_raw)
+            )
         except Exception:
             full_gate_markout = summarize_full_gate_markout(None)
+            full_gate_markout["cohort"] = COHORT_POST_E31
+            full_gate_markout["cohort_synonym"] = "strict_tf"
+            full_gate_markout_pre = summarize_full_gate_markout(None)
+            full_gate_markout_pre["cohort"] = COHORT_PRE_E31
+            full_gate_markout_pre["cohort_synonym"] = "stale_pre_e31"
 
         # Per-instrument quality breakdown (diagnosis for multi-inst observe).
         by_instrument: dict[str, dict[str, Any]] = {}
@@ -772,9 +798,21 @@ class KeelLedger:
 
         probe_n = int(shadow.get("probe_count", 0))
         fg_n = int(full_gate.get("count", 0))
-        if fg_n > 0 and probe_n == 0:
+        fg_post_n = int(
+            (full_gate_by_cohort.get(COHORT_POST_E31) or {}).get("count") or 0
+        )
+        fg_pre_n = int(
+            (full_gate_by_cohort.get(COHORT_PRE_E31) or {}).get("count") or 0
+        )
+        # F1: headline economic_evidence prefers post_e31 full-gate presence;
+        # stale pre_e31-only does not claim current-strategy full_gate evidence.
+        if fg_post_n > 0 and probe_n == 0:
             econ_evidence = "full_gate"
-        elif fg_n > 0 and probe_n > 0:
+        elif fg_post_n > 0 and probe_n > 0:
+            econ_evidence = "mixed"
+        elif fg_post_n == 0 and fg_pre_n > 0 and probe_n == 0:
+            econ_evidence = "stale_pre_e31"
+        elif fg_post_n == 0 and fg_pre_n > 0 and probe_n > 0:
             econ_evidence = "mixed"
         elif probe_n > 0:
             econ_evidence = "probe"
@@ -792,8 +830,10 @@ class KeelLedger:
                 "count": fg_n,
                 "by_action": dict(full_gate.get("by_action") or {}),
                 "by_instrument": full_gate_by_inst,
+                "by_cohort": full_gate_by_cohort,
             },
             "full_gate_markout": full_gate_markout,
+            "full_gate_markout_pre_e31": full_gate_markout_pre,
             "economic_evidence": econ_evidence,
             "shadow": {
                 "count": int(shadow.get("count", 0)),

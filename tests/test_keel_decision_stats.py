@@ -702,7 +702,12 @@ class TestQualityStats(unittest.TestCase):
                 policy_name="rule",
                 calculus_data={
                     "market_source": "synthetic",
-                    "signal_diag": {"nearest": "long", "missing": []},
+                    "signal_diag": {
+                        "nearest": "long",
+                        "missing": [],
+                        "require_4h_trend": True,
+                        "trend_gate": "15m+1h+4h",
+                    },
                 },
             )
         )
