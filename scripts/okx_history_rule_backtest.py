@@ -81,6 +81,13 @@ def _print_summary(summary: dict) -> None:
         f"avg={_fmt_bps(mo.get('avg_net_rt_bps_5m'))} "
         f"frac_clear_10bps={_fmt_rate(mo.get('frac_clear_10bps_5m'))}"
     )
+    h900 = (mo.get("by_horizon") or {}).get("900") or {}
+    if h900:
+        print(
+            f"900s netRT: win={_fmt_rate(h900.get('win_rate_net_rt'))} "
+            f"avg={_fmt_bps(h900.get('avg_net_rt_bps'))} "
+            f"frac_clear_10bps={_fmt_rate(h900.get('frac_clear_hurdle'))}"
+        )
     print(f"fee_model={mo.get('fee_model')}")
     print("--- by_horizon ---")
     for h, row in (mo.get("by_horizon") or {}).items():

@@ -7,6 +7,9 @@ from keel.policy.stub import (
     resolve_rule_variant,
     resolve_tf_require_4h,
     resolve_tf_max_extension_atr,
+    resolve_tf_pullback_enabled,
+    resolve_tf_rsi_pullback_long_max,
+    resolve_tf_rsi_pullback_short_min,
     rule_based_decision,
 )
 from keel.policy.llm_policy import LLMDecisionPolicy
@@ -23,6 +26,9 @@ __all__ = [
     "resolve_rule_variant",
     "resolve_tf_require_4h",
     "resolve_tf_max_extension_atr",
+    "resolve_tf_pullback_enabled",
+    "resolve_tf_rsi_pullback_long_max",
+    "resolve_tf_rsi_pullback_short_min",
     "rule_based_decision",
     "build_decision_policy",
     "describe_policy",

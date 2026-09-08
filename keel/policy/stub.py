@@ -28,10 +28,15 @@ E3.1 (trend_follow only): ``KEEL_RULE_TF_REQUIRE_4H`` (default 1) hard-requires
 ``trend_4h`` same direction as 15m+1h (``trend_gate=15m+1h+4h``); set 0 to keep
 E2A 15m+1h-only. Folded into ``trend_bullish``/``trend_bearish``. mean_revert
 ignores this env.
-F2a (trend_follow only): ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 1.5, clamp
-0.5–5; **0 disables**) rejects entries already extended vs ``ema_21`` in ATR
+F2a (trend_follow only): ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default **0=off**,
+clamp 0.5–5 when >0) rejects entries already extended vs ``ema_21`` in ATR
 units — long ``(price-ema_21)/atr_14``, short ``(ema_21-price)/atr_14``. Gate
 ``extension_ok``; atr_14<=0 fail-closed when enabled. mean_revert unchanged.
+F2b (trend_follow only): RSI pullback gate so we do not buy strength already
+spent — ``KEEL_RULE_TF_PULLBACK`` master (default **1** on); long
+``rsi_14 <= KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX`` (default 52); short
+``rsi_14 >= KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN`` (default 48). Gate
+``pullback_ok``; set master 0 to disable both. mean_revert unchanged.
 """
 from __future__ import annotations
 
@@ -59,6 +64,12 @@ _TF_MACD_LAG_BPS_MAX = 15.0
 _TF_MAX_EXTENSION_ATR_DEFAULT = 0.0
 _TF_MAX_EXTENSION_ATR_MIN = 0.5
 _TF_MAX_EXTENSION_ATR_MAX = 5.0
+# F2b: TF RSI pullback (master on by default under TF).
+_TF_PULLBACK_DEFAULT = True
+_TF_RSI_PULLBACK_LONG_MAX_DEFAULT = 52.0
+_TF_RSI_PULLBACK_SHORT_MIN_DEFAULT = 48.0
+_TF_RSI_PULLBACK_MIN = 20.0
+_TF_RSI_PULLBACK_MAX = 80.0
 # R7/R8: near-signal edge_hint geometry (distance-to-threshold + ATR).
 # R8 defaults: slightly higher near p + softer penalty fracs so low-ATR
 # (≈18–40 bps) can still clear the 10 bps probe hurdle when residuals are modest.
@@ -80,6 +91,7 @@ _BINARY_MISSING_GATES = frozenset(
         "ema_long_ok",
         "ema_short_ok",
         "extension_ok",
+        "pullback_ok",
     }
 )
 
@@ -212,6 +224,77 @@ def resolve_tf_max_extension_atr() -> float:
     )
 
 
+def _clamp_tf_rsi_pullback(raw: float, default: float) -> float:
+    """F2b: clamp RSI pullback threshold into [20, 80]."""
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        v = default
+    if v != v:  # NaN
+        return default
+    return max(_TF_RSI_PULLBACK_MIN, min(_TF_RSI_PULLBACK_MAX, v))
+
+
+def resolve_tf_pullback_enabled() -> bool:
+    """
+    F2b: whether TF RSI pullback gate is active.
+
+    True only under ``trend_follow`` when ``KEEL_RULE_TF_PULLBACK`` is on
+    (default True). Always False under ``mean_revert``.
+    """
+    if _rule_variant() != "trend_follow":
+        return False
+    return _env_bool("KEEL_RULE_TF_PULLBACK", _TF_PULLBACK_DEFAULT)
+
+
+def resolve_tf_rsi_pullback_long_max() -> float:
+    """F2b: effective long pullback RSI max (0 under mean_revert / when off)."""
+    if not resolve_tf_pullback_enabled():
+        return 0.0
+    return _clamp_tf_rsi_pullback(
+        _env_float(
+            "KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX",
+            _TF_RSI_PULLBACK_LONG_MAX_DEFAULT,
+        ),
+        _TF_RSI_PULLBACK_LONG_MAX_DEFAULT,
+    )
+
+
+def resolve_tf_rsi_pullback_short_min() -> float:
+    """F2b: effective short pullback RSI min (0 under mean_revert / when off)."""
+    if not resolve_tf_pullback_enabled():
+        return 0.0
+    return _clamp_tf_rsi_pullback(
+        _env_float(
+            "KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN",
+            _TF_RSI_PULLBACK_SHORT_MIN_DEFAULT,
+        ),
+        _TF_RSI_PULLBACK_SHORT_MIN_DEFAULT,
+    )
+
+
+def _tf_pullback_ok(
+    snapshot: MarketSnapshot,
+    *,
+    side: str,
+    enabled: bool,
+    long_max: float,
+    short_min: float,
+) -> bool:
+    """
+    F2b RSI pullback gate.
+
+    long: rsi_14 <= long_max; short: rsi_14 >= short_min.
+    When disabled: always True.
+    """
+    if not enabled:
+        return True
+    rsi = float(getattr(snapshot, "rsi_14", 0.0) or 0.0)
+    if side == "short":
+        return bool(rsi >= float(short_min))
+    return bool(rsi <= float(long_max))
+
+
 def _tf_extension_metrics(
     snapshot: MarketSnapshot,
     *,
@@ -289,6 +372,10 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         "require_4h_trend": False,
         # F2a: TF-only max extension ATR (0 under mean_revert / when disabled).
         "max_extension_atr": 0.0,
+        # F2b: TF-only RSI pullback (off under mean_revert).
+        "tf_pullback_enabled": False,
+        "rsi_pullback_long_max": 0.0,
+        "rsi_pullback_short_min": 0.0,
     }
     if variant == "trend_follow":
         # E2A: RSI = not overbought (long) / not oversold (short); force 15m+1h.
@@ -303,11 +390,28 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         )
         # E3.1: hard-require 4h same direction (default on; 0 = E2A 15m+1h only).
         th["require_4h_trend"] = _env_bool("KEEL_RULE_TF_REQUIRE_4H", True)
-        # F2a: reject already-extended TF entries (default 1.5 ATR; 0 disables).
+        # F2a: reject already-extended TF entries (default 0=off; >0 enables).
         th["max_extension_atr"] = _clamp_tf_max_extension_atr(
             _env_float(
                 "KEEL_RULE_TF_MAX_EXTENSION_ATR", _TF_MAX_EXTENSION_ATR_DEFAULT
             )
+        )
+        # F2b: RSI pullback (master default on).
+        pb_on = _env_bool("KEEL_RULE_TF_PULLBACK", _TF_PULLBACK_DEFAULT)
+        th["tf_pullback_enabled"] = pb_on
+        th["rsi_pullback_long_max"] = _clamp_tf_rsi_pullback(
+            _env_float(
+                "KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX",
+                _TF_RSI_PULLBACK_LONG_MAX_DEFAULT,
+            ),
+            _TF_RSI_PULLBACK_LONG_MAX_DEFAULT,
+        )
+        th["rsi_pullback_short_min"] = _clamp_tf_rsi_pullback(
+            _env_float(
+                "KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN",
+                _TF_RSI_PULLBACK_SHORT_MIN_DEFAULT,
+            ),
+            _TF_RSI_PULLBACK_SHORT_MIN_DEFAULT,
         )
     return th
 
@@ -700,7 +804,11 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     into ``trend_bullish``/``trend_bearish`` and ``trend_gate=15m+1h+4h``.
     F2a: TF ``max_extension_atr`` / ``extension_atr`` / ``extension_ok`` /
     ``extension_headroom_atr`` — reject when price is already extended vs
-    ``ema_21`` beyond ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 1.5; 0 off).
+    ``ema_21`` beyond ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 0=off).
+    F2b: TF ``pullback_ok`` / ``rsi_pullback_long_max`` /
+    ``rsi_pullback_short_min`` — reject when RSI shows strength already spent
+    (long ``rsi<=long_max`` default 52; short ``rsi>=short_min`` default 48);
+    master ``KEEL_RULE_TF_PULLBACK`` (default 1; 0 disables).
     R7/R8: ``edge_hint_mode`` (``full``|``near``|``none``) plus
     ``edge_hint_sized_ev`` / ``edge_hint_distance_penalty_bps`` /
     ``edge_hint_distance_components`` / ``edge_hint_penalty_scale_bps``
@@ -792,6 +900,25 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     )
     extension_ok_short, extension_atr_short = _tf_extension_metrics(
         snapshot, side="short", max_extension_atr=max_extension_atr
+    )
+
+    # F2b: TF RSI pullback; MR / master-off → ok always.
+    tf_pullback_enabled = bool(th.get("tf_pullback_enabled", False)) and is_tf
+    rsi_pullback_long_max = float(th.get("rsi_pullback_long_max") or 0.0)
+    rsi_pullback_short_min = float(th.get("rsi_pullback_short_min") or 0.0)
+    pullback_ok_long = _tf_pullback_ok(
+        snapshot,
+        side="long",
+        enabled=tf_pullback_enabled,
+        long_max=rsi_pullback_long_max,
+        short_min=rsi_pullback_short_min,
+    )
+    pullback_ok_short = _tf_pullback_ok(
+        snapshot,
+        side="short",
+        enabled=tf_pullback_enabled,
+        long_max=rsi_pullback_long_max,
+        short_min=rsi_pullback_short_min,
     )
 
     # Volume soft uses *hard* RSI in the other-four (same as pre-relax).
@@ -905,6 +1032,17 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
             extension_ok_long and extension_ok_short
         ),
         "extension_headroom_atr": None,
+        # F2b pullback placeholders; refined after nearest.
+        "tf_pullback_enabled": tf_pullback_enabled,
+        "rsi_pullback_long_max": (
+            rsi_pullback_long_max if tf_pullback_enabled else 0.0
+        ),
+        "rsi_pullback_short_min": (
+            rsi_pullback_short_min if tf_pullback_enabled else 0.0
+        ),
+        "pullback_ok": pullback_ok_long if not tf_pullback_enabled else (
+            pullback_ok_long and pullback_ok_short
+        ),
     }
 
     if not data_ok:
@@ -965,16 +1103,38 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
             nearest, missing = "short", short_missing
         else:
             nearest, missing = "long", long_missing
+    # F2b: fold pullback_ok into missing for the nearest / full-gate side.
+    if tf_pullback_enabled:
+        if not pullback_ok_long and "pullback_ok" not in long_missing:
+            long_missing = list(long_missing) + ["pullback_ok"]
+        if not pullback_ok_short and "pullback_ok" not in short_missing:
+            short_missing = list(short_missing) + ["pullback_ok"]
+        n_long, n_short = len(long_missing), len(short_missing)
+        if n_long == 0 and n_short == 0:
+            nearest, missing = "long", []
+        elif n_long == 0:
+            nearest, missing = "long", []
+        elif n_short == 0:
+            nearest, missing = "short", []
+        elif n_long < n_short:
+            nearest, missing = "long", long_missing
+        elif n_short < n_long:
+            nearest, missing = "short", short_missing
+        else:
+            nearest, missing = "long", long_missing
     if nearest == "short":
         extension_atr = extension_atr_short
         extension_ok = extension_ok_short
+        pullback_ok = pullback_ok_short
     else:
         extension_atr = extension_atr_long
         extension_ok = extension_ok_long
+        pullback_ok = pullback_ok_long
     gates["nearest"] = nearest
     gates["missing"] = missing
     gates["extension_atr"] = extension_atr
     gates["extension_ok"] = extension_ok
+    gates["pullback_ok"] = pullback_ok
     if max_extension_atr > 0 and extension_atr is not None:
         gates["extension_headroom_atr"] = float(max_extension_atr) - float(
             extension_atr
@@ -1002,7 +1162,17 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         and extension_atr is not None
         and float(extension_atr) <= float(max_extension_atr) + 0.25
     )
-    gates["near_ready"] = near_vol or near_rsi_long or near_rsi_short or near_extension
+    # Soft near: only pullback missing and RSI within ~3 pts of threshold.
+    near_pullback = False
+    if tf_pullback_enabled and missing == ["pullback_ok"]:
+        rsi = float(snapshot.rsi_14)
+        if nearest == "long":
+            near_pullback = rsi <= float(rsi_pullback_long_max) + 3.0
+        elif nearest == "short":
+            near_pullback = rsi >= float(rsi_pullback_short_min) - 3.0
+    gates["near_ready"] = (
+        near_vol or near_rsi_long or near_rsi_short or near_extension or near_pullback
+    )
     gates.update(
         apply_1h_edge_boost(
             _edge_hints(
@@ -1051,6 +1221,8 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     MACD lag ``KEEL_RULE_TF_MACD_LAG_BPS`` (default 3.0) for small adverse hist.
     F2a (TF only): ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 0=off; >0 enables)
     blocks entries already extended vs ``ema_21`` (gate ``extension_ok``).
+    F2b (TF only): RSI pullback gate (``KEEL_RULE_TF_PULLBACK`` default 1;
+    long ``rsi<=52``, short ``rsi>=48``; gate ``pullback_ok``).
     """
     diag = diagnose_rule_signal(snapshot)
 
@@ -1073,6 +1245,23 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     ext_short_ok, _ = _tf_extension_metrics(
         snapshot, side="short", max_extension_atr=max_ext
     )
+    pb_enabled = bool(diag.get("tf_pullback_enabled", False))
+    pb_long_max = float(diag.get("rsi_pullback_long_max") or 0.0)
+    pb_short_min = float(diag.get("rsi_pullback_short_min") or 0.0)
+    pb_long_ok = _tf_pullback_ok(
+        snapshot,
+        side="long",
+        enabled=pb_enabled,
+        long_max=pb_long_max,
+        short_min=pb_short_min,
+    )
+    pb_short_ok = _tf_pullback_ok(
+        snapshot,
+        side="short",
+        enabled=pb_enabled,
+        long_max=pb_long_max,
+        short_min=pb_short_min,
+    )
     long_ok = (
         diag["rsi_long_ok"]
         and diag["trend_bullish"]
@@ -1080,6 +1269,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         and diag["ema_long_ok"]
         and diag["volume_ok"]
         and ext_long_ok
+        and pb_long_ok
     )
     if long_ok:
         entry = price
@@ -1110,6 +1300,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         and diag["ema_short_ok"]
         and diag["volume_ok"]
         and ext_short_ok
+        and pb_short_ok
     )
     if short_ok:
         entry = price
