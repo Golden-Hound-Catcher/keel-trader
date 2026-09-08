@@ -1409,6 +1409,7 @@ class TestE2ATrendFollowVariant(unittest.TestCase):
         "KEEL_RULE_TF_RSI_SHORT_MIN",
         "KEEL_RULE_TF_REQUIRE_4H",
         "KEEL_RULE_TF_MAX_EXTENSION_ATR",
+        "KEEL_RULE_TF_PULLBACK",
         "KEEL_RULE_REQUIRE_1H_TREND",
         "KEEL_RULE_RSI_RELAX_ENABLE",
         "KEEL_RULE_MIN_VOLUME_RATIO",
@@ -1462,6 +1463,8 @@ class TestE2ATrendFollowVariant(unittest.TestCase):
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
         # E3.1 default is on; keep E2A suite on 15m+1h-only (4h covered separately).
         os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "0"
+        # Isolate E2A from F2b RSI pullback (explicit off; product default also off).
+        os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
 
     def test_default_mean_revert_mid_rsi_waits(self):
         """Without variant env, mid RSI still needs mean-reversion extreme."""
@@ -1598,6 +1601,7 @@ class TestE2BTrendFollowVolumeMacdLag(unittest.TestCase):
         "KEEL_RULE_TF_RSI_SHORT_MIN",
         "KEEL_RULE_TF_MACD_LAG_BPS",
         "KEEL_RULE_TF_REQUIRE_4H",
+        "KEEL_RULE_TF_PULLBACK",
         "KEEL_RULE_REQUIRE_1H_TREND",
         "KEEL_RULE_RSI_RELAX_ENABLE",
         "KEEL_RULE_MIN_VOLUME_RATIO",
@@ -1656,6 +1660,8 @@ class TestE2BTrendFollowVolumeMacdLag(unittest.TestCase):
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
         # Isolate E2B from E3.1 4h default (suite snaps often use trend_4h=neutral).
         os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "0"
+        # Isolate E2B from F2b RSI pullback (explicit off).
+        os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
 
     def test_tf_soft_volume_mid_rsi_fires(self):
         """TF: mid RSI + vol above soft floor + trend/macd/ema → soft_tf full gate."""
@@ -1836,6 +1842,7 @@ class TestE31TfRequire4h(unittest.TestCase):
         "KEEL_RULE_VARIANT",
         "KEEL_RULE_TF_REQUIRE_4H",
         "KEEL_RULE_TF_MAX_EXTENSION_ATR",
+        "KEEL_RULE_TF_PULLBACK",
         "KEEL_RULE_TF_RSI_LONG_MAX",
         "KEEL_RULE_TF_RSI_SHORT_MIN",
         "KEEL_RULE_TF_MACD_LAG_BPS",
@@ -1888,6 +1895,8 @@ class TestE31TfRequire4h(unittest.TestCase):
         os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
         os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
+        # Isolate E3.1 from F2b RSI pullback (explicit off).
+        os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
         if require_4h is None:
             os.environ.pop("KEEL_RULE_TF_REQUIRE_4H", None)  # default on
         else:
@@ -2013,6 +2022,7 @@ class TestF2aTfExtensionFilter(unittest.TestCase):
     _KEYS = (
         "KEEL_RULE_VARIANT",
         "KEEL_RULE_TF_MAX_EXTENSION_ATR",
+        "KEEL_RULE_TF_PULLBACK",
         "KEEL_RULE_TF_REQUIRE_4H",
         "KEEL_RULE_TF_RSI_LONG_MAX",
         "KEEL_RULE_TF_RSI_SHORT_MIN",
@@ -2067,6 +2077,8 @@ class TestF2aTfExtensionFilter(unittest.TestCase):
         os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
         os.environ["KEEL_RULE_TF_REQUIRE_4H"] = require_4h
+        # Isolate F2a from F2b RSI pullback (explicit off).
+        os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
         if max_extension is None:
             os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "1.5"  # product default is 0=off
         else:
@@ -2185,5 +2197,224 @@ class TestF2aTfExtensionFilter(unittest.TestCase):
             self.assertAlmostEqual(resolve_tf_max_extension_atr(), 5.0)
             os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "0.1"
             self.assertAlmostEqual(resolve_tf_max_extension_atr(), 0.5)
+        finally:
+            self._restore(prev)
+
+
+class TestF2bTfRsiPullback(unittest.TestCase):
+    """F2b: KEEL_RULE_TF_PULLBACK RSI pullback gate (TF only)."""
+
+    _KEYS = (
+        "KEEL_RULE_VARIANT",
+        "KEEL_RULE_TF_PULLBACK",
+        "KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX",
+        "KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN",
+        "KEEL_RULE_TF_MAX_EXTENSION_ATR",
+        "KEEL_RULE_TF_REQUIRE_4H",
+        "KEEL_RULE_TF_RSI_LONG_MAX",
+        "KEEL_RULE_TF_RSI_SHORT_MIN",
+        "KEEL_RULE_TF_MACD_LAG_BPS",
+        "KEEL_RULE_REQUIRE_1H_TREND",
+        "KEEL_RULE_RSI_RELAX_ENABLE",
+        "KEEL_RULE_MIN_VOLUME_RATIO",
+        "KEEL_RULE_MIN_VOLUME_PERCENTILE",
+        "KEEL_RULE_VOLUME_SOFT_ENABLE",
+    )
+
+    def _snap(self, **overrides) -> MarketSnapshot:
+        base = dict(
+            inst_id="BTC-USDT-SWAP",
+            name="BTC",
+            timestamp=1.0,
+            price=65000.0,
+            atr_14=500.0,
+            rsi_14=50.0,
+            trend_15m="bullish",
+            trend_1h="bullish",
+            trend_4h="bullish",
+            macd_histogram=10.0,
+            ema_9=65100.0,
+            ema_21=64900.0,
+            volume_ratio=1.2,
+            data_valid=True,
+        )
+        base.update(overrides)
+        return MarketSnapshot(**base)
+
+    def _save(self):
+        import os
+
+        return {k: os.environ.get(k) for k in self._KEYS}
+
+    def _restore(self, prev):
+        import os
+
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _enable_tf(self, *, pullback: str | None = None, ext: str = "0"):
+        import os
+
+        os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
+        os.environ["KEEL_RULE_MIN_VOLUME_RATIO"] = "0.5"
+        os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+        os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
+        os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
+        os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "1"
+        os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = ext
+        if pullback is None:
+            os.environ["KEEL_RULE_TF_PULLBACK"] = "1"
+        else:
+            os.environ["KEEL_RULE_TF_PULLBACK"] = pullback
+
+    def test_long_rsi_spent_blocked(self):
+        """rsi_14 > long_max → WAIT + missing pullback_ok."""
+        prev = self._save()
+        try:
+            self._enable_tf()
+            # default long_max=52; rsi=60 is still TF not-OB (<=68) but spent.
+            d = rule_based_decision(self._snap(rsi_14=60.0))
+            self.assertEqual(d.action, "WAIT")
+            self.assertIn("pullback_ok", d.signal_diag["missing"])
+            self.assertFalse(d.signal_diag["pullback_ok"])
+            self.assertTrue(d.signal_diag["tf_pullback_enabled"])
+            self.assertAlmostEqual(d.signal_diag["rsi_pullback_long_max"], 52.0)
+            self.assertAlmostEqual(d.signal_diag["rsi_pullback_short_min"], 48.0)
+        finally:
+            self._restore(prev)
+
+    def test_long_pullback_allowed(self):
+        """rsi_14 <= 52 with other TF gates → BUY_LONG."""
+        prev = self._save()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(self._snap(rsi_14=50.0))
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertTrue(d.signal_diag["pullback_ok"])
+        finally:
+            self._restore(prev)
+
+    def test_short_rsi_spent_blocked(self):
+        """rsi_14 < short_min → WAIT + missing pullback_ok on short."""
+        prev = self._save()
+        try:
+            self._enable_tf()
+            # Bearish stack; rsi=40 still TF not-OS (>=32) but not pulled back enough.
+            d = rule_based_decision(
+                self._snap(
+                    rsi_14=40.0,
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    trend_4h="bearish",
+                    macd_histogram=-10.0,
+                    ema_9=64900.0,
+                    ema_21=65100.0,
+                )
+            )
+            self.assertEqual(d.action, "WAIT")
+            self.assertIn("pullback_ok", d.signal_diag["missing"])
+            self.assertFalse(d.signal_diag["pullback_ok"])
+        finally:
+            self._restore(prev)
+
+    def test_short_pullback_allowed(self):
+        """rsi_14 >= 48 with bearish TF gates → SELL_SHORT."""
+        prev = self._save()
+        try:
+            self._enable_tf()
+            d = rule_based_decision(
+                self._snap(
+                    rsi_14=50.0,
+                    trend_15m="bearish",
+                    trend_1h="bearish",
+                    trend_4h="bearish",
+                    macd_histogram=-10.0,
+                    ema_9=64900.0,
+                    ema_21=65100.0,
+                )
+            )
+            self.assertEqual(d.action, "SELL_SHORT")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertTrue(d.signal_diag["pullback_ok"])
+        finally:
+            self._restore(prev)
+
+    def test_master_off_allows_spent_rsi(self):
+        """KEEL_RULE_TF_PULLBACK=0 disables filter; rsi=60 long still fires."""
+        prev = self._save()
+        try:
+            self._enable_tf(pullback="0")
+            d = rule_based_decision(self._snap(rsi_14=60.0))
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertEqual(d.signal_diag["missing"], [])
+            self.assertTrue(d.signal_diag["pullback_ok"])
+            self.assertFalse(d.signal_diag["tf_pullback_enabled"])
+            self.assertAlmostEqual(d.signal_diag["rsi_pullback_long_max"], 0.0)
+        finally:
+            self._restore(prev)
+
+    def test_mean_revert_unaffected(self):
+        """MR ignores pullback envs (tf_pullback_enabled=False)."""
+        import os
+        from keel.policy import (
+            diagnose_rule_signal,
+            resolve_tf_pullback_enabled,
+            resolve_tf_rsi_pullback_long_max,
+        )
+
+        prev = self._save()
+        try:
+            for k in self._KEYS:
+                os.environ.pop(k, None)
+            os.environ["KEEL_RULE_TF_PULLBACK"] = "1"
+            os.environ["KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX"] = "52"
+            os.environ["KEEL_RULE_MIN_VOLUME_PERCENTILE"] = "0"
+            os.environ["KEEL_RULE_VOLUME_SOFT_ENABLE"] = "0"
+            snap = self._snap(rsi_14=30.0)  # MR long RSI ok
+            diag = diagnose_rule_signal(snap)
+            self.assertEqual(diag["rule_variant"], "mean_revert")
+            self.assertFalse(diag["tf_pullback_enabled"])
+            self.assertTrue(diag["pullback_ok"])
+            self.assertNotIn("pullback_ok", diag.get("missing") or [])
+            self.assertFalse(resolve_tf_pullback_enabled())
+            self.assertEqual(resolve_tf_rsi_pullback_long_max(), 0.0)
+            d = rule_based_decision(snap)
+            self.assertEqual(d.action, "BUY_LONG")
+        finally:
+            self._restore(prev)
+
+    def test_resolve_tf_pullback_echo(self):
+        import os
+        from keel.policy import (
+            resolve_tf_pullback_enabled,
+            resolve_tf_rsi_pullback_long_max,
+            resolve_tf_rsi_pullback_short_min,
+        )
+
+        prev = self._save()
+        try:
+            for k in self._KEYS:
+                os.environ.pop(k, None)
+            self.assertFalse(resolve_tf_pullback_enabled())
+            os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
+            self.assertFalse(resolve_tf_pullback_enabled())  # product default off
+            self.assertEqual(resolve_tf_rsi_pullback_long_max(), 0.0)
+            self.assertEqual(resolve_tf_rsi_pullback_short_min(), 0.0)
+            os.environ["KEEL_RULE_TF_PULLBACK"] = "1"
+            self.assertTrue(resolve_tf_pullback_enabled())
+            self.assertAlmostEqual(resolve_tf_rsi_pullback_long_max(), 52.0)
+            self.assertAlmostEqual(resolve_tf_rsi_pullback_short_min(), 48.0)
+            os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
+            self.assertFalse(resolve_tf_pullback_enabled())
+            self.assertEqual(resolve_tf_rsi_pullback_long_max(), 0.0)
+            os.environ["KEEL_RULE_TF_PULLBACK"] = "1"
+            os.environ["KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX"] = "99"
+            self.assertAlmostEqual(resolve_tf_rsi_pullback_long_max(), 80.0)
+            os.environ["KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN"] = "5"
+            self.assertAlmostEqual(resolve_tf_rsi_pullback_short_min(), 20.0)
         finally:
             self._restore(prev)

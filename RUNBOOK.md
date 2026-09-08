@@ -517,7 +517,33 @@ Audit: `signal_diag.extension_atr`, `max_extension_atr`, `extension_ok`, `extens
 # KEEL_RULE_TF_MAX_EXTENSION_ATR=1.5
 ```
 
-Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). Out of scope: F2b hold horizon / F2c alt strategy.
+Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). See F2b RSI pullback below; F2c alt strategy still out of scope.
+
+### Phase F2b — TF RSI pullback gate (quality)
+
+Jo: F2a extension@1.5 hurt 5m net (10%→6.1%); product default extension stays **0=off**. F2b RSI pullback@52/48 **over-filtered** offline (FG ~60→2, 5m win 0%) — product default `KEEL_RULE_TF_PULLBACK` stays **0=off**. Set `1` to A/B enable.
+
+| Env | Default | Behavior |
+|-----|---------|----------|
+| `KEEL_RULE_TF_PULLBACK` | **0** (off) | Master switch for TF pullback. `0` disables both side filters. `trend_follow` only; **mean_revert ignores**. |
+| `KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX` | **52** | Long: `rsi_14 <= max` → `pullback_ok`. Clamp 20–80. |
+| `KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN` | **48** | Short: `rsi_14 >= min` → `pullback_ok`. Clamp 20–80. |
+
+Audit: `signal_diag.pullback_ok`, `rsi_pullback_long_max`, `rsi_pullback_short_min`, `tf_pullback_enabled`. Folded into `missing` / full-gate (diagnose + `rule_based_decision`). Backtest picks it up via diagnose (ext still 0 unless set).
+
+```bash
+# Optional local .env (never commit). Master off for A/B vs F0b baseline:
+# KEEL_RULE_TF_PULLBACK=0
+# KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX=52
+# KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN=48
+
+PYTHONPATH=. python scripts/okx_history_rule_backtest.py \
+  --inst-ids BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP \
+  --bars-15m 700 --cooldown-seconds 900 --variant trend_follow \
+  --json-out /tmp/keel_f2b_okx_history.json
+```
+
+Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). Out of scope: F2c alt strategy.
 
 ### Phase F0b — historical OKX candle backtest (offline)
 
