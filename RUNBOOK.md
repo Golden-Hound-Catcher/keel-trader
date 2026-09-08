@@ -517,7 +517,7 @@ Audit: `signal_diag.extension_atr`, `max_extension_atr`, `extension_ok`, `extens
 # KEEL_RULE_TF_MAX_EXTENSION_ATR=1.5
 ```
 
-Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). See F2b RSI pullback below; F2c alt strategy still out of scope.
+Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). See F2b RSI pullback below; F2c strategy compare follows.
 
 ### Phase F2b — TF RSI pullback gate (quality)
 
@@ -543,7 +543,35 @@ PYTHONPATH=. python scripts/okx_history_rule_backtest.py \
   --json-out /tmp/keel_f2b_okx_history.json
 ```
 
-Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). Out of scope: F2c alt strategy.
+Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear).
+
+### Phase F2c — strategy compare on same candles (measurement)
+
+Jo: F2a/F2b entry filters did not lift 5m net toward **0.55**. F2c asks whether **mean_revert** beats TF E3.1 on the same public candles, and whether a **barrier exit** (TP 2.2×ATR / SL 1.0×ATR / timeout 900s on subsequent 15m OHLC; SL-first if both print) looks better than fixed **300s** markout — **measurement only**, not a live exit change.
+
+**Offline result (BTC+ETH+SOL, ~700×15m, cd=900):** A TF FG=60 / 5m win **10%** avg **−11.2bps** frac_clear **0%**; B mean_revert FG=**0**; C barrier on same TF fires win **20%** avg **−9.9bps** frac_clear **13%** (exits timeout 51 / SL 7 / TP 2). None reach 0.55 — keep waiting / do not flip family or live exits from F2c alone.
+
+| Leg | Setup | Markout |
+|-----|-------|---------|
+| **A** | `trend_follow` + require_4h + cooldown; **ext=0, pullback=0** | Fixed 60/300/900s fee-aware net RT |
+| **B** | `mean_revert` (same cooldown) | Fixed 300s primary |
+| **C** | Same TF fires as A | Barrier TP/SL/timeout (optional; vs 300s) |
+
+```bash
+# Public API only — strips OKX keys / KEEL_SKIP_DOTENV (never writes .env)
+PYTHONPATH=. python scripts/okx_history_strategy_compare.py \
+  --inst-ids BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP \
+  --bars-15m 700 --cooldown-seconds 900 \
+  --json-out /tmp/keel_f2c_strategy_compare.json
+```
+
+| Piece | Location |
+|-------|----------|
+| Barrier exit markout | `keel.backtest.okx_history_rule.barrier_exit_markout` |
+| Walk flag | `walk_forward_backtest(..., include_barrier=True)` |
+| Compare CLI | `scripts/okx_history_strategy_compare.py` |
+
+Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). Do not flip live variant or exits from F2c alone.
 
 ### Phase F0b — historical OKX candle backtest (offline)
 
