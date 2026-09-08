@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 from keel.risk.arming import (
     AVG_NET_RT_BELOW,
+    FULL_GATE_WIN_RATE_BELOW,
+    INSUFFICIENT_POST_E31_FULL_GATE_SAMPLE,
     INSUFFICIENT_SHADOW_MARKOUT_SAMPLE,
     PROBE_WIN_RATE_BELOW,
     build_first_live,
@@ -47,9 +49,19 @@ class _FakeEvent:
 
 
 class _FakeLedger:
-    def __init__(self, events=None, markout=None):
+    def __init__(
+        self,
+        events=None,
+        markout=None,
+        quality=None,
+        full_gate_markout=None,
+        full_gate_markout_by_cohort=None,
+    ):
         self._events = list(events or [])
         self._markout = markout
+        self._quality = quality
+        self._fg_markout = full_gate_markout
+        self._fg_by_cohort = full_gate_markout_by_cohort or {}
 
     def get_events(self, event_type=None, inst_id=None, limit=100):
         out = self._events
@@ -65,6 +77,32 @@ class _FakeLedger:
             "count": 0,
             "probe_count": 0,
             "by_skip_reason": {},
+            "markout": {"horizons": []},
+        }
+
+    def get_quality_stats(self, hours=24.0):
+        if self._quality is not None:
+            return self._quality
+        return {
+            "full_gate_fires": {"count": 0, "by_cohort": {}},
+        }
+
+    def get_full_gate_markout(
+        self,
+        hours=24.0,
+        horizons=None,
+        *,
+        apply_funding=False,
+        settings=None,
+        cohort=None,
+    ):
+        if cohort and cohort in self._fg_by_cohort:
+            return self._fg_by_cohort[cohort]
+        if self._fg_markout is not None:
+            return self._fg_markout
+        return {
+            "count": 0,
+            "cohort": cohort or "full_gate",
             "markout": {"horizons": []},
         }
 
@@ -477,6 +515,122 @@ class TestFirstLiveChecklist(unittest.TestCase):
         build_first_live(s, arming)
         self.assertTrue(s.kill_switch)
 
+
+
+def _fg_markout(*, count=1, sample_count=5, wr=0.60, avg_net=1.5, horizon=300, cohort="post_e31"):
+    return {
+        "count": count,
+        "cohort": cohort,
+        "markout": {
+            "horizons": [
+                {
+                    "horizon_seconds": horizon,
+                    "sample_count": sample_count,
+                    "win_rate_net_roundtrip": wr,
+                    "avg_net_roundtrip_markout_bps": avg_net,
+                    "frac_clear_net_rt_hurdle": 0.2,
+                }
+            ]
+        },
+    }
+
+
+class TestF1PostE31ArmingEconomic(unittest.TestCase):
+    def test_insufficient_post_e31_when_prefer_path_and_thin_sample(self):
+        """54 pre spray + 0 post → never use pre 24%; insufficient_post_e31."""
+        quality = {
+            "full_gate_fires": {
+                "count": 54,
+                "by_cohort": {
+                    "post_e31": {"count": 0, "by_action": {}, "by_instrument": {}},
+                    "pre_e31": {"count": 54, "by_action": {"SELL_SHORT": 54}, "by_instrument": {}},
+                },
+            }
+        }
+        # Shadow markout would otherwise look ok — FG prefer path must win.
+        mk = _markout(count=12, probe_count=8, sample_count=8, probe_wr=0.7, avg_net=2.0)
+        led = _FakeLedger(
+            [_FakeEvent(time.time() - 10)],
+            markout=mk,
+            quality=quality,
+            full_gate_markout_by_cohort={
+                "post_e31": _fg_markout(count=0, sample_count=0, wr=None, avg_net=None),
+                "pre_e31": _fg_markout(
+                    count=54, sample_count=50, wr=0.24, avg_net=-9.7, cohort="pre_e31"
+                ),
+            },
+        )
+        blockers, summary = evaluate_economic_gates(
+            _settings(arming_econ_enabled=True),
+            ledger=led,
+            markout_stats=mk,
+        )
+        self.assertIn(INSUFFICIENT_POST_E31_FULL_GATE_SAMPLE, blockers)
+        self.assertNotIn(FULL_GATE_WIN_RATE_BELOW, blockers)
+        self.assertEqual(summary["full_gate_fires"], 54)
+        self.assertEqual(summary["full_gate_fires_pre_e31"], 54)
+        self.assertEqual(summary["full_gate_fires_post_e31"], 0)
+        self.assertEqual(summary["full_gate_cohort_used"], "post_e31_insufficient")
+        self.assertEqual(summary["economic_sample_source"], "insufficient_post_e31")
+        self.assertFalse(summary["passed"])
+
+    def test_post_e31_win_rate_blocker_not_pre(self):
+        quality = {
+            "full_gate_fires": {
+                "count": 25,
+                "by_cohort": {
+                    "post_e31": {"count": 8, "by_action": {}, "by_instrument": {}},
+                    "pre_e31": {"count": 17, "by_action": {}, "by_instrument": {}},
+                },
+            }
+        }
+        mk = _markout(count=12, probe_count=8, sample_count=8, probe_wr=0.7, avg_net=2.0)
+        led = _FakeLedger(
+            [_FakeEvent(time.time() - 10)],
+            markout=mk,
+            quality=quality,
+            full_gate_markout_by_cohort={
+                "post_e31": _fg_markout(count=8, sample_count=6, wr=0.33, avg_net=-2.0),
+            },
+        )
+        blockers, summary = evaluate_economic_gates(
+            _settings(arming_econ_enabled=True),
+            ledger=led,
+            markout_stats=mk,
+        )
+        self.assertIn(FULL_GATE_WIN_RATE_BELOW, blockers)
+        self.assertNotIn(INSUFFICIENT_POST_E31_FULL_GATE_SAMPLE, blockers)
+        self.assertEqual(summary["full_gate_cohort_used"], "post_e31")
+        self.assertEqual(summary["economic_sample_source"], "full_gate_post_e31")
+        self.assertAlmostEqual(summary["full_gate_win_rate_net_roundtrip"], 0.33)
+
+    def test_post_e31_pass_when_metrics_ok(self):
+        quality = {
+            "full_gate_fires": {
+                "count": 22,
+                "by_cohort": {
+                    "post_e31": {"count": 10, "by_action": {}, "by_instrument": {}},
+                    "pre_e31": {"count": 12, "by_action": {}, "by_instrument": {}},
+                },
+            }
+        }
+        mk = _markout(count=2, probe_count=0, sample_count=2, probe_sample_count=0)
+        led = _FakeLedger(
+            [_FakeEvent(time.time() - 10)],
+            markout=mk,
+            quality=quality,
+            full_gate_markout_by_cohort={
+                "post_e31": _fg_markout(count=10, sample_count=8, wr=0.625, avg_net=3.0),
+            },
+        )
+        blockers, summary = evaluate_economic_gates(
+            _settings(arming_econ_enabled=True),
+            ledger=led,
+            markout_stats=mk,
+        )
+        self.assertEqual(blockers, [])
+        self.assertTrue(summary["passed"])
+        self.assertEqual(summary["full_gate_cohort_used"], "post_e31")
 
 
 class TestArmingSettingsDefaults(unittest.TestCase):

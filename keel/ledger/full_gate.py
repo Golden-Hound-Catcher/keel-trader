@@ -36,8 +36,82 @@ from keel.ledger.shadow_markout import (
 FULL_GATE_ACTIONS = frozenset({"BUY_LONG", "SELL_SHORT"})
 RULE_POLICY_NAMES = frozenset({"rule", ""})
 
+# F1 cohort tags: post-E3.1 (strict TF with 4h) vs pre-E3.1 spray.
+COHORT_POST_E31 = "post_e31"
+COHORT_PRE_E31 = "pre_e31"
+COHORT_STRICT_TF = "strict_tf"  # synonym for post_e31
+COHORT_STALE_PRE_E31 = "stale_pre_e31"  # synonym for pre_e31
+POST_E31_COHORTS = frozenset({COHORT_POST_E31, COHORT_STRICT_TF})
+PRE_E31_COHORTS = frozenset({COHORT_PRE_E31, COHORT_STALE_PRE_E31})
+
 # Match shadow_fill to a decision within this window (cycle cadence ~minutes).
 _SHADOW_MATCH_SECONDS = 120.0
+
+
+def _diag_truthy(value: Any) -> bool:
+    """Truthy for require_4h_trend-style flags (bool/int/str)."""
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    s = str(value).strip().lower()
+    return s in ("1", "true", "yes", "on")
+
+
+def trend_gate_includes_4h(trend_gate: Any) -> bool:
+    """True when ``trend_gate`` string contains the ``4h`` TF token (e.g. 15m+1h+4h)."""
+    if trend_gate is None:
+        return False
+    return "4h" in str(trend_gate).strip().lower()
+
+
+def is_post_e31_signal_diag(diag: dict[str, Any] | None) -> bool:
+    """
+    Post-E3.1 / strict_tf full-gate: ``require_4h_trend`` truthy OR ``trend_gate``
+    contains ``4h``. Older TF fires without 4h require are pre_e31 / stale.
+    """
+    if not isinstance(diag, dict) or not diag:
+        return False
+    if _diag_truthy(diag.get("require_4h_trend")):
+        return True
+    return trend_gate_includes_4h(diag.get("trend_gate"))
+
+
+def classify_full_gate_cohort(diag: dict[str, Any] | None) -> str:
+    """
+    Canonical cohort id for a full-gate fire: ``post_e31`` or ``pre_e31``.
+
+    Synonyms (audit / Monitor): post_e31 ↔ strict_tf, pre_e31 ↔ stale_pre_e31.
+    """
+    if is_post_e31_signal_diag(diag):
+        return COHORT_POST_E31
+    return COHORT_PRE_E31
+
+
+def normalize_cohort(cohort: str | None) -> str | None:
+    """Map synonym → canonical; unknown/None → None."""
+    if cohort is None:
+        return None
+    c = str(cohort).strip().lower()
+    if not c or c in ("all", "full_gate", "any"):
+        return None
+    if c in POST_E31_COHORTS:
+        return COHORT_POST_E31
+    if c in PRE_E31_COHORTS:
+        return COHORT_PRE_E31
+    return c
+
+
+def cohort_synonym(cohort: str | None) -> str:
+    """Audit synonym for a canonical cohort."""
+    c = normalize_cohort(cohort) or str(cohort or "").strip().lower()
+    if c == COHORT_POST_E31:
+        return COHORT_STRICT_TF
+    if c == COHORT_PRE_E31:
+        return COHORT_STALE_PRE_E31
+    return c or COHORT_PRE_E31
 
 
 def _median(values: Sequence[float]) -> float | None:
@@ -118,7 +192,7 @@ def aggregate_full_gate_fires(
     since: float,
     limit: int = 100_000,
 ) -> dict[str, Any]:
-    """Count full-gate fires in ``decisions`` since ``since``."""
+    """Count full-gate fires in ``decisions`` since ``since`` (F1: +by_cohort)."""
     rows = conn.execute(
         "SELECT action, inst_id, policy_name, calculus_data FROM decisions "
         "WHERE timestamp >= ? AND UPPER(action) IN ('BUY_LONG', 'SELL_SHORT') "
@@ -128,6 +202,10 @@ def aggregate_full_gate_fires(
 
     by_action: dict[str, int] = {}
     by_instrument: dict[str, int] = {}
+    by_cohort: dict[str, dict[str, Any]] = {
+        COHORT_POST_E31: {"count": 0, "by_action": {}, "by_instrument": {}},
+        COHORT_PRE_E31: {"count": 0, "by_action": {}, "by_instrument": {}},
+    }
     count = 0
     for row in rows:
         act = str(row["action"] or "")
@@ -139,11 +217,19 @@ def aggregate_full_gate_fires(
         by_action[act] = by_action.get(act, 0) + 1
         ik = str(row["inst_id"] or "").strip() or "UNKNOWN"
         by_instrument[ik] = by_instrument.get(ik, 0) + 1
+        cohort = classify_full_gate_cohort(diag)
+        bucket = by_cohort[cohort]
+        bucket["count"] = int(bucket["count"]) + 1
+        ba = bucket["by_action"]
+        ba[act] = int(ba.get(act, 0)) + 1
+        bi = bucket["by_instrument"]
+        bi[ik] = int(bi.get(ik, 0)) + 1
 
     return {
         "count": count,
         "by_action": by_action,
         "by_instrument": by_instrument,
+        "by_cohort": by_cohort,
     }
 
 
@@ -238,12 +324,16 @@ def compute_full_gate_markout(
     clear_hurdle_bps: float = DEFAULT_CLEAR_HURDLE_BPS,
     clear_horizon_seconds: int = DEFAULT_CLEAR_HORIZON_SECONDS,
     limit: int = 50_000,
+    cohort: str | None = None,
 ) -> dict[str, Any]:
     """
     Fee-aware markout for full-gate fires (BUY_LONG/SELL_SHORT, missing==[]).
 
     Entry preference: matched non-probe ``shadow_fill`` → decision entry_price /
     factor_snapshots (same helpers as R9 near-entry). Horizons default 60/300/900.
+
+    F1: ``cohort`` may be ``post_e31`` / ``strict_tf`` or ``pre_e31`` /
+    ``stale_pre_e31`` to filter; ``None`` / ``all`` keeps every full-gate fire.
     """
     import time as _time
 
@@ -277,6 +367,7 @@ def compute_full_gate_markout(
 
     ms_raw = (market_source or "any").strip().lower()
     ms_filter = ms_raw if ms_raw in ("okx_public", "synthetic") else None
+    cohort_filter = normalize_cohort(cohort)
 
     query = (
         "SELECT id, timestamp, inst_id, action, entry_price, policy_name, calculus_data "
@@ -336,6 +427,9 @@ def compute_full_gate_markout(
         pol = str(row["policy_name"] or "") if "policy_name" in row.keys() else ""
         diag = signal_diag_from_calculus(row["calculus_data"])
         if not is_full_gate_fire(act, diag, policy_name=pol):
+            continue
+        row_cohort = classify_full_gate_cohort(diag)
+        if cohort_filter is not None and row_cohort != cohort_filter:
             continue
 
         action = act.upper().strip()
@@ -505,13 +599,17 @@ def compute_full_gate_markout(
             "price_source": "shadow_fill_or_factor_snapshots",
             "horizons": horizons_out,
         },
-        "cohort": "full_gate",
+        "cohort": cohort_filter or "full_gate",
+        "cohort_synonym": (
+            cohort_synonym(cohort_filter) if cohort_filter else "full_gate"
+        ),
         "note": (
-            "E1 full-gate markout (recommend-only). Counts BUY_LONG/SELL_SHORT "
-            "with signal_diag.missing==[] under rule policy. Prefer shadow_fill "
-            "entry when present; else counterfactual from decision timestamp. "
-            "Success later needs n≥20 and 5m netRT win≥0.55. Keep near_probe off "
-            "(E0 freeze)."
+            "E1/F1 full-gate markout (recommend-only). Counts BUY_LONG/SELL_SHORT "
+            "with signal_diag.missing==[] under rule policy. F1 cohort filter: "
+            "post_e31 when require_4h_trend or trend_gate contains 4h; else "
+            "pre_e31. Prefer shadow_fill entry when present; else counterfactual. "
+            "Success later needs n≥20 and 5m netRT win≥0.55 on post_e31. "
+            "Keep near_probe off (E0 freeze)."
         ),
     }
 
@@ -532,6 +630,9 @@ def summarize_full_gate_markout(result: dict[str, Any] | None) -> dict[str, Any]
             "frac_clear_net_rt_hurdle": None,
             "clear_hurdle_bps": DEFAULT_CLEAR_HURDLE_BPS,
             "horizons": [],
+            "by_action": {},
+            "cohort": "full_gate",
+            "cohort_synonym": "full_gate",
         }
     horizons_in = []
     markout = result.get("markout") if isinstance(result.get("markout"), dict) else {}
@@ -556,7 +657,8 @@ def summarize_full_gate_markout(result: dict[str, Any] | None) -> dict[str, Any]
         )
     by_h = {int(r["horizon_seconds"]): r for r in horizons_in}
     primary = by_h.get(300) or (horizons_in[0] if horizons_in else {})
-    return {
+    cohort = str(result.get("cohort") or "full_gate")
+    out = {
         "count": int(result.get("count") or 0),
         "sample_count": int(primary.get("sample_count") or 0),
         "horizon_seconds": int(primary.get("horizon_seconds") or DEFAULT_CLEAR_HORIZON_SECONDS),
@@ -570,5 +672,43 @@ def summarize_full_gate_markout(result: dict[str, Any] | None) -> dict[str, Any]
         ),
         "horizons": horizons_in,
         "by_action": dict(result.get("by_action") or {}),
-        "cohort": str(result.get("cohort") or "full_gate"),
+        "cohort": cohort,
+        "cohort_synonym": str(
+            result.get("cohort_synonym") or cohort_synonym(cohort)
+        ),
     }
+    if result.get("stale_pre_e31_note"):
+        out["stale_pre_e31_note"] = result.get("stale_pre_e31_note")
+    return out
+
+
+def summarize_full_gate_markout_primary(
+    post_raw: dict[str, Any] | None,
+    pre_raw: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    F1: primary quality/Monitor summary prefers post_e31; expose pre separately.
+
+    When post_e31 has no fires/samples, primary metrics stay empty/null (do not
+    poison headline with pre_e31 ~24% spray). ``stale_pre_e31_note`` explains.
+    """
+    post_sum = summarize_full_gate_markout(post_raw)
+    post_sum["cohort"] = COHORT_POST_E31
+    post_sum["cohort_synonym"] = COHORT_STRICT_TF
+    pre_sum = summarize_full_gate_markout(pre_raw)
+    pre_sum["cohort"] = COHORT_PRE_E31
+    pre_sum["cohort_synonym"] = COHORT_STALE_PRE_E31
+    post_n = int(post_sum.get("count") or 0)
+    post_sample = int(post_sum.get("sample_count") or 0)
+    pre_n = int(pre_sum.get("count") or 0)
+    if post_n == 0 and post_sample == 0 and pre_n > 0:
+        post_sum["stale_pre_e31_note"] = (
+            f"No post_e31/strict_tf full-gate samples; {pre_n} stale pre_e31 "
+            "fires excluded from primary FG 5m metrics (see "
+            "full_gate_markout_pre_e31)."
+        )
+        # Ensure headline win metrics stay null when empty post cohort.
+        post_sum["win_rate_net_roundtrip"] = None
+        post_sum["avg_net_roundtrip_markout_bps"] = None
+        post_sum["frac_clear_net_rt_hurdle"] = None
+    return post_sum, pre_sum

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query
 from keel.api.deps import get_ledger
 from keel.api.schemas import (
     DecisionStatsResponse,
+    FullGateCohortCounts,
     FullGateFiresBlock,
     FullGateMarkoutBlock,
     FullGateMarkoutHorizon,
@@ -163,7 +164,17 @@ def _full_gate_markout(raw: dict[str, Any] | None) -> FullGateMarkoutBlock | Non
         clear_hurdle_bps=float(raw.get("clear_hurdle_bps") or 10.0),
         horizons=horizons,
         by_action={str(k): int(v) for k, v in dict(raw.get("by_action") or {}).items()},
-        cohort=str(raw.get("cohort") or "full_gate"),
+        cohort=str(raw.get("cohort") or "post_e31"),
+        cohort_synonym=(
+            str(raw["cohort_synonym"])
+            if raw.get("cohort_synonym") is not None
+            else None
+        ),
+        stale_pre_e31_note=(
+            str(raw["stale_pre_e31_note"])
+            if raw.get("stale_pre_e31_note") is not None
+            else None
+        ),
     )
 
 
@@ -291,6 +302,25 @@ def get_quality_stats(
     shadow_raw = raw.get("shadow") or {}
     fg_raw = raw.get("full_gate_fires") if isinstance(raw.get("full_gate_fires"), dict) else {}
     fg_mo = raw.get("full_gate_markout") if isinstance(raw.get("full_gate_markout"), dict) else None
+    fg_mo_pre = (
+        raw.get("full_gate_markout_pre_e31")
+        if isinstance(raw.get("full_gate_markout_pre_e31"), dict)
+        else None
+    )
+    by_cohort_raw = (
+        fg_raw.get("by_cohort") if isinstance(fg_raw.get("by_cohort"), dict) else {}
+    )
+    by_cohort: dict[str, FullGateCohortCounts] = {}
+    for ck, cv in by_cohort_raw.items():
+        if not isinstance(cv, dict):
+            continue
+        by_cohort[str(ck)] = FullGateCohortCounts(
+            count=int(cv.get("count") or 0),
+            by_action={str(k): int(v) for k, v in dict(cv.get("by_action") or {}).items()},
+            by_instrument={
+                str(k): int(v) for k, v in dict(cv.get("by_instrument") or {}).items()
+            },
+        )
     return QualityStatsResponse(
         hours=hours,
         market_source=dict(raw.get("market_source") or {}),
@@ -305,8 +335,10 @@ def get_quality_stats(
                 str(k): int(v)
                 for k, v in dict(fg_raw.get("by_instrument") or {}).items()
             },
+            by_cohort=by_cohort,
         ),
         full_gate_markout=_full_gate_markout(fg_mo),
+        full_gate_markout_pre_e31=_full_gate_markout(fg_mo_pre),
         economic_evidence=str(raw.get("economic_evidence") or "none"),
         shadow=QualityShadowBlock(
             count=int(shadow_raw.get("count", 0)),

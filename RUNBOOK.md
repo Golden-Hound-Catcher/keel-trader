@@ -484,6 +484,24 @@ KEEL_RULE_VARIANT=trend_follow
 
 Restart worker after edit. No live orders.
 
+### Phase F1 — isolate pre-E3.1 full-gate cohort (measurement)
+
+Jo observe: live economic/arming still used the **full** FG cohort dominated by pre-E3.1 spray (54/55 shorts with `trend_4h=neutral` → ~24% 5m netRT) and blocked forever. Post-E3.1 decisions have `require_4h_trend=true` and `trend_gate=15m+1h+4h` — isolate them.
+
+| Piece | Behavior |
+|-------|----------|
+| Classify | `keel.ledger.full_gate.classify_full_gate_cohort` — `post_e31`/`strict_tf` when `require_4h_trend` truthy **or** `trend_gate` contains `4h`; else `pre_e31`/`stale_pre_e31` |
+| Quality | `full_gate_fires.by_cohort`; primary `full_gate_markout` = **post_e31**; audit `full_gate_markout_pre_e31`; `economic_evidence` may be `stale_pre_e31` when only pre exists |
+| Arming | FG win-rate gates use **post_e31 markout only**. Prefer path still when total `full_gate_fires ≥ 20` (`FULL_GATE_ECON_PREFER_MIN`). Need post_e31 markout sample ≥ `KEEL_ARMING_ECON_MIN_MARKOUT_SAMPLE` / `arming_econ_min_markout_sample` (default **5**); else blocker `insufficient_post_e31_full_gate_sample` — **never** fail on pre_e31 24%. Annotate `full_gate_fires_post_e31` / `_pre_e31` / `full_gate_cohort_used` |
+| Monitor | FG 5m net chip = post primary; optional `stale pre_e31 N` hint |
+
+**Still E0 freeze** (no near_probe, no hurdle cut, no kill clear). No push/merge/restart required for this measurement PR.
+
+```bash
+curl -s "http://127.0.0.1:8080/api/v1/stats/quality?hours=24" \
+  | python -c "import sys,json; d=json.load(sys.stdin); print(d.get('full_gate_fires')); print(d.get('full_gate_markout')); print(d.get('full_gate_markout_pre_e31')); print(d.get('economic_evidence'))"
+```
+
 ### Phase R4 — fee-aware Rule param suggest (offline)
 
 

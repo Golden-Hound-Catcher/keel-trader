@@ -31,6 +31,8 @@ AVG_NET_RT_BELOW = "avg_net_roundtrip_markout_bps_below_threshold"
 # E3: prefer full-gate markout metrics when fire count reaches this threshold.
 FULL_GATE_ECON_PREFER_MIN = 20
 FULL_GATE_WIN_RATE_BELOW = "full_gate_win_rate_net_roundtrip_below_threshold"
+# F1: FG economic gates use post_e31 markout only; never pre_e31 ~24% spray.
+INSUFFICIENT_POST_E31_FULL_GATE_SAMPLE = "insufficient_post_e31_full_gate_sample"
 
 
 @dataclass(frozen=True)
@@ -231,16 +233,23 @@ def evaluate_economic_gates(
         "by_instrument": {},
         "economic_sample_source": "insufficient",
         "full_gate_fires": 0,
+        "full_gate_fires_post_e31": 0,
+        "full_gate_fires_pre_e31": 0,
         "full_gate_sample_count": 0,
         "full_gate_win_rate_net_roundtrip": None,
         "full_gate_avg_net_roundtrip_markout_bps": None,
         "full_gate_frac_clear_net_rt_hurdle": None,
+        "full_gate_cohort_used": None,
         "note": (
             "Kill-switch is never auto-cleared; economic gates are read-only. "
             "Probe skips dominated by below_hurdle do not block alone. "
             "by_instrument is diagnostic only; overall gate remains aggregate. "
-            "E3: when full_gate_fires≥20 prefer fee-aware full-gate 5m netRT "
-            "markout for blockers (still E0 freeze — no near_probe / no kill clear)."
+            "E3/F1: when full_gate_fires≥20 prefer fee-aware post_e31 (strict_tf) "
+            "5m netRT markout only — never pre_e31 spray. Need post_e31 markout "
+            "sample ≥ min_markout_sample (default 5); else "
+            "insufficient_post_e31_full_gate_sample. Prefer threshold remains "
+            "FULL_GATE_ECON_PREFER_MIN=20 on total FG fires. "
+            "E0 freeze — no near_probe / no kill clear."
         ),
     }
 
@@ -276,26 +285,40 @@ def evaluate_economic_gates(
     fills_ok = fill_count >= min_fills or probe_count >= min_probe_fills
     sample_ok = sample_count >= min_sample
 
-    # E1 annotation: where economic sample currently comes from (flag only).
+    # E1/F1 annotation: cohort-split full-gate fires + post_e31 markout only.
     fg_n = 0
+    fg_post_n = 0
+    fg_pre_n = 0
     if ledger is not None:
         try:
             qs = ledger.get_quality_stats(hours=hours)
             fg_block = qs.get("full_gate_fires") if isinstance(qs, dict) else None
             if isinstance(fg_block, dict):
                 fg_n = int(fg_block.get("count") or 0)
+                by_c = fg_block.get("by_cohort") if isinstance(
+                    fg_block.get("by_cohort"), dict
+                ) else {}
+                fg_post_n = int((by_c.get("post_e31") or {}).get("count") or 0)
+                fg_pre_n = int((by_c.get("pre_e31") or {}).get("count") or 0)
             elif isinstance(fg_block, (int, float)):
                 fg_n = int(fg_block)
         except Exception:
             fg_n = 0
-    # E3: when full-gate fires ≥20, load fee-aware FG markout (no network) and
-    # prefer those 5m netRT metrics for economic blockers.
+            fg_post_n = 0
+            fg_pre_n = 0
+
+    # E3/F1: when total FG fires ≥20, prefer post_e31 5m netRT only (never pre_e31).
+    # Sample policy: reuse arming_econ_min_markout_sample (default 5). Prefer
+    # threshold FULL_GATE_ECON_PREFER_MIN=20 still keys off total FG fire count.
     fg_sample = 0
     fg_wr = None
     fg_avg = None
     fg_frac = None
     prefer_fg = False
-    if fg_n >= FULL_GATE_ECON_PREFER_MIN and ledger is not None:
+    prefer_fg_attempt = fg_n >= FULL_GATE_ECON_PREFER_MIN
+    fg_cohort_used = None
+    insufficient_post = False
+    if prefer_fg_attempt and ledger is not None:
         try:
             getter = getattr(ledger, "get_full_gate_markout", None)
             if callable(getter):
@@ -304,6 +327,7 @@ def evaluate_economic_gates(
                     horizons=(int(horizon),),
                     apply_funding=False,
                     settings=settings,
+                    cohort="post_e31",
                 )
             else:
                 from keel.ledger.full_gate import compute_full_gate_markout
@@ -315,6 +339,7 @@ def evaluate_economic_gates(
                     horizons=(int(horizon),),
                     apply_funding=False,
                     settings=settings,
+                    cohort="post_e31",
                 )
             hrow_fg = _horizon_row(
                 fg_raw.get("markout") if isinstance(fg_raw, dict) else None,
@@ -326,23 +351,34 @@ def evaluate_economic_gates(
             fg_frac = hrow_fg.get("frac_clear_net_rt_hurdle")
             if fg_frac is None and isinstance(fg_raw, dict):
                 fg_frac = fg_raw.get("frac_clear_net_rt_hurdle")
-            prefer_fg = fg_sample >= min_sample
+            if fg_sample >= min_sample:
+                prefer_fg = True
+                fg_cohort_used = "post_e31"
+            else:
+                insufficient_post = True
+                fg_cohort_used = "post_e31_insufficient"
         except Exception:
             prefer_fg = False
+            insufficient_post = True
+            fg_cohort_used = "post_e31_insufficient"
 
     if prefer_fg:
-        sample_source = "full_gate"
-    elif fg_n > 0 and probe_count == 0 and probe_sample == 0:
-        sample_source = "full_gate"
+        sample_source = "full_gate_post_e31"
+    elif insufficient_post:
+        sample_source = "insufficient_post_e31"
+    elif fg_post_n > 0 and probe_count == 0 and probe_sample == 0:
+        sample_source = "full_gate_post_e31"
+    elif fg_pre_n > 0 and fg_post_n == 0 and probe_count == 0:
+        sample_source = "stale_pre_e31"
     elif probe_count > 0 or probe_sample > 0:
-        sample_source = "probe" if fg_n == 0 else "mixed"
+        sample_source = "probe" if (fg_n == 0) else "mixed"
     elif fill_count > 0:
         sample_source = "shadow_non_probe"
     else:
         sample_source = "insufficient"
 
     if prefer_fg:
-        # FG evidence can satisfy sample/fills when shadow probe cohort is thin.
+        # Post-e31 FG evidence can satisfy sample/fills when probe cohort is thin.
         fills_ok = True
         sample_ok = True
         overall_wr = fg_wr if fg_wr is not None else overall_wr
@@ -364,12 +400,23 @@ def evaluate_economic_gates(
             "by_instrument": _economic_by_instrument(raw, horizon_seconds=horizon),
             "economic_sample_source": sample_source,
             "full_gate_fires": fg_n,
+            "full_gate_fires_post_e31": fg_post_n,
+            "full_gate_fires_pre_e31": fg_pre_n,
             "full_gate_sample_count": fg_sample,
             "full_gate_win_rate_net_roundtrip": fg_wr,
             "full_gate_avg_net_roundtrip_markout_bps": fg_avg,
             "full_gate_frac_clear_net_rt_hurdle": fg_frac,
+            "full_gate_cohort_used": fg_cohort_used,
         }
     )
+
+    # F1: when FG prefer path is armed (fires≥20) but post_e31 sample thin,
+    # block with insufficient_post_e31 — never evaluate pre_e31 win rate.
+    if insufficient_post:
+        blockers.append(INSUFFICIENT_POST_E31_FULL_GATE_SAMPLE)
+        summary["sample_ok"] = False
+        summary["passed"] = False
+        return blockers, summary
 
     if not fills_ok or not sample_ok:
         blockers.append(INSUFFICIENT_SHADOW_MARKOUT_SAMPLE)
