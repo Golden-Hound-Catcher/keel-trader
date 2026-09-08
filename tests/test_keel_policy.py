@@ -2068,7 +2068,7 @@ class TestF2aTfExtensionFilter(unittest.TestCase):
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
         os.environ["KEEL_RULE_TF_REQUIRE_4H"] = require_4h
         if max_extension is None:
-            os.environ.pop("KEEL_RULE_TF_MAX_EXTENSION_ATR", None)  # default 1.5
+            os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "1.5"  # product default is 0=off
         else:
             os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = max_extension
 
@@ -2178,7 +2178,7 @@ class TestF2aTfExtensionFilter(unittest.TestCase):
                 os.environ.pop(k, None)
             self.assertEqual(resolve_tf_max_extension_atr(), 0.0)
             os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
-            self.assertAlmostEqual(resolve_tf_max_extension_atr(), 1.5)
+            self.assertEqual(resolve_tf_max_extension_atr(), 0.0)  # product default off
             os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "0"
             self.assertEqual(resolve_tf_max_extension_atr(), 0.0)
             os.environ["KEEL_RULE_TF_MAX_EXTENSION_ATR"] = "9"

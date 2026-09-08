@@ -56,7 +56,7 @@ _TF_MACD_LAG_BPS_DEFAULT = 3.0
 _TF_MACD_LAG_BPS_MIN = 0.0
 _TF_MACD_LAG_BPS_MAX = 15.0
 # F2a: TF max extension from ema_21 in ATR units (0 disables).
-_TF_MAX_EXTENSION_ATR_DEFAULT = 1.5
+_TF_MAX_EXTENSION_ATR_DEFAULT = 0.0
 _TF_MAX_EXTENSION_ATR_MIN = 0.5
 _TF_MAX_EXTENSION_ATR_MAX = 5.0
 # R7/R8: near-signal edge_hint geometry (distance-to-threshold + ATR).
@@ -202,7 +202,7 @@ def resolve_tf_max_extension_atr() -> float:
     """
     F2a: effective TF max-extension ATR for status/config echo.
 
-    Under ``trend_follow``: clamped env (default 1.5; 0 disables).
+    Under ``trend_follow``: clamped env (default 0=off; >0 enables).
     Always 0.0 under ``mean_revert`` (env ignored).
     """
     if _rule_variant() != "trend_follow":
@@ -1049,7 +1049,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     bands (not-overbought / not-oversold); default ``mean_revert`` is unchanged.
     E2B (TF only): volume soft via trend+macd+ema (``soft_tf``, no RSI extreme);
     MACD lag ``KEEL_RULE_TF_MACD_LAG_BPS`` (default 3.0) for small adverse hist.
-    F2a (TF only): ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 1.5; 0 disables)
+    F2a (TF only): ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 0=off; >0 enables)
     blocks entries already extended vs ``ema_21`` (gate ``extension_ok``).
     """
     diag = diagnose_rule_signal(snapshot)

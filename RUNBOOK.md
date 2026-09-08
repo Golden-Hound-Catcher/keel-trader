@@ -508,7 +508,7 @@ Jo: F0b offline under TF+4h+cooldown → ~60 FG / ~7d BTC+ETH+SOL but **5m netRT
 
 | Env | Default | Behavior |
 |-----|---------|----------|
-| `KEEL_RULE_TF_MAX_EXTENSION_ATR` | **1.5** | `trend_follow` only. Long rejects when `(price-ema_21)/atr_14 > max`; short when `(ema_21-price)/atr_14 > max`. Clamp **0.5–5** when enabled; **0 disables**. `atr_14<=0` → fail-closed for this gate when enabled. **mean_revert ignores**. |
+| `KEEL_RULE_TF_MAX_EXTENSION_ATR` | **0** (off) | `trend_follow` only. Long rejects when `(price-ema_21)/atr_14 > max`; short when `(ema_21-price)/atr_14 > max`. Clamp **0.5–5** when enabled; **0 disables**. `atr_14<=0` → fail-closed for this gate when enabled. **mean_revert ignores**. |
 
 Audit: `signal_diag.extension_atr`, `max_extension_atr`, `extension_ok`, `extension_headroom_atr` (soft near distance). Folded into `missing` / full-gate (diagnose + `rule_based_decision`). Backtest picks it up automatically via diagnose.
 
