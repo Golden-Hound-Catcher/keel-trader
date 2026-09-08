@@ -163,6 +163,7 @@ keel-trader/
 - [STANDALONE.md](STANDALONE.md) — 独立部署拓扑（Stage 3）
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Stage 7：legacy quarantine + DecisionPolicy
 - [LEGACY.md](LEGACY.md) — `r20_*` / 旧脚本 / 旧 unit 库存与为何保留
+- [RECOVERY_GUIDE.md](RECOVERY_GUIDE.md) — Keel-only 恢复 stub（`.env` / ledger / observe）
 
 ---
 
