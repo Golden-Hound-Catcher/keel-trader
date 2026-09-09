@@ -90,6 +90,10 @@ class MockTransport:
             )
         if "/trade/orders-pending" in url:
             return _okx_payload([])
+        if "/account/config" in url:
+            return _okx_payload([{"posMode": "long_short_mode", "acctLv": "3"}])
+        if "/account/set-leverage" in url:
+            return _okx_payload([{"lever": "3", "mgnMode": "cross"}])
         if "/trade/order" in url and method == "POST":
             return _okx_payload([{"ordId": "okx-1", "sCode": "0", "sMsg": ""}])
         if "/trade/cancel-order" in url:
@@ -178,6 +182,75 @@ class TestOkxRestPublicAndSigned(unittest.TestCase):
         self.assertTrue(adapter.cancel_order("BTC-USDT-SWAP", "okx-1"))
         close = adapter.close_position("BTC-USDT-SWAP", "long")
         self.assertTrue(close.success)
+
+    def test_place_order_uses_attach_algo_ords_and_int_sz(self):
+        transport = MockTransport()
+        adapter = OkxRestAdapter(
+            api_key="k", secret_key="s", passphrase="p", demo=True, transport=transport
+        )
+        result = adapter.place_order(
+            OrderRequest(
+                inst_id="BTC-USDT-SWAP",
+                side="sell",
+                pos_side="short",
+                size=1.0,
+                order_type="limit",
+                price=78283.4,
+                tp_trigger_price=77700.0,
+                sl_trigger_price=78600.0,
+                leverage=5,
+            )
+        )
+        self.assertTrue(result.success)
+        bodies = [json.loads(c[3]) for c in transport.calls if c[0] == "POST" and c[3] and "/trade/order" in c[1]]
+        self.assertTrue(bodies)
+        body = bodies[-1]
+        self.assertEqual(body["sz"], "1")
+        self.assertEqual(body["posSide"], "short")
+        self.assertIn("attachAlgoOrds", body)
+        self.assertNotIn("tpTriggerPx", body)
+        self.assertEqual(body["attachAlgoOrds"][0]["tpOrdPx"], "-1")
+
+    def test_place_order_blocks_simple_mode(self):
+        transport = MockTransport(
+            responses={
+                "/account/config": _okx_payload([{"posMode": "long_short_mode", "acctLv": "1"}])
+            }
+        )
+        adapter = OkxRestAdapter(
+            api_key="k", secret_key="s", passphrase="p", demo=True, transport=transport
+        )
+        result = adapter.place_order(
+            OrderRequest(
+                inst_id="BTC-USDT-SWAP",
+                side="sell",
+                pos_side="short",
+                size=1,
+                order_type="limit",
+                price=78000,
+            )
+        )
+        self.assertFalse(result.success)
+        self.assertIn("简易模式", result.error or "")
+        self.assertFalse(any("/trade/order" in c[1] and c[0] == "POST" for c in transport.calls))
+
+    def test_nested_smsg_is_surfaced(self):
+        transport = MockTransport(
+            responses={
+                "/account/balance": _okx_payload(
+                    [{"sCode": "51010", "sMsg": "The current account mode does not support this API interface."}],
+                    code="1",
+                    msg="All operations failed",
+                )
+            }
+        )
+        adapter = OkxRestAdapter(
+            api_key="k", secret_key="s", passphrase="p", transport=transport
+        )
+        with self.assertRaises(ValueError) as ctx:
+            adapter.get_balance()
+        self.assertIn("51010", str(ctx.exception))
+        self.assertIn("account mode", str(ctx.exception))
 
     def test_api_error_code(self):
         transport = MockTransport(

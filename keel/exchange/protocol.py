@@ -94,6 +94,7 @@ class OrderRequest:
     tp_trigger_price: float | None = None
     sl_trigger_price: float | None = None
     reduce_only: bool = False
+    leverage: int | None = None
 
 
 @dataclass

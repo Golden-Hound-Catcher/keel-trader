@@ -151,4 +151,14 @@ def _probe_live(
             return CapabilityProbe("read", reason)
         return CapabilityProbe("error", f"orders-pending failed: {reason}")
 
-    return CapabilityProbe("trade", "orders-pending ok")
+    detail = "orders-pending ok"
+    try:
+        cfg = adapter._account_config()
+        if str(cfg.get("acctLv") or "") == "1":
+            detail = (
+                "orders-pending 正常，但账户是简易模式(acctLv=1)，"
+                "需在欧易网页/App 把账户模式改为单币种或跨币种保证金后才能下永续"
+            )
+    except Exception:
+        pass
+    return CapabilityProbe("trade", detail)

@@ -11,7 +11,7 @@ failures become ledger events so API can audit the path.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from keel.config import get_settings
 from keel.exchange.paper import PaperAdapter
@@ -25,6 +25,8 @@ from keel.execution.near_probe import (
     is_probe_decision,
     probe_audit_fields,
 )
+from keel.domain.instruments import lookup_instrument, notional_from_size
+from keel.execution.sizing import SizeConstraints, size_order
 
 
 @dataclass
@@ -50,8 +52,8 @@ class ExecutionOrchestrator:
     Flow:
     1. Receive decision (LLM or rule-based)
     2. Re-validate Decision schema / RR geometry
-    3. Check all risk gates (kill-switch blocks real orders; shadow may proceed)
-    4. Calculate position size
+    3. Size from margin×leverage using contract face value, clip to remaining caps
+    4. Check all risk gates (kill-switch blocks real orders; shadow may proceed)
     5. If shadow_mode: ledger shadow_fill (+ optional synthetic trade); no place_order
     6. Else submit limit order with TP/SL and record fill/resting/failure
     """
@@ -137,6 +139,7 @@ class ExecutionOrchestrator:
         long_count = sum(1 for p in positions if p.side == "long")
         short_count = sum(1 for p in positions if p.side == "short")
         existing_margin = current_position.margin if current_position else 0.0
+        existing_size = current_position.size if current_position else 0.0
 
         same_side = bool(
             current_position
@@ -147,14 +150,91 @@ class ExecutionOrchestrator:
         )
         action_type = gate_action_for_decision(decision, same_side_position=same_side)
 
-        # Notional = margin * leverage (same formula as _calculate_size).
-        requested_notional = max(0.0, float(decision.margin_usdt) * max(int(decision.leverage), 1))
-        existing_notional = current_position.notional if current_position else 0.0
-        existing_size = current_position.size if current_position else 0.0
-        # Estimate contracts when entry is known so max_contracts can apply pre-ticker.
-        estimated_size = 0.0
-        if decision.entry_price and decision.entry_price > 0 and requested_notional > 0:
-            estimated_size = requested_notional / float(decision.entry_price)
+        ticker = self._exchange.get_ticker(decision.inst_id)
+        if not ticker:
+            self._ledger.record_event(
+                "order_failed",
+                inst_id=decision.inst_id,
+                data={"error": "Failed to get ticker data"},
+            )
+            return ExecutionResult(
+                inst_id=decision.inst_id,
+                action=decision.action,
+                success=False,
+                error="Failed to get ticker data",
+            )
+
+        entry_price = decision.entry_price or (
+            ticker.bid if decision.action == "BUY_LONG" else ticker.ask
+        )
+
+        instrument = lookup_instrument(decision.inst_id)
+        mark_for_existing = (
+            current_position.mark_price
+            if current_position and current_position.mark_price > 0
+            else entry_price
+        )
+        existing_notional = (
+            notional_from_size(existing_size, mark_for_existing, instrument)
+            if current_position
+            else 0.0
+        )
+
+        available_margin: float | None = None
+        try:
+            available_margin = float(self._exchange.get_balance().available_balance)
+        except Exception:
+            available_margin = None
+
+        sized = size_order(
+            inst_id=decision.inst_id,
+            requested_margin=float(decision.margin_usdt),
+            leverage=int(decision.leverage),
+            entry_price=float(entry_price),
+            constraints=SizeConstraints(
+                max_margin=float(settings.max_single_asset_margin),
+                max_notional=float(settings.effective_max_notional_per_instrument),
+                max_contracts=float(settings.effective_max_contracts_per_instrument),
+                available_margin=available_margin,
+                existing_margin=existing_margin,
+                existing_notional=existing_notional,
+                existing_size=existing_size,
+            ),
+            instrument=instrument,
+        )
+        if sized.error or sized.size <= 0:
+            err = sized.error or "Calculated size is zero"
+            self._ledger.record_event(
+                "order_failed",
+                inst_id=decision.inst_id,
+                data={"error": err, "action": decision.action},
+            )
+            return ExecutionResult(
+                inst_id=decision.inst_id,
+                action=decision.action,
+                success=False,
+                error=err,
+            )
+
+        decision = replace(
+            decision,
+            margin_usdt=sized.margin_usdt,
+            leverage=sized.leverage,
+        )
+        size = sized.size
+        if sized.clipped:
+            self._ledger.record_event(
+                "order_sized",
+                inst_id=decision.inst_id,
+                data={
+                    "action": decision.action,
+                    "margin_usdt": sized.margin_usdt,
+                    "notional": sized.notional,
+                    "size": sized.size,
+                    "leverage": sized.leverage,
+                    "clip_notes": list(sized.clip_notes),
+                },
+            )
 
         # Kill-switch = no real exchange orders. When shadow_mode, skip kill deny
         # so rehearsal can ledger shadow_fill (orchestrator never calls place_order).
@@ -162,8 +242,8 @@ class ExecutionOrchestrator:
         ctx = GateContext(
             inst_id=decision.inst_id,
             action=action_type,
-            size=estimated_size,
-            margin_required=decision.margin_usdt,
+            size=size,
+            margin_required=sized.margin_usdt,
             current_positions=position_count,
             long_positions=long_count,
             short_positions=short_count,
@@ -172,7 +252,7 @@ class ExecutionOrchestrator:
             cooldown_until=cooldown_until,
             kill_switch_active=gates_kill,
             shadow_mode=bool(shadow_mode),
-            notional=requested_notional,
+            notional=sized.notional,
             existing_notional_for_asset=existing_notional,
             existing_size_for_asset=existing_size,
         )
@@ -195,42 +275,6 @@ class ExecutionOrchestrator:
                 error=reason,
             )
 
-        ticker = self._exchange.get_ticker(decision.inst_id)
-        if not ticker:
-            self._ledger.record_event(
-                "order_failed",
-                inst_id=decision.inst_id,
-                data={"error": "Failed to get ticker data"},
-            )
-            return ExecutionResult(
-                inst_id=decision.inst_id,
-                action=decision.action,
-                success=False,
-                error="Failed to get ticker data",
-            )
-
-        entry_price = decision.entry_price or (
-            ticker.bid if decision.action == "BUY_LONG" else ticker.ask
-        )
-
-        size = self._calculate_size(
-            decision=decision,
-            entry_price=entry_price,
-        )
-
-        if size <= 0:
-            self._ledger.record_event(
-                "order_failed",
-                inst_id=decision.inst_id,
-                data={"error": "Calculated size is zero"},
-            )
-            return ExecutionResult(
-                inst_id=decision.inst_id,
-                action=decision.action,
-                success=False,
-                error="Calculated size is zero",
-            )
-
         if shadow_mode:
             return self._shadow_fill(
                 decision=decision,
@@ -249,6 +293,7 @@ class ExecutionOrchestrator:
                 price=entry_price,
                 tp_trigger_price=decision.take_profit,
                 sl_trigger_price=decision.stop_loss,
+                leverage=int(decision.leverage),
             )
         )
 
@@ -439,15 +484,3 @@ class ExecutionOrchestrator:
             price=entry_price,
             size=size,
         )
-
-    def _calculate_size(
-        self,
-        decision: Decision,
-        entry_price: float,
-    ) -> float:
-        """Calculate position size based on margin and leverage."""
-        if decision.margin_usdt <= 0 or entry_price <= 0:
-            return 0.0
-
-        notional = decision.margin_usdt * decision.leverage
-        return notional / entry_price

@@ -7,6 +7,7 @@ Owns the in-memory decision shape used on the happy path. Persistence uses
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Literal
 
 DecisionAction = Literal["BUY_LONG", "SELL_SHORT", "WAIT"]
@@ -65,7 +66,14 @@ def validate_decision(decision: Decision, *, min_rr: float = 2.0) -> Decision:
             return _wait(f"Invalid price geometry for short: TP={tp}, Entry={entry}, SL={sl}")
         rr = (entry - tp) / (sl - entry) if sl > entry else 0
 
-    if rr < min_rr:
-        return _wait(f"Risk:reward {rr:.2f} below minimum {min_rr}")
+    # Compare at 2 decimal places so a displayed 2.00 is not rejected as 1.996.
+    rr_q = _quantize_rr(rr)
+    min_q = _quantize_rr(min_rr)
+    if rr_q < min_q:
+        return _wait(f"Risk:reward {rr_q} below minimum {min_q}")
 
     return decision
+
+
+def _quantize_rr(value: float) -> Decimal:
+    return Decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

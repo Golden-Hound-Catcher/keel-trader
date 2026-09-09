@@ -43,6 +43,21 @@ class TestValidateDecision(unittest.TestCase):
         self.assertEqual(d.action, "WAIT")
         self.assertIn("Risk:reward", d.validation_error)
 
+    def test_rr_just_under_two_passes_when_displayed_as_2_00(self):
+        # 19.96 / 10 = 1.996 → displayed 2.00, previously rejected as below 2.0
+        d = validate_decision(
+            Decision(
+                inst_id="BTC-USDT-SWAP",
+                action="BUY_LONG",
+                entry_price=100.0,
+                stop_loss=90.0,
+                take_profit=119.96,
+                margin_usdt=50,
+            )
+        )
+        self.assertTrue(d.valid)
+        self.assertEqual(d.action, "BUY_LONG")
+
     def test_bad_geometry_short(self):
         d = validate_decision(
             Decision(
@@ -333,6 +348,50 @@ class TestOrchestratorLedgerCoherence(unittest.TestCase):
             else:
                 os.environ["KEEL_SHADOW_MODE"] = prev
             refresh_settings()
+
+    def test_oversized_margin_is_clipped_not_rejected(self):
+        self.exchange.set_ticker(
+            Ticker(inst_id="ETH-USDT-SWAP", last=2500.0, bid=2499.0, ask=2501.0)
+        )
+        decision = Decision(
+            inst_id="ETH-USDT-SWAP",
+            action="SELL_SHORT",
+            entry_price=2498.0,
+            take_profit=2400.0,
+            stop_loss=2547.0,
+            leverage=3,
+            margin_usdt=1000.0,
+            reason="unit clip",
+        )
+        result = self.orch.execute_decision(decision)
+        self.assertTrue(result.success, result.error)
+        self.assertTrue(result.filled)
+        self.assertIsNotNone(result.size)
+        self.assertLessEqual(result.size or 0, 50)
+        self.assertGreater(result.size or 0, 0)
+        sized_events = self.ledger.get_events(event_type="order_sized")
+        self.assertGreaterEqual(len(sized_events), 1)
+        self.assertLessEqual(float(sized_events[0].data.get("notional") or 0), 2000.0)
+
+    def test_doge_uses_contract_face_value(self):
+        self.exchange.set_ticker(
+            Ticker(inst_id="DOGE-USDT-SWAP", last=0.09, bid=0.0899, ask=0.0901)
+        )
+        decision = Decision(
+            inst_id="DOGE-USDT-SWAP",
+            action="SELL_SHORT",
+            entry_price=0.089,
+            take_profit=0.080,
+            stop_loss=0.0935,
+            leverage=3,
+            margin_usdt=500.0,
+            reason="unit doge size",
+        )
+        result = self.orch.execute_decision(decision)
+        self.assertTrue(result.success, result.error)
+        # Old bug: 1500 / 0.089 ≈ 16854 "contracts". Face value 1000 → ~17.
+        self.assertLessEqual(result.size or 0, 50)
+        self.assertGreaterEqual(result.size or 0, 1)
 
 
 if __name__ == "__main__":

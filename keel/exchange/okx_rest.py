@@ -19,6 +19,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
+from keel.domain.instruments import lookup_instrument
 from keel.exchange.protocol import (
     AccountBalance,
     ExchangeProtocol,
@@ -31,6 +32,38 @@ from keel.exchange.protocol import (
 
 # (method, url, headers, body_bytes) -> response body str
 HttpTransport = Callable[[str, str, dict[str, str], bytes | None], str]
+
+
+def _okx_error_text(result: dict[str, Any]) -> str:
+    """Include nested sCode/sMsg — OKX wraps those as code=1 All operations failed."""
+    code = result.get("code")
+    msg = str(result.get("msg") or "unknown")
+    bits = [f"OKX API error {code}: {msg}"]
+    for item in result.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        sc = str(item.get("sCode") or "")
+        sm = str(item.get("sMsg") or "").strip()
+        if sc and sc not in ("0", "None"):
+            bits.append(f"{sc} {sm}".strip() if sm else sc)
+        elif sm:
+            bits.append(sm)
+    return " | ".join(bits)
+
+
+def _fmt_sz(size: float) -> str:
+    if abs(float(size) - round(float(size))) < 1e-12:
+        return str(int(round(float(size))))
+    text = f"{float(size):.8f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _fmt_px(price: float, inst_id: str) -> str:
+    precision = max(int(lookup_instrument(inst_id).price_precision), 0)
+    rounded = round(float(price), precision)
+    if precision == 0:
+        return str(int(rounded))
+    return f"{rounded:.{precision}f}"
 
 
 def _default_transport(
@@ -77,6 +110,7 @@ class OKXRestAdapter:
         self._demo = bool(demo)
         self._base_url = (base_url or self.BASE_URL).rstrip("/")
         self._transport = transport or _default_transport
+        self._account_cfg: dict[str, Any] | None = None
 
     @classmethod
     def from_settings(cls, settings: Any, *, transport: HttpTransport | None = None) -> "OKXRestAdapter":
@@ -171,8 +205,7 @@ class OKXRestAdapter:
 
         code = result.get("code")
         if code not in (None, "0", 0):
-            msg = result.get("msg", "unknown")
-            raise ValueError(f"OKX API error {code}: {msg}")
+            raise ValueError(_okx_error_text(result))
         return result
 
     def _public_request(
@@ -294,34 +327,83 @@ class OKXRestAdapter:
             )
         return orders
 
+    def _account_config(self) -> dict[str, Any]:
+        if self._account_cfg is None:
+            result = self._request("GET", "/api/v5/account/config")
+            self._account_cfg = (result.get("data") or [{}])[0]
+        return self._account_cfg
+
+    def _simple_mode_error(self) -> str | None:
+        try:
+            lv = str(self._account_config().get("acctLv") or "")
+        except Exception:
+            return None
+        if lv != "1":
+            return None
+        return (
+            "OKX 账户是简易模式（acctLv=1），不能下永续合约。"
+            "请在欧易模拟盘网页/App：交易页右上角设置 → 账户模式 → "
+            "改为「单币种保证金」或「跨币种保证金」（首次必须在网页完成，API 无法切换）。"
+        )
+
+    def _pos_mode(self) -> str:
+        try:
+            return str(self._account_config().get("posMode") or "long_short_mode")
+        except Exception:
+            return "long_short_mode"
+
+    def _set_leverage(self, inst_id: str, leverage: int, pos_side: str) -> None:
+        body: dict[str, Any] = {
+            "instId": inst_id,
+            "lever": str(max(int(leverage), 1)),
+            "mgnMode": "cross",
+        }
+        if self._pos_mode() == "long_short_mode":
+            body["posSide"] = pos_side
+        self._request("POST", "/api/v5/account/set-leverage", body=body)
+
     def place_order(self, request: OrderRequest) -> OrderResult:
+        simple_err = self._simple_mode_error()
+        if simple_err:
+            return OrderResult(success=False, error=simple_err)
+
+        if request.leverage:
+            try:
+                self._set_leverage(request.inst_id, int(request.leverage), request.pos_side)
+            except Exception:
+                pass
+
         body: dict[str, Any] = {
             "instId": request.inst_id,
             "tdMode": "cross",
             "side": request.side,
-            "posSide": request.pos_side,
             "ordType": request.order_type,
-            "sz": str(request.size),
+            "sz": _fmt_sz(request.size),
         }
+        if self._pos_mode() == "long_short_mode":
+            body["posSide"] = request.pos_side
         if request.price is not None:
-            body["px"] = str(request.price)
+            body["px"] = _fmt_px(request.price, request.inst_id)
         if request.reduce_only:
             body["reduceOnly"] = True
+
+        algo: dict[str, Any] = {}
         if request.tp_trigger_price is not None:
-            body["tpTriggerPx"] = str(request.tp_trigger_price)
-            body["tpOrdPx"] = "-1"
+            algo["tpTriggerPx"] = _fmt_px(request.tp_trigger_price, request.inst_id)
+            algo["tpOrdPx"] = "-1"
+            algo["tpTriggerPxType"] = "last"
         if request.sl_trigger_price is not None:
-            body["slTriggerPx"] = str(request.sl_trigger_price)
-            body["slOrdPx"] = "-1"
+            algo["slTriggerPx"] = _fmt_px(request.sl_trigger_price, request.inst_id)
+            algo["slOrdPx"] = "-1"
+            algo["slTriggerPxType"] = "last"
+        if algo:
+            body["attachAlgoOrds"] = [algo]
 
         try:
             result = self._request("POST", "/api/v5/trade/order", body=body)
             data = (result.get("data") or [{}])[0]
             if str(data.get("sCode", "0")) != "0":
-                return OrderResult(
-                    success=False,
-                    error=data.get("sMsg", "Order rejected"),
-                )
+                return OrderResult(success=False, error=_okx_error_text(result))
             return OrderResult(
                 success=True,
                 order_id=data.get("ordId"),

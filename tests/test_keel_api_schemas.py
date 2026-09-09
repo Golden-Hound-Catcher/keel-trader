@@ -395,6 +395,8 @@ class TestApiSchemas(unittest.TestCase):
         m = DailyPnlResponse(date="2026-09-04", realized_pnl=12.5)
         self.assertEqual(m.source, "ledger")
         self.assertEqual(m.realized_pnl, 12.5)
+        self.assertIsNone(m.unrealized_pnl)
+        self.assertIsNone(m.total_pnl)
         self.assertIsNone(
             StatusResponse(
                 version="0.1.0",

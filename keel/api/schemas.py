@@ -175,9 +175,19 @@ class ConfigResponse(BaseModel):
 
 
 class DailyPnlResponse(BaseModel):
+    """Beijing-day PnL.
+
+    ``realized_pnl`` is ledger closed-trade PnL (opens have no pnl).
+    ``unrealized_pnl`` is the exchange mark-to-market float (soft-fail).
+    ``total_pnl`` = realized + unrealized when float is available, else realized.
+    """
+
     date: str
     realized_pnl: float
+    unrealized_pnl: float | None = None
+    total_pnl: float | None = None
     source: str = "ledger"
+    unrealized_source: str | None = None
 
 
 class PositionItem(BaseModel):
