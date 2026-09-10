@@ -319,3 +319,160 @@ def classify_trend(
         return "bearish"
     else:
         return "neutral"
+
+
+@dataclass
+class SuperTrendResult:
+    """Public SuperTrend-style ATR band flip (concept — not vendor Pine)."""
+
+    direction: int  # +1 bullish / -1 bearish (last bar)
+    value: float  # band value used as trailing stop (last bar)
+    flipped: bool  # True when direction changed on the last bar
+    upper: float  # final upper band (last)
+    lower: float  # final lower band (last)
+
+
+def calculate_supertrend(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int = 10,
+    factor: float = 3.0,
+) -> SuperTrendResult:
+    """
+    SuperTrend-style direction from ATR bands (oldest → newest).
+
+    Public TA concept: mid = (high+low)/2; basic bands = mid ± factor×ATR;
+    final bands ratchet; direction flips when close crosses the prior final
+    opposite band. Entry signal for Keel = ``flipped`` on the last bar.
+    """
+    n = min(len(highs), len(lows), len(closes))
+    if n < max(2, int(period) + 1) or period < 1 or factor <= 0:
+        px = float(closes[-1]) if closes else 0.0
+        return SuperTrendResult(0, px, False, px, px)
+
+    highs = [float(x) for x in highs[-n:]]
+    lows = [float(x) for x in lows[-n:]]
+    closes = [float(x) for x in closes[-n:]]
+
+    # True range series aligned to index 1..n-1; ATR[i] uses closes through i.
+    trs: list[float] = [0.0]
+    for i in range(1, n):
+        trs.append(
+            max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes[i - 1]),
+                abs(lows[i] - closes[i - 1]),
+            )
+        )
+
+    atrs: list[float] = [0.0] * n
+    if n > period:
+        atrs[period] = sum(trs[1 : period + 1]) / float(period)
+        for i in range(period + 1, n):
+            atrs[i] = (atrs[i - 1] * (period - 1) + trs[i]) / float(period)
+    else:
+        # Warm-up: expanding mean of available TRs.
+        for i in range(1, n):
+            atrs[i] = sum(trs[1 : i + 1]) / float(i)
+
+    final_upper = [0.0] * n
+    final_lower = [0.0] * n
+    direction = [1] * n
+    st_val = [0.0] * n
+
+    start = max(1, period)
+    for i in range(start, n):
+        mid = 0.5 * (highs[i] + lows[i])
+        basic_upper = mid + float(factor) * atrs[i]
+        basic_lower = mid - float(factor) * atrs[i]
+        if i == start:
+            final_upper[i] = basic_upper
+            final_lower[i] = basic_lower
+            direction[i] = 1 if closes[i] >= mid else -1
+        else:
+            prev_fu = final_upper[i - 1]
+            prev_fl = final_lower[i - 1]
+            # Ratchet: upper only declines in an uptrend; lower only rises in a downtrend.
+            if closes[i - 1] <= prev_fu:
+                final_upper[i] = min(basic_upper, prev_fu)
+            else:
+                final_upper[i] = basic_upper
+            if closes[i - 1] >= prev_fl:
+                final_lower[i] = max(basic_lower, prev_fl)
+            else:
+                final_lower[i] = basic_lower
+
+            prev_dir = direction[i - 1]
+            if prev_dir == 1:
+                direction[i] = -1 if closes[i] < final_lower[i] else 1
+            else:
+                direction[i] = 1 if closes[i] > final_upper[i] else -1
+
+        st_val[i] = final_lower[i] if direction[i] == 1 else final_upper[i]
+
+    last = n - 1
+    flipped = last > start and direction[last] != direction[last - 1]
+    return SuperTrendResult(
+        direction=int(direction[last]),
+        value=float(st_val[last]),
+        flipped=bool(flipped),
+        upper=float(final_upper[last]),
+        lower=float(final_lower[last]),
+    )
+
+
+@dataclass
+class DonchianChannel:
+    """Prior-bar Donchian channel (no repaint: excludes current bar)."""
+
+    upper: float
+    lower: float
+    period: int
+
+
+def donchian_prior_channel(
+    highs: list[float],
+    lows: list[float],
+    period: int = 20,
+) -> DonchianChannel | None:
+    """
+    Prior-N-bar Donchian channel (oldest → newest).
+
+    Uses highs/lows of bars ``[-period-1 : -1]`` (excludes the current bar) so
+    a close beyond the channel cannot repaint the channel itself.
+    """
+    p = int(period)
+    if p < 1:
+        return None
+    # Need period prior bars + current ⇒ length ≥ period + 1.
+    if len(highs) < p + 1 or len(lows) < p + 1:
+        return None
+    prior_highs = [float(x) for x in highs[-(p + 1) : -1]]
+    prior_lows = [float(x) for x in lows[-(p + 1) : -1]]
+    if len(prior_highs) < p or len(prior_lows) < p:
+        return None
+    return DonchianChannel(
+        upper=max(prior_highs),
+        lower=min(prior_lows),
+        period=p,
+    )
+
+
+def volume_sma_ratio(volumes: list[float], period: int = 20) -> float:
+    """
+    Last-bar volume / SMA(volume, period).
+
+    Returns 1.0 when data is insufficient or SMA is 0 (neutral — callers
+    should still gate on length if they require a hard pass).
+    """
+    p = max(1, int(period))
+    if not volumes:
+        return 1.0
+    window = volumes[-p:] if len(volumes) >= p else list(volumes)
+    if not window:
+        return 1.0
+    avg = sum(float(v) for v in window) / float(len(window))
+    if avg <= 0.0:
+        return 1.0
+    return float(volumes[-1]) / float(avg)

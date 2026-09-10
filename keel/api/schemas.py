@@ -116,7 +116,7 @@ class StatusResponse(BaseModel):
     shadow_near_probe_min_edge_bps: float | None = None
     shadow_near_probe_hurdle_bps: float | None = None
     decision_policy: str = "rule"
-    # E2A: mean_revert (default) | trend_follow — inside rule policy; name stays rule.
+    # E2A/F5: mean_revert (default) | trend_follow | supertrend | donchian — rule policy; name stays rule.
     rule_variant: str = "mean_revert"
     # E3.1: TF 4h hard-require effective flag (False under mean_revert).
     tf_require_4h: bool = False
@@ -157,7 +157,7 @@ class ConfigResponse(BaseModel):
     shadow_near_probe_min_edge_bps: float | None = None
     shadow_near_probe_hurdle_bps: float | None = None
     decision_policy: str = "rule"
-    # E2A: mean_revert (default) | trend_follow — inside rule policy; name stays rule.
+    # E2A/F5: mean_revert (default) | trend_follow | supertrend | donchian — rule policy; name stays rule.
     rule_variant: str = "mean_revert"
     # E3.1: TF 4h hard-require effective flag (False under mean_revert).
     tf_require_4h: bool = False

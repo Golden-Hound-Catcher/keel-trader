@@ -37,6 +37,9 @@ spent — ``KEEL_RULE_TF_PULLBACK`` master (default **0** off (F2b backtest over
 ``rsi_14 <= KEEL_RULE_TF_RSI_PULLBACK_LONG_MAX`` (default 52); short
 ``rsi_14 >= KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN`` (default 48). Gate
 ``pullback_ok``; set master 0 to disable both. mean_revert unchanged.
+F5 (opt-in): ``supertrend`` / ``donchian`` — public TradingView-style concepts
+(ATR-band flip / prior-bar Donchian + EMA + volume SMA×k). Not Pine source.
+Defaults leave live observe on ``.env`` variant (trend_follow). E0 freeze.
 """
 from __future__ import annotations
 
@@ -46,6 +49,11 @@ from typing import Any
 from keel.factors.market_data import MarketSnapshot
 from keel.domain.decision import Decision, validate_decision
 from keel.policy.protocol import DecisionPolicy, PolicyContext, PolicyResult
+from keel.policy.tv_rules import (
+    diagnose_donchian,
+    diagnose_supertrend,
+    tv_long_short_ok,
+)
 
 # Geometry mirrors near-probe / historical rule fires (TP 2.2 ATR, SL 1.0 ATR).
 _TP_ATR = 2.2
@@ -164,15 +172,23 @@ def _edge_hint_geometry() -> dict[str, float]:
 
 def _rule_variant() -> str:
     """
-    E2A: rule semantics variant (env ``KEEL_RULE_VARIANT``).
+    E2A / F5: rule semantics variant (env ``KEEL_RULE_VARIANT``).
 
-    - ``mean_revert`` (default): existing RSI extremes + soft 1h confirm.
+    - ``mean_revert`` (default when unset): RSI extremes + soft 1h confirm.
     - ``trend_follow``: hard 15m+1h (+4h when TF_REQUIRE_4H); RSI = not OB/OS.
-    Unknown values fall back to ``mean_revert``.
+    - ``supertrend`` (F5): ATR-band direction flip + HTF filter (opt-in).
+    - ``donchian`` (F5): prior-bar Donchian breakout + EMA + volume SMA×k.
+    Unknown values fall back to ``mean_revert``. Live default remains whatever
+    ``.env`` sets (observe keeps ``trend_follow``); code default for unset
+    stays ``mean_revert``.
     """
     raw = (os.environ.get("KEEL_RULE_VARIANT") or "mean_revert").strip().lower()
     if raw in ("trend_follow", "trend-follow", "tf"):
         return "trend_follow"
+    if raw in ("supertrend", "super_trend", "super-trend", "st"):
+        return "supertrend"
+    if raw in ("donchian", "donchian_breakout", "donchian-breakout", "dc"):
+        return "donchian"
     return "mean_revert"
 
 
@@ -183,12 +199,13 @@ def resolve_rule_variant() -> str:
 
 def resolve_tf_require_4h() -> bool:
     """
-    E3.1: effective TF 4h hard-require for status/config echo.
+    E3.1 / F5: effective 4h hard-require for status/config echo.
 
-    True only under ``trend_follow`` when ``KEEL_RULE_TF_REQUIRE_4H`` is on
-    (default on). Always False under ``mean_revert`` (env ignored).
+    True under ``trend_follow`` / ``supertrend`` / ``donchian`` when
+    ``KEEL_RULE_TF_REQUIRE_4H`` is on (default on). Always False under
+    ``mean_revert`` (env ignored).
     """
-    if _rule_variant() != "trend_follow":
+    if _rule_variant() not in ("trend_follow", "supertrend", "donchian"):
         return False
     return _env_bool("KEEL_RULE_TF_REQUIRE_4H", True)
 
@@ -815,6 +832,24 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     for near-signal geometry audit (R8 low-ATR pen_scale = min(atr, available_ev)).
     """
     th = _rule_thresholds()
+    # F5: TradingView-inspired variants — dedicated gate semantics / reason codes.
+    variant_early = str(th.get("rule_variant") or "mean_revert")
+    if variant_early == "supertrend":
+        gates = diagnose_supertrend(snapshot)
+        gates.setdefault("edge_hint_bps", 0.0)
+        gates.setdefault("edge_hint_mode", "none")
+        gates.setdefault("near_ready", bool(gates.get("near_ready")))
+        gates.setdefault("atr_bps", 0.0)
+        gates.setdefault("expected_tp_bps", 0.0)
+        return gates
+    if variant_early == "donchian":
+        gates = diagnose_donchian(snapshot)
+        gates.setdefault("edge_hint_bps", 0.0)
+        gates.setdefault("edge_hint_mode", "none")
+        gates.setdefault("near_ready", bool(gates.get("near_ready")))
+        gates.setdefault("atr_bps", 0.0)
+        gates.setdefault("expected_tp_bps", 0.0)
+        return gates
     rsi_long_max = float(th["rsi_long_max"])
     rsi_short_min = float(th["rsi_short_min"])
     min_vol = float(th["min_vol"])
@@ -1237,6 +1272,48 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     price = snapshot.price
     atr = snapshot.atr_14
     margin = 50.0
+
+    variant = str(diag.get("rule_variant") or "mean_revert")
+    if variant in ("supertrend", "donchian"):
+        long_ok, short_ok = tv_long_short_ok(diag)
+        if long_ok:
+            entry = price
+            sl = entry - 1.0 * atr
+            tp = entry + 2.2 * atr
+            return Decision(
+                inst_id=snapshot.inst_id,
+                action="BUY_LONG",
+                confidence=70.0,
+                entry_price=entry,
+                take_profit=tp,
+                stop_loss=sl,
+                leverage=3,
+                margin_usdt=margin,
+                reason=_factor_reason(snapshot, f"rule long {variant}"),
+                signal_diag=diag,
+            )
+        if short_ok:
+            entry = price
+            sl = entry + 1.0 * atr
+            tp = entry - 2.2 * atr
+            return Decision(
+                inst_id=snapshot.inst_id,
+                action="SELL_SHORT",
+                confidence=70.0,
+                entry_price=entry,
+                take_profit=tp,
+                stop_loss=sl,
+                leverage=3,
+                margin_usdt=margin,
+                reason=_factor_reason(snapshot, f"rule short {variant}"),
+                signal_diag=diag,
+            )
+        return Decision(
+            inst_id=snapshot.inst_id,
+            action="WAIT",
+            reason=f"no rule signal {variant}",
+            signal_diag=diag,
+        )
 
     max_ext = float(diag.get("max_extension_atr") or 0.0)
     ext_long_ok, _ = _tf_extension_metrics(

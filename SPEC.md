@@ -650,3 +650,8 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
   `test_llm_multi_provider`, `test_control_plane_v2`, `test_open_source_control`.
 - Supported path remains **keel-api** + **keel-worker** (+ optional frontend).
   Notify via `keel.notify` only. See `LEGACY.md`.
+
+### Phase F5 — TV-inspired variants (opt-in)
+
+`KEEL_RULE_VARIANT` accepts `supertrend` and `donchian` (aliases `st` / `dc`) in addition to `mean_revert` / `trend_follow`. Indicators are pure helpers (ATR SuperTrend-style flip; prior-bar Donchian + EMA + volume SMA ratio). Full-gate reason codes: `st_flip_long/short`, `htf_*`, `donchian_break_*`, `volume_ok`. Offline primary score: ATR barrier netRT via `barrier_exit_markout`. Defaults leave live observe unchanged (`.env` still `trend_follow`). E0 freeze — no claim without valid ≥0.55 / avg_net≥0 / n≥20.
+

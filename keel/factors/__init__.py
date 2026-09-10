@@ -7,6 +7,11 @@ from keel.factors.technical import (
     calculate_bollinger,
     calculate_vwap,
     calculate_obv,
+    calculate_supertrend,
+    donchian_prior_channel,
+    volume_sma_ratio,
+    SuperTrendResult,
+    DonchianChannel,
 )
 from keel.factors.market_data import MarketSnapshot, Candle
 from keel.factors.kinematics import (
@@ -27,6 +32,11 @@ __all__ = [
     "calculate_bollinger",
     "calculate_vwap",
     "calculate_obv",
+    "calculate_supertrend",
+    "donchian_prior_channel",
+    "volume_sma_ratio",
+    "SuperTrendResult",
+    "DonchianChannel",
     "MarketSnapshot",
     "Candle",
     "calculate_price_kinematics",
