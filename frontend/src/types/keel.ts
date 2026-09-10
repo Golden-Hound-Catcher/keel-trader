@@ -214,7 +214,10 @@ export interface KeelConfig {
 export interface KeelDailyPnl {
   date: string
   realized_pnl: number
+  unrealized_pnl?: number | null
+  total_pnl?: number | null
   source: string
+  unrealized_source?: string | null
 }
 
 export interface KeelPosition {
@@ -556,8 +559,5 @@ export interface KeelFactors {
 export const KEEL_DEFAULT_INSTRUMENTS = [
   'BTC-USDT-SWAP',
   'ETH-USDT-SWAP',
-  'SOL-USDT-SWAP',
   'DOGE-USDT-SWAP',
-  'SUI-USDT-SWAP',
-  'LINK-USDT-SWAP',
 ] as const

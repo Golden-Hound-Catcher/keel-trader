@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from keel.config import Settings, get_settings
+from keel.config.settings import _env
 from keel.llm.client import LLMClient
 from keel.llm.prompts.compose import PromptComposer
 from keel.policy.llm_policy import LLMDecisionPolicy
@@ -53,7 +54,7 @@ def build_decision_policy(
         logger.info("decision policy=%s reason=force_rule", policy.name)
         return policy
 
-    chosen = (name or os.environ.get("KEEL_DECISION_POLICY") or "rule").strip().lower()
+    chosen = (name or _env("KEEL_DECISION_POLICY") or "rule").strip().lower()
     if chosen == "stub":
         policy = StubDecisionPolicy()
     elif chosen == "llm":

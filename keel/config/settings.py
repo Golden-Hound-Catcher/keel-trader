@@ -43,6 +43,8 @@ class Settings:
     llm_api_key: str = ""
     llm_model: str = "gpt-4o"
     llm_reasoning_effort: str = "high"
+    # When false, omit OpenAI response_format=json_object (needed for some OpenRouter models).
+    llm_json_object: bool = True
 
     # API Server
     api_host: str = "0.0.0.0"
@@ -418,6 +420,7 @@ def get_settings() -> Settings:
         llm_api_key=_env("KEEL_LLM_API_KEY") or _env("LLM_API_KEY") or _env("OPENAI_API_KEY"),
         llm_model=_env("KEEL_LLM_MODEL") or _env("LLM_MODEL", "gpt-4o"),
         llm_reasoning_effort=_env("KEEL_LLM_REASONING_EFFORT") or _env("LLM_REASONING_EFFORT", "high"),
+        llm_json_object=_env_bool("KEEL_LLM_JSON_OBJECT", True),
         api_host=_env("KEEL_API_HOST", "0.0.0.0"),
         api_port=_env_int("KEEL_API_PORT", 8080),
         api_token=_env("KEEL_API_TOKEN", ""),

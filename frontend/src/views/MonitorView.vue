@@ -10,30 +10,39 @@ import {
   ScrollText,
   LineChart,
   RefreshCw,
-  Shield,
   Ban,
   AlertTriangle,
   TrendingUp,
   Clock,
   Settings2,
   Gauge,
-  Waves,
   ClipboardCheck,
   Ghost,
   Crosshair,
   Rocket,
 } from 'lucide-vue-next'
 import {
+  actionZh,
   blockerToZh,
   buildStatusHero,
+  displayReason,
   economicEvidenceZh,
+  envZh,
+  exchangeModeZh,
+  fmtConfidence,
   HERO_HEADLINE_CLASS,
   HERO_TONE_CLASS,
+  humanizeError,
+  marketSourceZh,
+  missingGateZh,
+  policyZh,
+  radarNearestLabel,
+  sideZh,
 } from '../utils/monitorZh'
 
 const store = useMonitorStore()
 
-onMounted(() => store.startPolling(5000))
+onMounted(() => store.startPolling(8000))
 onUnmounted(() => store.stopPolling())
 
 function fmt(v: unknown, digits = 2): string {
@@ -43,12 +52,23 @@ function fmt(v: unknown, digits = 2): string {
 
 function fmtTs(v: unknown): string {
   if (v == null || v === '') return '—'
+  let ms: number
   if (typeof v === 'number') {
-    const ms = v < 1e12 ? v * 1000 : v
-    return new Date(ms).toLocaleString()
+    ms = v < 1e12 ? v * 1000 : v
+  } else {
+    const d = new Date(String(v))
+    if (Number.isNaN(d.getTime())) return String(v)
+    ms = d.getTime()
   }
-  const d = new Date(String(v))
-  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString()
+  return new Date(ms).toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }
 
 /** Q0 near-signal diagnostics from DecisionItem.signal_diag or calculus_data.signal_diag. */
@@ -72,7 +92,7 @@ function nearSignalMissing(d: { action?: string; signal_diag?: Record<string, un
   const diag = decisionSignalDiag(d)
   const raw = diag?.missing
   if (!Array.isArray(raw)) return []
-  return raw.map((x) => String(x)).filter(Boolean).slice(0, 6)
+  return raw.map((x) => missingGateZh(x)).filter(Boolean).slice(0, 6)
 }
 
 const tabs = [
@@ -84,15 +104,18 @@ const tabs = [
   { id: 'factors', label: '因子', icon: LineChart },
 ] as const
 
+const envChip = computed(() => envZh(envLabel.value))
+
 const equity = computed(() => fmt(store.balance?.total_equity))
 const available = computed(() => fmt(store.balance?.available))
-const upl = computed(() => fmt(store.balance?.unrealized_pnl))
 const marginPct = computed(() => fmt(store.balance?.margin_usage_pct, 1))
 const envLabel = computed(
   () => store.status?.environment || store.health?.environment || '—',
 )
 const lastUpdatedLabel = computed(() =>
-  store.lastUpdated ? store.lastUpdated.toLocaleTimeString() : '—',
+  store.lastUpdated
+    ? store.lastUpdated.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '—',
 )
 
 const factorRows = computed(() =>
@@ -107,8 +130,8 @@ const factorRows = computed(() =>
 function factorQualityShort(quality: string | null | undefined): string | null {
   if (!quality) return null
   const q = quality.toLowerCase()
-  if (q === 'okx_public') return 'okx'
-  if (q === 'synthetic' || q.startsWith('synthetic_fallback')) return 'synth'
+  if (q === 'okx_public') return '欧易'
+  if (q === 'synthetic' || q.startsWith('synthetic_fallback')) return '合成'
   if (q.length > 10) return `${q.slice(0, 8)}…`
   return q
 }
@@ -118,12 +141,12 @@ function factorSourceLabel(
   quality?: string | null,
 ): string {
   if (!source) return '—'
-  if (source === 'okx_public') return 'live'
+  if (source === 'okx_public') return '欧易'
   if (source === 'ledger') {
     const short = factorQualityShort(quality)
-    return short ? `ledger·${short}` : 'ledger'
+    return short ? `账本·${short}` : '账本'
   }
-  return source
+  return marketSourceZh(source)
 }
 
 function factorSourceClass(
@@ -133,8 +156,8 @@ function factorSourceClass(
   if (source === 'okx_public') return 'bg-cyan-500/15 text-cyan-400 border-cyan-500/40'
   if (source === 'ledger') {
     const short = factorQualityShort(quality)
-    if (short === 'okx') return 'bg-cyan-500/10 text-cyan-400/90 border-cyan-500/30'
-    if (short === 'synth') return 'bg-amber-500/10 text-amber-400/90 border-amber-500/30'
+    if (short === '欧易') return 'bg-cyan-500/10 text-cyan-400/90 border-cyan-500/30'
+    if (short === '合成') return 'bg-amber-500/10 text-amber-400/90 border-amber-500/30'
     return 'bg-zinc-500/10 text-[#A8B3C7] border-zinc-500/30'
   }
   return 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'
@@ -148,10 +171,7 @@ function decisionMarketSource(d: { calculus_data?: Record<string, unknown> }): s
 }
 
 function marketSourceLabel(src: string | null | undefined): string {
-  if (!src) return '—'
-  if (src === 'okx_public') return 'okx'
-  if (src === 'synthetic') return 'synth'
-  return src
+  return marketSourceZh(src)
 }
 
 function marketSourceClass(src: string | null | undefined): string {
@@ -162,23 +182,23 @@ function marketSourceClass(src: string | null | undefined): string {
 }
 
 const decisionFilterOptions = computed(() => [
-  { value: '', label: 'All' },
-  ...store.watchlist.map((id) => ({ value: id, label: id })),
+  { value: '', label: '全部' },
+  ...store.watchlist.map((id) => ({ value: id, label: shortInstLabel(id) })),
 ])
 
 const tradeFilterOptions = computed(() => [
-  { value: '', label: 'All' },
-  ...store.watchlist.map((id) => ({ value: id, label: id })),
+  { value: '', label: '全部' },
+  ...store.watchlist.map((id) => ({ value: id, label: shortInstLabel(id) })),
 ])
 
 const positionFilterOptions = computed(() => [
-  { value: '', label: 'All' },
-  ...store.watchlist.map((id) => ({ value: id, label: id })),
+  { value: '', label: '全部' },
+  ...store.watchlist.map((id) => ({ value: id, label: shortInstLabel(id) })),
 ])
 
 const eventInstFilterOptions = computed(() => [
-  { value: '', label: 'All' },
-  ...store.watchlist.map((id) => ({ value: id, label: id })),
+  { value: '', label: '全部' },
+  ...store.watchlist.map((id) => ({ value: id, label: shortInstLabel(id) })),
 ])
 
 /** Real event_type strings written by worker/orchestrator/ledger. */
@@ -192,6 +212,7 @@ const COMMON_EVENT_TYPES = [
   'order_resting',
   'order_filled',
   'order_accepted',
+  'order_sized',
   'shadow_fill',
 ] as const
 
@@ -204,17 +225,17 @@ const eventTypeFilterOptions = computed(() => {
   const types = fromLoaded.size
     ? [...new Set([...COMMON_EVENT_TYPES, ...fromLoaded])].sort()
     : [...COMMON_EVENT_TYPES]
-  return [{ value: '', label: 'All' }, ...types.map((t) => ({ value: t, label: t }))]
+  return [{ value: '', label: '全部' }, ...types.map((t) => ({ value: t, label: eventTypeZh(t) }))]
 })
 
 const eventsEmptyMessage = computed(() => {
   const inst = store.eventInstFilter
   const typ = store.eventTypeFilter
-  if (!inst && !typ) return 'no events recorded'
+  if (!inst && !typ) return '还没有事件'
   const parts: string[] = []
-  if (typ) parts.push(`type ${typ}`)
-  if (inst) parts.push(inst)
-  return `no events for ${parts.join(' · ')}`
+  if (typ) parts.push(eventTypeZh(typ))
+  if (inst) parts.push(shortInstLabel(inst))
+  return `没有 ${parts.join(' · ')} 的事件`
 })
 
 function onPositionFilterChange(ev: Event) {
@@ -251,8 +272,40 @@ const lastCycle = computed(() => store.status?.last_cycle ?? null)
 const lastCycleActions = computed(() => {
   const counts = lastCycle.value?.decision_counts || {}
   return Object.entries(counts)
-    .map(([k, v]) => `${k}:${v}`)
+    .map(([k, v]) => `${actionZh(k)} ${v}`)
     .join(' · ')
+})
+
+const watchlistBoard = computed(() => {
+  const latest = new Map<string, (typeof store.decisions)[number]>()
+  for (const d of store.decisions) {
+    if (d?.inst_id && !latest.has(d.inst_id)) latest.set(d.inst_id, d)
+  }
+  return store.watchlist.map((id) => {
+    const f = store.factors[id]
+    const d = latest.get(id)
+    return {
+      instId: id,
+      label: shortInstLabel(id),
+      price: f?.price,
+      rsi: f?.rsi_14,
+      action: d?.action,
+      reason: d?.reason || '',
+      loading: Boolean(store.factorLoading[id]),
+      error: store.factorErrors[id] || '',
+      trend_15m: f?.trend_15m,
+      trend_1h: f?.trend_1h,
+      trend_4h: f?.trend_4h,
+    }
+  })
+})
+
+const recentWatchlistDecisions = computed(() => {
+  const allow = new Set(store.watchlist)
+  const rows = allow.size
+    ? store.decisions.filter((d) => allow.has(d.inst_id))
+    : store.decisions
+  return rows.slice(0, 9)
 })
 
 /** R6: soft-fail multi-TF trends from last_cycle.instrument_trends. */
@@ -280,14 +333,14 @@ const decisionStatsTopActions = computed(() => {
   return Object.entries(by)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 4)
-    .map(([k, v]) => `${k}:${v}`)
+    .map(([k, v]) => `${actionZh(k)} ${v}`)
     .join(' · ')
 })
 const decisionStatsByPolicy = computed(() => {
   const by = decisionStats.value?.by_policy || {}
   return Object.entries(by)
     .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `${k || '(none)'}:${v}`)
+    .map(([k, v]) => `${policyZh(k)} ${v}`)
     .join(' · ')
 })
 
@@ -303,7 +356,7 @@ const shadowStatsByAction = computed(() => {
   const by = shadowStats.value?.by_action || {}
   return Object.entries(by)
     .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `${k}:${v}`)
+    .map(([k, v]) => `${actionZh(k)} ${v}`)
     .join(' · ')
 })
 
@@ -365,14 +418,6 @@ const qualityFgStaleHint = computed(() => {
   if (postN === 0 && preN > 0) return `旧样本(pre_e31) n=${preN} 未计入主指标`
   return null
 })
-const qualityFgPostCount = computed(() => {
-  const n = qualityStats.value?.full_gate_fires?.by_cohort?.post_e31?.count
-  return typeof n === 'number' && Number.isFinite(n) ? n : null
-})
-const qualityFgPreCount = computed(() => {
-  const n = qualityStats.value?.full_gate_fires?.by_cohort?.pre_e31?.count
-  return typeof n === 'number' && Number.isFinite(n) ? n : null
-})
 const qualityEconomicEvidence = computed(() => {
   const e = qualityStats.value?.economic_evidence
   return typeof e === 'string' && e ? e : 'none'
@@ -381,6 +426,81 @@ const qualityEconomicEvidence = computed(() => {
 function shortInstLabel(instId: string): string {
   const base = String(instId || '').split('-')[0] || instId
   return base.length <= 6 ? base : base.slice(0, 6)
+}
+
+function actionClass(action: string | undefined | null): string {
+  const a = String(action || '').toUpperCase()
+  if (a === 'BUY_LONG') return 'text-emerald-400'
+  if (a === 'SELL_SHORT') return 'text-rose-400'
+  if (a === 'WAIT') return 'text-zinc-400'
+  return 'text-cyan-400'
+}
+
+const EVENT_TYPE_ZH: Record<string, string> = {
+  worker_cycle_summary: '周期摘要',
+  trader_cycle_complete: '交易周期完成',
+  paper_cycle_complete: '本地模拟周期完成',
+  decision_invalid: '决策无效',
+  risk_gate_blocked: '风控拦截',
+  order_failed: '下单失败',
+  order_resting: '订单挂单',
+  order_filled: '成交',
+  order_accepted: '订单已接受',
+  order_sized: '仓位已缩放',
+  shadow_fill: '影子成交',
+}
+
+function eventTypeZh(raw: unknown): string {
+  const t = String(raw || '').trim()
+  if (!t) return '事件'
+  return EVENT_TYPE_ZH[t] || t
+}
+
+function eventHeadline(e: Record<string, unknown>): string {
+  const t = eventTypeZh(e.event_type ?? e.type)
+  const inst = typeof e.inst_id === 'string' && e.inst_id ? shortInstLabel(e.inst_id) : ''
+  return inst ? `${t} · ${inst}` : t
+}
+
+function eventKey(e: Record<string, unknown>, i: number): string {
+  if (e.id != null && e.id !== '') return `ev-${e.id}`
+  return `${e.timestamp ?? ''}-${e.event_type ?? e.type ?? ''}-${e.inst_id ?? ''}-${i}`
+}
+
+function eventDetail(e: Record<string, unknown>): string {
+  const data = e.data
+  if (data && typeof data === 'object') {
+    const d = data as Record<string, unknown>
+    const bits: string[] = []
+    if (d.mode) bits.push(exchangeModeZh(d.mode))
+    else if (d.adapter) bits.push(exchangeModeZh(d.adapter))
+    if (d.policy) bits.push(`策略 ${policyZh(d.policy)}`)
+    if (d.error) bits.push(humanizeError(d.error))
+    if (d.reason) bits.push(humanizeError(d.reason))
+    if (d.message) bits.push(humanizeError(d.message))
+    if (d.size != null && d.size !== '') bits.push(`${d.size} 张`)
+    if (d.notional != null && d.notional !== '') {
+      const n = Number(d.notional)
+      bits.push(Number.isFinite(n) ? `${n.toFixed(0)}U 名义` : String(d.notional))
+    }
+    if (Array.isArray(d.clip_notes) && d.clip_notes.length) {
+      const notes = d.clip_notes.map((n) => {
+        const s = String(n)
+        if (s === 'min_lot') return '最小手数'
+        if (s === 'max_notional') return '名义上限'
+        if (s === 'max_contracts') return '张数上限'
+        return s
+      })
+      bits.push(`缩放 ${notes.join('+')}`)
+    }
+    if (bits.length) return bits.slice(0, 3).join(' · ')
+    try {
+      return JSON.stringify(d)
+    } catch {
+      return ''
+    }
+  }
+  return ''
 }
 const qualityByInstrumentChips = computed(() => {
   const map = qualityStats.value?.by_instrument
@@ -393,11 +513,10 @@ const qualityByInstrumentChips = computed(() => {
     n: number
     title: string
   }>
-  const prefer = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP']
-  const keys = [
-    ...prefer.filter((k) => k in map),
-    ...Object.keys(map).filter((k) => !prefer.includes(k)).sort(),
-  ].slice(0, 6)
+  const prefer = store.watchlist.length
+    ? store.watchlist
+    : ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'DOGE-USDT-SWAP']
+  const keys = prefer.filter((k) => k in map).slice(0, 6)
   return keys.map((inst) => {
     const row = map[inst]
     const wait =
@@ -435,7 +554,7 @@ const shadowByInstrumentChips = computed(() => {
     mk: string
     title: string
   }>
-  const prefer = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP']
+  const prefer = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'DOGE-USDT-SWAP']
   const keys = [
     ...prefer.filter((k) => k in map),
     ...Object.keys(map).filter((k) => !prefer.includes(k)).sort(),
@@ -534,15 +653,6 @@ const shadowProbeMarkoutChip = computed(() => {
         : 'gross mid',
   }
 })
-function radarNearestLabel(nearest: string | null | undefined, action: string): string {
-  const a = (action || '').toUpperCase()
-  if (a === 'BUY_LONG') return 'fired long'
-  if (a === 'SELL_SHORT') return 'fired short'
-  const n = (nearest || 'none').toLowerCase()
-  if (n === 'long') return 'near long'
-  if (n === 'short') return 'near short'
-  return 'none'
-}
 function radarNearestClass(nearest: string | null | undefined, action: string): string {
   const a = (action || '').toUpperCase()
   if (a === 'BUY_LONG') return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
@@ -555,7 +665,7 @@ function radarNearestClass(nearest: string | null | undefined, action: string): 
 function radarMissing(s: { missing?: string[] | null }): string[] {
   const raw = s.missing
   if (!Array.isArray(raw)) return []
-  return raw.map((x) => String(x)).filter(Boolean).slice(0, 3)
+  return raw.map((x) => missingGateZh(x)).filter(Boolean).slice(0, 3)
 }
 
 /** R6 multi-TF trend chip class (soft-fail). */
@@ -569,9 +679,9 @@ function trendChipClass(t: string | null | undefined): string {
 
 function trendShort(t: string | null | undefined): string {
   const v = String(t || '').toLowerCase()
-  if (v === 'bullish') return 'bull'
-  if (v === 'bearish') return 'bear'
-  if (v === 'neutral') return 'neu'
+  if (v === 'bullish') return '多'
+  if (v === 'bearish') return '空'
+  if (v === 'neutral') return '平'
   return t ? String(t) : '—'
 }
 
@@ -640,11 +750,12 @@ const cycleErrorsCount = computed(() => {
 const cycleErrorsWarn = computed(() => cycleErrorsCount.value > 0)
 
 function formatCycleError(e: { inst_id?: string | null; error?: string } | string): string {
-  if (typeof e === 'string') return e
+  if (typeof e === 'string') return humanizeError(e)
   const inst = (e.inst_id ?? '').toString().trim()
-  const err = (e.error || '').trim()
-  if (inst && err) return `${inst}: ${err}`
-  return err || inst || 'error'
+  const short = inst.includes('-') ? inst.split('-')[0] : inst
+  const err = humanizeError(e.error || '')
+  if (short && err) return `${short} · ${err}`
+  return err || short || '错误'
 }
 
 const cycleErrorLines = computed(() => {
@@ -700,7 +811,7 @@ const okxCapabilityLabel = computed(() => {
     case 'trade':
       return '可交易'
     case 'paper':
-      return 'paper'
+      return '本地盘'
     case 'error':
       return '未知'
     case 'none':
@@ -742,7 +853,7 @@ const economicByInstrumentChips = computed(() => {
     text: string
     title: string
   }>
-  const prefer = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'SOL-USDT-SWAP']
+  const prefer = ['BTC-USDT-SWAP', 'ETH-USDT-SWAP', 'DOGE-USDT-SWAP']
   const keys = [
     ...prefer.filter((k) => k in map),
     ...Object.keys(map).filter((k) => !prefer.includes(k)).sort(),
@@ -763,7 +874,7 @@ const economicByInstrumentChips = computed(() => {
     return {
       inst,
       label: shortInstLabel(inst),
-      text: `f${fills}/p${probe}/s${sample} ${avg}bps wr${wr}`,
+      text: `成交${fills} 近探${probe} 样本${sample} · ${avg}bps 胜率${wr}`,
       title: `${inst} fills=${fills} probe=${probe} sample=${sample} avgNetRT=${avg} wr=${wr}`,
     }
   })
@@ -792,9 +903,35 @@ const realizedPnl = computed(() => {
   const n = Number(store.dailyPnl?.realized_pnl ?? NaN)
   return Number.isFinite(n) ? n : null
 })
+const floatingPnl = computed(() => {
+  const fromDaily = Number(store.dailyPnl?.unrealized_pnl)
+  if (Number.isFinite(fromDaily)) return fromDaily
+  const fromBal = Number(store.balance?.unrealized_pnl)
+  if (Number.isFinite(fromBal)) return fromBal
+  return positionsFloatPnl.value
+})
+/** 今日盈亏 = 北京日已实现（账本平仓）+ 当前浮动（交易所持仓）。 */
+const todayPnl = computed(() => {
+  const fromApi = Number(store.dailyPnl?.total_pnl)
+  if (Number.isFinite(fromApi)) return fromApi
+  return (realizedPnl.value ?? 0) + floatingPnl.value
+})
+const todayPnlReady = computed(
+  () =>
+    realizedPnl.value != null
+    || Number.isFinite(Number(store.dailyPnl?.unrealized_pnl))
+    || Number.isFinite(Number(store.balance?.unrealized_pnl)),
+)
 const realizedPnlLabel = computed(() =>
   realizedPnl.value == null ? '—' : fmt(realizedPnl.value),
 )
+const todayPnlNote = computed(() => {
+  const date = store.dailyPnl?.date || '今日'
+  const openNoRealized =
+    store.positionCount > 0 && (realizedPnl.value == null || realizedPnl.value === 0)
+  if (openNoRealized) return `${date}（北京）· 持仓浮动尚未平仓`
+  return `${date}（北京）· 已实现 + 浮动`
+})
 
 /** Loss budget usage vs config.max_daily_loss (0 when profit / unused). */
 const maxDailyLoss = computed(() => {
@@ -817,17 +954,6 @@ const riskBudgetWarn = computed(
 const riskBudgetCritical = computed(
   () => riskBudgetUsage.value != null && riskBudgetUsage.value >= 1,
 )
-
-/** Remaining daily loss budget (USDT) when max_daily_loss applies. */
-const dailyLossRemaining = computed(() => {
-  if (maxDailyLoss.value == null || realizedPnl.value == null) return null
-  if (realizedPnl.value >= 0) return maxDailyLoss.value
-  return Math.max(0, maxDailyLoss.value + realizedPnl.value)
-})
-const dailyLossRemainingLabel = computed(() => {
-  if (dailyLossRemaining.value == null) return ''
-  return `距日损上限还剩 $${fmt(dailyLossRemaining.value)}`
-})
 
 /** Sum of positions[].upl (null/NaN → 0). */
 const positionsFloatPnl = computed(() => {
@@ -924,6 +1050,13 @@ const statusHeroHeadlineClass = computed(
   () => HERO_HEADLINE_CLASS[statusHero.value.tone] || HERO_HEADLINE_CLASS.zinc,
 )
 
+const headerSubline = computed(() => {
+  const ver = store.status?.version || store.health?.version || '…'
+  const bits = [`界面只读 · ${statusHero.value.headline}`, ver]
+  if (store.status) bits.push(`运行 ${store.uptimeLabel}`)
+  return bits.join(' · ')
+})
+
 /** Humanized quality / economic strip labels. */
 const qualityEconomicEvidenceZh = computed(() =>
   economicEvidenceZh(qualityEconomicEvidence.value),
@@ -960,8 +1093,9 @@ const configStrip = computed(() => {
   const instListFull = instruments.join(', ') || '—'
   const instListShort = (() => {
     if (!instruments.length) return '—'
-    const joined = instruments.join(', ')
-    return joined.length > 42 ? `${joined.slice(0, 39)}…` : joined
+    const names = instruments.map((id) => String(id).split('-')[0])
+    const joined = names.join(' / ')
+    return joined.length > 24 ? `${joined.slice(0, 21)}…` : joined
   })()
   const maxPos = c?.max_positions ?? '—'
   const maxDaily = c?.max_daily_loss
@@ -981,8 +1115,8 @@ const configStrip = computed(() => {
   const presetRaw = c?.observe_preset
   const preset = typeof presetRaw === 'string' && presetRaw.trim() ? presetRaw.trim() : null
   return {
-    env,
-    mode,
+    env: envZh(env),
+    mode: exchangeModeZh(mode),
     instCount,
     instListShort,
     instListFull,
@@ -993,12 +1127,12 @@ const configStrip = computed(() => {
     liveMaxNotional: liveMaxNotional == null ? '—' : fmt(liveMaxNotional, 0),
     liveMaxContracts: liveMaxContracts == null ? '—' : String(liveMaxContracts),
     isLiveEnv,
-    kill: kill ? 'ON' : 'off',
-    shadow: shadow ? 'ON' : 'off',
-    nearProbe: nearProbe ? 'ON' : 'off',
+    kill: kill ? '开' : '关',
+    shadow: shadow ? '开' : '关',
+    nearProbe: nearProbe ? '开' : '关',
     nearProbeCd: nearProbeCd == null ? '—' : String(nearProbeCd),
-    notify: notify == null ? '—' : notify ? 'yes' : 'no',
-    policy,
+    notify: notify == null ? '—' : notify ? '有' : '无',
+    policy: policyZh(policy),
     cycle: formatCycleIntervalLabel(intervalSec),
     cycleTitle: `Trader cycle interval ${intervalSec}s; stale threshold uses max(2×interval, interval+300) = ${workerStaleThreshold.value}s`,
     preset,
@@ -1012,7 +1146,7 @@ const configStrip = computed(() => {
 <template>
   <div class="min-h-screen bg-[#080B10] text-[#F3F4F6] flex flex-col">
     <!-- Header -->
-    <header class="sticky top-0 z-40 bg-[#0A0D14]/95 backdrop-blur-md border-b border-[#1A2232] px-4 py-2">
+    <header class="sticky top-0 z-40 bg-[#0A0D14] border-b border-[#1A2232] px-4 py-2">
       <div class="max-w-[1400px] mx-auto flex items-center justify-between gap-3">
         <div class="flex items-center gap-3 min-w-0">
           <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-600 via-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-cyan-500/20 ring-1 ring-white/20 shrink-0">
@@ -1024,8 +1158,8 @@ const configStrip = computed(() => {
               <span class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-500/10 text-cyan-400/90 border border-cyan-500/20" title="Keel Monitor U1">
                 监控
               </span>
-              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-500/10 text-zinc-400 border border-zinc-500/20 uppercase">
-                {{ envLabel }}
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-500/10 text-zinc-300 border border-zinc-500/20">
+                {{ envChip }}
               </span>
               <span
                 v-if="killSwitchOn"
@@ -1054,24 +1188,23 @@ const configStrip = computed(() => {
                 近探
               </span>
             </div>
-            <p class="text-[10px] text-[#707E94] flex items-center gap-1.5">
+            <p class="text-[10px] text-[#707E94] flex items-center gap-1.5 min-w-0">
               <span
-                class="inline-block w-1.5 h-1.5 rounded-full"
+                class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
                 :class="store.isConnected ? 'bg-emerald-400' : 'bg-rose-500'"
               />
-              <span>只读监控 · {{ store.status?.version || store.health?.version || '…' }}</span>
-              <span v-if="store.status">· 运行 {{ store.uptimeLabel }}</span>
+              <span class="truncate">{{ headerSubline }}</span>
             </p>
           </div>
         </div>
 
         <div class="flex items-center gap-2 shrink-0">
-          <div class="hidden sm:block text-[10px] text-[#707E94]">
-            更新于 {{ lastUpdatedLabel }}
+          <div class="hidden sm:block text-[10px] text-[#707E94] whitespace-nowrap">
+            更新于 <span class="font-mono tabular-nums">{{ lastUpdatedLabel }}</span>
           </div>
           <button
             type="button"
-            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#1A2232] bg-[#0D121B] text-xs text-zinc-300 hover:text-white hover:border-cyan-500/40 transition cursor-pointer"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#1A2232] bg-[#0D121B] text-xs text-zinc-300 hover:text-white hover:border-cyan-500/40 cursor-pointer"
             :disabled="store.isRefreshing"
             @click="store.fetchAll(false)"
           >
@@ -1087,7 +1220,7 @@ const configStrip = computed(() => {
           v-for="tab in tabs"
           :key="tab.id"
           type="button"
-          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer"
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer"
           :class="
             store.activeTab === tab.id
               ? 'bg-[#1C2436] text-white border border-cyan-500/50'
@@ -1105,21 +1238,25 @@ const configStrip = computed(() => {
       <!-- Error banner -->
       <div
         v-if="store.error"
-        class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-mono text-amber-200"
+        class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-mono text-amber-200 line-clamp-2"
       >
         {{ store.error }}
       </div>
 
-      <div v-if="store.loading" class="py-16 text-center text-sm text-[#707E94]">
-        加载中…
+      <div v-if="store.loading" class="space-y-4">
+        <div class="rounded-xl border border-[#1A2232] bg-[#0D121B] h-24 animate-pulse" />
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div v-for="n in 4" :key="n" class="rounded-xl border border-[#1A2232] bg-[#0D121B] h-28 animate-pulse" />
+        </div>
+        <p class="text-center text-xs text-[#707E94]">正在连接监控接口…</p>
       </div>
 
       <template v-else>
         <!-- OVERVIEW -->
-        <div v-show="store.activeTab === 'overview'" class="space-y-4">
+        <div v-if="store.activeTab === 'overview'" class="space-y-4">
           <!-- Status hero: one clear answer (replaces stacked KILL/SHADOW/NEAR banners) -->
           <div
-            class="rounded-xl border px-4 py-4 flex items-start gap-3"
+            class="rounded-xl border px-4 py-4 flex items-start gap-3 min-h-[6.5rem]"
             :class="statusHeroToneClass"
             role="status"
             aria-live="polite"
@@ -1153,82 +1290,59 @@ const configStrip = computed(() => {
                 {{ workerStaleBannerText }}
               </p>
             </div>
-            <div class="hidden sm:flex flex-col items-end gap-1.5 shrink-0">
-              <span
-                v-if="killSwitchOn"
-                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/40"
-              ><Ban class="w-3 h-3" />杀开关</span>
-              <span
-                v-if="shadowModeOn"
-                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-500/15 text-violet-300 border border-violet-500/40"
-              ><Ghost class="w-3 h-3" />影子</span>
-              <span
-                v-if="shadowNearProbeOn"
-                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-fuchsia-500/15 text-fuchsia-300 border border-fuchsia-500/40"
-              ><Crosshair class="w-3 h-3" />近探</span>
+            <div
+              v-if="statusHero.canArmLabel"
+              class="hidden sm:flex flex-col items-end gap-1.5 shrink-0 max-w-[9rem] text-right"
+            >
+              <span class="text-[10px] text-[#707E94] leading-snug">{{ statusHero.canArmLabel }}</span>
             </div>
           </div>
 
-          <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4 min-h-[8.25rem]">
               <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <Wallet class="w-4 h-4 text-cyan-400" />
-                权益
+                账户权益
               </div>
-              <div class="text-2xl font-black font-mono text-white">${{ equity }}</div>
-              <div class="text-[11px] text-[#707E94] mt-1">
-                可用 ${{ available }} · {{ store.balance?.source || '—' }}
+              <div class="text-2xl font-black font-mono tabular-nums text-white tracking-tight">${{ equity }}</div>
+              <div class="text-[11px] text-[#707E94] mt-1 font-mono tabular-nums truncate">
+                可用 ${{ available }} · 保证金占用 {{ marginPct }}%
               </div>
             </div>
-            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
-                <Activity class="w-4 h-4 text-emerald-400" />
-                未实现盈亏
-              </div>
-              <div
-                class="text-2xl font-black font-mono"
-                :class="Number(store.balance?.unrealized_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
-              >
-                ${{ upl }}
-              </div>
-              <div class="text-[11px] text-[#707E94] mt-1">保证金占用 {{ marginPct }}%</div>
-            </div>
-            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4 min-h-[8.25rem]">
               <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <TrendingUp class="w-4 h-4 text-amber-400" />
-                今日已实现盈亏
+                今日盈亏
               </div>
               <div
-                class="text-2xl font-black font-mono"
-                :class="realizedPnl == null
+                class="text-2xl font-black font-mono tabular-nums tracking-tight"
+                :class="!todayPnlReady
                   ? 'text-[#707E94]'
-                  : realizedPnl >= 0
+                  : todayPnl >= 0
                     ? 'text-emerald-400'
                     : 'text-rose-400'"
               >
-                ${{ realizedPnlLabel }}
+                ${{ todayPnlReady ? fmt(todayPnl) : '—' }}
               </div>
-              <div class="text-[11px] font-mono mt-1 space-y-0.5">
-                <div v-if="dailyLossRemainingLabel" class="text-amber-200/90">
-                  {{ dailyLossRemainingLabel }}
-                </div>
-                <div class="text-[#707E94]">
-                  {{ store.dailyPnl?.date || '—' }} · {{ store.dailyPnl?.source || 'ledger' }}
-                </div>
+              <div class="text-[11px] text-[#707E94] mt-1 font-mono tabular-nums truncate">
+                已实现 ${{ realizedPnlLabel }} · 浮动 ${{ fmt(floatingPnl) }}
+              </div>
+              <div class="text-[11px] text-[#707E94]/80 mt-0.5 truncate">
+                {{ todayPnlNote }}
               </div>
             </div>
-            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4 min-h-[8.25rem]">
               <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
                 <LayoutGrid class="w-4 h-4 text-blue-400" />
-                持仓数
+                持仓
               </div>
-              <div class="text-2xl font-black font-mono text-white">{{ store.positionCount }}</div>
-              <div class="text-[11px] text-[#707E94] mt-1">
-                {{ store.positionsSource || '—' }}
+              <div class="text-2xl font-black font-mono tabular-nums text-white tracking-tight">{{ store.positionCount }}</div>
+              <div class="text-[11px] text-[#707E94] mt-1 font-mono tabular-nums truncate">
+                浮动 ${{ positionsFloatPnlLabel }} · {{ exchangeModeZh(store.positionsSource || store.balance?.source) }}
               </div>
             </div>
             <div
-              class="bg-[#0D121B] border rounded-xl p-4"
+              class="bg-[#0D121B] border rounded-xl p-4 min-h-[8.25rem]"
               :class="riskBudgetCritical
                 ? 'border-rose-500/50'
                 : riskBudgetWarn
@@ -1244,7 +1358,7 @@ const configStrip = computed(() => {
                       ? 'text-amber-400'
                       : 'text-violet-400'"
                 />
-                风控额度
+                日损额度
               </div>
               <div
                 class="text-2xl font-black font-mono"
@@ -1258,7 +1372,7 @@ const configStrip = computed(() => {
               </div>
               <div class="mt-2 h-1.5 rounded-full bg-[#1A2232] overflow-hidden">
                 <div
-                  class="h-full rounded-full transition-all"
+                  class="h-full rounded-full"
                   :class="riskBudgetCritical
                     ? 'bg-rose-500'
                     : riskBudgetWarn
@@ -1267,53 +1381,233 @@ const configStrip = computed(() => {
                   :style="{ width: `${Math.round((riskBudgetUsage ?? 0) * 100)}%` }"
                 />
               </div>
-              <div class="text-[11px] font-mono text-[#707E94] mt-1">
+              <div class="text-[11px] text-[#707E94] mt-1">
                 <template v-if="realizedPnl == null || maxDailyLoss == null">
-                  已实现 vs max_daily_loss —
+                  按已实现亏损计，浮动不计入门禁
                 </template>
                 <template v-else-if="(riskBudgetUsage ?? 0) <= 0">
-                  盈利/未亏 · budget ${{ fmt(maxDailyLoss) }}
+                  未动用 · 上限 ${{ fmt(maxDailyLoss) }}
                 </template>
                 <template v-else>
-                  loss ${{ fmt(Math.abs(realizedPnl)) }} / ${{ fmt(maxDailyLoss) }}
+                  已实现亏损 ${{ fmt(Math.abs(realizedPnl)) }} / ${{ fmt(maxDailyLoss) }}
                 </template>
               </div>
             </div>
-            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
-                <Waves class="w-4 h-4 text-sky-400" />
-                持仓浮动盈亏
-              </div>
-              <div
-                class="text-2xl font-black font-mono"
-                :class="positionsFloatPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'"
-              >
-                ${{ positionsFloatPnlLabel }}
-              </div>
-              <div class="text-[11px] font-mono text-[#707E94] mt-1">
-                Σ positions.upl · {{ store.positionCount }} pos
-              </div>
+          </div>
+
+          <!-- Trading board: watchlist + last cycle sit above research/arming. -->
+          <div
+            v-if="watchlistBoard.length"
+            class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
+          >
+            <h2 class="text-xs font-semibold text-white mb-3">观察品种</h2>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead>
+                  <tr class="text-[#707E94] border-b border-[#1A2232]">
+                    <th class="pb-2 pr-3">品种</th>
+                    <th class="pb-2 pr-3">价格</th>
+                    <th class="pb-2 pr-3">RSI14</th>
+                    <th class="pb-2 pr-3">趋势 15m/1h/4h</th>
+                    <th class="pb-2 pr-3">最新决策</th>
+                    <th class="pb-2">理由</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-[#1A2232]/50">
+                  <tr v-for="row in watchlistBoard" :key="row.instId" class="hover:bg-[#121824]/40">
+                    <td class="py-2.5 pr-3 text-white font-bold" :title="row.instId">{{ row.label }}</td>
+                    <td class="py-2.5 pr-3 font-mono tabular-nums text-zinc-200">{{ fmt(row.price) }}</td>
+                    <td class="py-2.5 pr-3 font-mono tabular-nums text-zinc-200">{{ fmt(row.rsi) }}</td>
+                    <td class="py-2.5 pr-3 h-[42px] align-middle">
+                      <span v-if="row.loading && row.price == null" class="text-cyan-400/80">加载中…</span>
+                      <span v-else-if="row.error" class="text-amber-400/90" :title="row.error">行情失败</span>
+                      <span
+                        v-else
+                        class="inline-flex items-center gap-1 flex-wrap"
+                        :title="formatMultiTfTrends({ trend_15m: row.trend_15m, trend_1h: row.trend_1h, trend_4h: row.trend_4h })"
+                      >
+                        <span class="inline-flex items-center px-1 rounded border text-[10px] font-mono" :class="trendChipClass(row.trend_15m)">15m {{ trendShort(row.trend_15m) }}</span>
+                        <span class="inline-flex items-center px-1 rounded border text-[10px] font-mono" :class="trendChipClass(row.trend_1h)">1h {{ trendShort(row.trend_1h) }}</span>
+                        <span class="inline-flex items-center px-1 rounded border text-[10px] font-mono" :class="trendChipClass(row.trend_4h)">4h {{ trendShort(row.trend_4h) }}</span>
+                      </span>
+                    </td>
+                    <td class="py-2.5 pr-3">
+                      <span class="font-semibold" :class="actionClass(row.action)">{{ actionZh(row.action) }}</span>
+                    </td>
+                    <td class="py-2.5 text-[#A8B3C7] max-w-md">
+                      <div class="line-clamp-2 min-h-[2.5em]" :title="row.reason">{{ displayReason(row.reason) }}</div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <div class="flex items-center gap-1.5 text-[#707E94] text-xs mb-2">
-                <Shield class="w-4 h-4 text-indigo-400" />
-                凭证
+          </div>
+
+          <div
+            v-if="lastCycle"
+            class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
+          >
+            <h2 class="text-xs font-semibold text-white mb-2">最近一轮</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div>
+                <div class="text-[#707E94]">时间</div>
+                <div class="text-white">{{ fmtTs(lastCycle.timestamp) }}</div>
               </div>
-              <div class="text-sm text-white space-y-1">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span>OKX: {{ store.status?.credentials?.okx ? '有' : '无' }}</span>
+              <div>
+                <div class="text-[#707E94]">模式</div>
+                <div class="text-white">{{ exchangeModeZh(lastCycle.mode) }} · {{ envChip }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">策略</div>
+                <div class="text-white">{{ policyZh(lastCycle.policy) }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">品种数</div>
+                <div class="text-white">{{ lastCycle.instruments ?? '—' }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">耗时</div>
+                <div class="text-white">{{ lastCycle.duration_ms != null ? `${lastCycle.duration_ms} ms` : '—' }}</div>
+              </div>
+              <div>
+                <div class="text-[#707E94]">行情</div>
+                <div class="mt-0.5">
                   <span
                     class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
-                    :class="okxCapabilityClass"
-                    :title="okxCapabilityTitle"
-                  >{{ okxCapabilityLabel }}</span>
+                    :class="marketSourceClass(lastCycle.market_source)"
+                    :title="lastCycle.market_source || 'unknown'"
+                  >{{ marketSourceLabel(lastCycle.market_source) }}</span>
                 </div>
-                <div>LLM: {{ store.status?.credentials?.llm ? '有' : '无' }}</div>
               </div>
-              <div class="text-[11px] text-[#707E94] mt-1 truncate" :title="store.status?.ledger_db">
-                {{ store.status?.mode || '—' }}
+              <div class="md:col-span-2">
+                <div class="text-[#707E94]">决策</div>
+                <div class="text-cyan-400">{{ lastCycleActions || '—' }}</div>
+              </div>
+              <div class="md:col-span-2">
+                <div class="text-[#707E94]">风控拒绝</div>
+                <div class="mt-0.5 flex flex-col gap-1 min-w-0">
+                  <span
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border tabular-nums w-fit"
+                    :class="riskDeniesWarn
+                      ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
+                      : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'"
+                  >
+                    {{ riskDeniesCount }}
+                  </span>
+                  <div
+                    v-if="riskDenyReasonsPreview"
+                    class="text-[10px] font-mono text-amber-400/80 truncate max-w-full"
+                    :title="riskDenyReasonsTitle"
+                  >
+                    {{ riskDenyReasonsPreview }}
+                  </div>
+                </div>
+              </div>
+              <div class="md:col-span-2">
+                <div class="text-[#707E94]">错误</div>
+                <div class="mt-0.5 flex flex-col gap-1 min-w-0">
+                  <span
+                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border tabular-nums w-fit"
+                    :class="cycleErrorsWarn
+                      ? 'bg-rose-500/15 text-rose-400 border-rose-500/40'
+                      : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'"
+                  >
+                    {{ cycleErrorsCount }}
+                  </span>
+                  <div
+                    v-if="cycleErrorsPreview"
+                    class="text-[10px] font-mono text-rose-400/80 truncate max-w-full"
+                    :title="cycleErrorsTitle"
+                  >
+                    {{ cycleErrorsPreview }}
+                  </div>
+                </div>
+              </div>
+              <div
+                v-if="lastCycleTrends.length"
+                class="md:col-span-4 flex flex-wrap items-center gap-2 pt-1"
+              >
+                <div class="text-[#707E94] w-full">多周期趋势</div>
+                <span
+                  v-for="t in lastCycleTrends"
+                  :key="t.inst_id"
+                  class="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono border border-[#1A2232] bg-[#080B10]/80"
+                  :title="`${t.inst_id} · ${formatMultiTfTrends(t)}`"
+                >
+                  <span class="text-white font-bold">{{ shortInstLabel(t.inst_id) }}</span>
+                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(t.trend_15m)">15m {{ trendShort(t.trend_15m) }}</span>
+                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(t.trend_1h)">1h {{ trendShort(t.trend_1h) }}</span>
+                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(t.trend_4h)">4h {{ trendShort(t.trend_4h) }}</span>
+                </span>
               </div>
             </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+            <h2 class="text-xs font-semibold text-white mb-3">最近决策</h2>
+            <div v-if="!recentWatchlistDecisions.length" class="text-xs text-[#707E94] py-6 text-center border border-dashed border-[#1A2232] rounded-lg">
+              观察列表还没有决策记录
+            </div>
+            <ul v-else class="space-y-2 max-h-80 overflow-y-auto">
+              <li
+                v-for="d in recentWatchlistDecisions"
+                :key="String(d.id)"
+                class="text-xs border-b border-[#1A2232]/60 pb-2"
+              >
+                <div class="flex justify-between gap-2">
+                  <span class="text-white font-bold" :title="d.inst_id">{{ shortInstLabel(d.inst_id) }}</span>
+                  <span class="font-semibold" :class="actionClass(d.action)">{{ actionZh(d.action) }}</span>
+                </div>
+                <div class="text-[#A8B3C7] mt-0.5 line-clamp-2" :title="d.reason">{{ displayReason(d.reason) }}</div>
+                <div class="text-[#707E94] flex justify-between gap-2 mt-0.5 font-mono">
+                  <span>置信 {{ fmtConfidence(d.confidence) }}</span>
+                  <span>{{ fmtTs(d.timestamp) }}</span>
+                </div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+            <h2 class="text-xs font-semibold text-white mb-3">最近事件</h2>
+            <div v-if="!store.events.length" class="text-xs text-[#707E94] py-6 text-center border border-dashed border-[#1A2232] rounded-lg">
+              还没有账本事件
+            </div>
+            <ul v-else class="space-y-2 max-h-80 overflow-y-auto">
+              <li
+                v-for="(e, i) in store.events.slice(0, 10)"
+                :key="eventKey(e, i)"
+                class="text-xs border-b border-[#1A2232]/60 pb-2"
+              >
+                <div class="flex justify-between gap-2 text-white">
+                  <span class="font-semibold">{{ eventHeadline(e) }}</span>
+                  <span class="text-[#707E94] font-mono shrink-0">{{ fmtTs(e.timestamp) }}</span>
+                </div>
+                <div v-if="eventDetail(e)" class="text-[#A8B3C7] mt-0.5 line-clamp-2" :title="eventDetail(e)">
+                  {{ eventDetail(e) }}
+                </div>
+              </li>
+            </ul>
+          </div>
+          </div>
+
+          <details class="group rounded-xl border border-[#1A2232] bg-[#0D121B]/80 open:bg-[#0D121B]">
+            <summary class="cursor-pointer list-none px-4 py-3 text-sm text-[#A8B3C7] hover:text-white flex items-center justify-between gap-2 select-none">
+              <span class="font-semibold">研究资料</span>
+              <span class="text-[11px] text-[#707E94] group-open:hidden">实盘准入 / 质量 / 配置</span>
+              <span class="text-[11px] text-[#707E94] hidden group-open:inline">收起</span>
+            </summary>
+            <div class="px-4 pb-4 space-y-4 border-t border-[#1A2232] pt-3">
+          <div class="text-[11px] text-[#A8B3C7] flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>欧易
+              <span class="text-white">{{ store.status?.credentials?.okx ? '已配置' : '未配置' }}</span>
+              <span
+                class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                :class="okxCapabilityClass"
+                :title="okxCapabilityTitle"
+              >{{ okxCapabilityLabel }}</span>
+            </span>
+            <span>LLM <span class="text-white">{{ store.status?.credentials?.llm ? '已配置' : '未配置' }}</span></span>
           </div>
 
           <div
@@ -1330,7 +1624,7 @@ const configStrip = computed(() => {
                   :class="armingReady ? 'text-emerald-400' : 'text-amber-400'"
                 />
                 <span class="text-white font-bold tracking-wide">实盘准入</span>
-                <span class="text-[#707E94] font-normal">只读清单</span>
+                <span class="text-[#707E94] font-normal">切欧易实盘用 · 不影响模拟盘</span>
               </div>
               <span
                 class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border tracking-wide"
@@ -1338,10 +1632,10 @@ const configStrip = computed(() => {
                   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
                   : 'bg-amber-500/15 text-amber-400 border-amber-500/40'"
                 :title="armingReady
-                  ? '前置已满足 — 仍需手动设 KEEL_KILL_SWITCH=0'
-                  : '未就绪 — 先消除阻断再关杀开关'"
+                  ? '切到实盘的前置已满足 — 仍需手动改环境变量'
+                  : '切到实盘尚未就绪'"
               >
-                {{ armingReady ? '可武装' : '暂不可' }}
+                {{ armingReady ? '切实盘：清单已绿' : '切实盘：未就绪' }}
               </span>
             </div>
             <div class="text-[11px] text-[#A8B3C7] mb-2">
@@ -1393,13 +1687,13 @@ const configStrip = computed(() => {
                   v-if="armingEconomic.economic_sample_source"
                   class="text-[10px] font-mono text-amber-300"
                   :title="`E3 economic sample source; full_gate_fires=${armingEconomic.full_gate_fires ?? 0}; FG 5m net wr=${armingEconomic.full_gate_win_rate_net_roundtrip ?? '—'}`"
-                >src {{ armingEconomic.economic_sample_source }}</span>
+                >{{ economicEvidenceZh(armingEconomic.economic_sample_source) }}</span>
                 <span
                   v-if="armingEconomic.full_gate_win_rate_net_roundtrip != null"
                   class="text-[10px] font-mono text-lime-300"
                   :title="`F1 post_e31 FG 5m netRT when fires≥20; cohort=${armingEconomic.full_gate_cohort_used ?? '—'}; n=${armingEconomic.full_gate_sample_count ?? 0}; post=${armingEconomic.full_gate_fires_post_e31 ?? 0} pre=${armingEconomic.full_gate_fires_pre_e31 ?? 0}`"
                 >5分钟净胜率 {{ Number(armingEconomic.full_gate_win_rate_net_roundtrip).toFixed(2) }}</span>
-                <span>mk{{ armingEconomic.horizon_seconds ?? 300 }}s n=<span class="text-white">{{ armingEconomic.sample_count ?? '—' }}</span></span>
+                <span>标记 {{ armingEconomic.horizon_seconds ?? 300 }}s n=<span class="text-white">{{ armingEconomic.sample_count ?? '—' }}</span></span>
                 <span>netRT wr <span class="text-white">{{
                   armingEconomic.probe_win_rate_net_roundtrip != null
                     ? Number(armingEconomic.probe_win_rate_net_roundtrip).toFixed(2)
@@ -1416,9 +1710,9 @@ const configStrip = computed(() => {
               <div
                 v-if="economicByInstrumentChips.length"
                 class="flex flex-wrap items-center gap-1.5 pt-0.5"
-                title="Per-instrument economic snapshots (diagnostic; gate remains aggregate)"
+                title="分品种经济快照（门禁仍按合计）"
               >
-                <span class="text-[#707E94]">by inst</span>
+                <span class="text-[#707E94]">分品种</span>
                 <span
                   v-for="chip in economicByInstrumentChips"
                   :key="'ei-' + chip.inst"
@@ -1449,7 +1743,7 @@ const configStrip = computed(() => {
                   :class="firstLiveAllowed ? 'text-emerald-400' : 'text-sky-400'"
                 />
                 <span class="text-white font-bold tracking-wide">首笔实盘</span>
-                <span class="text-[#707E94] font-normal">只读门禁</span>
+                <span class="text-[#707E94] font-normal">切实盘门禁</span>
               </div>
               <span
                 class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border tracking-wide"
@@ -1554,13 +1848,6 @@ const configStrip = computed(() => {
             >OKX占比 {{ qualityOkxSharePct }}</span>
           </div>
 
-          <details class="group rounded-xl border border-[#1A2232] bg-[#0D121B]/80 open:bg-[#0D121B]">
-            <summary class="cursor-pointer list-none px-4 py-3 text-sm text-[#A8B3C7] hover:text-white flex items-center justify-between gap-2 select-none">
-              <span class="font-semibold">技术细节</span>
-              <span class="text-[11px] text-[#707E94] group-open:hidden">展开芯片 / 周期 / 雷达</span>
-              <span class="text-[11px] text-[#707E94] hidden group-open:inline">收起</span>
-            </summary>
-            <div class="px-4 pb-4 space-y-4 border-t border-[#1A2232] pt-3">
               <div
                 v-if="qualityByInstrumentChips.length"
                 class="flex flex-wrap items-center gap-2 text-[11px]"
@@ -1579,33 +1866,33 @@ const configStrip = computed(() => {
               <Settings2 class="w-3.5 h-3.5 text-cyan-400" />
               <span class="text-white font-bold">配置</span>
             </div>
-            <span class="text-[#A8B3C7]">env <span class="text-white">{{ configStrip.env }}</span></span>
-            <span class="text-[#A8B3C7]">mode <span class="text-white">{{ configStrip.mode }}</span></span>
-            <span class="text-[#A8B3C7]">policy <span class="text-white">{{ configStrip.policy }}</span></span>
+            <span class="text-[#A8B3C7]">环境 <span class="text-white">{{ configStrip.env }}</span></span>
+            <span class="text-[#A8B3C7]">模式 <span class="text-white">{{ configStrip.mode }}</span></span>
+            <span class="text-[#A8B3C7]">策略 <span class="text-white">{{ configStrip.policy }}</span></span>
             <span
               class="text-[#A8B3C7] max-w-[18rem] truncate"
               :title="configStrip.instListFull"
-            >instruments <span class="text-white">{{ configStrip.instListShort }}</span>
+            >品种 <span class="text-white">{{ configStrip.instListShort }}</span>
               <span class="text-[#707E94]">({{ configStrip.instCount }})</span>
             </span>
-            <span class="text-[#A8B3C7]">max_pos <span class="text-white">{{ configStrip.maxPos }}</span></span>
-            <span class="text-[#A8B3C7]">max_daily_loss <span class="text-white">${{ configStrip.maxDaily }}</span></span>
-            <span class="text-[#A8B3C7]">max_notional <span class="text-white">${{ configStrip.maxNotional }}</span></span>
-            <span class="text-[#A8B3C7]">max_contracts <span class="text-white">{{ configStrip.maxContracts }}</span></span>
+            <span class="text-[#A8B3C7]">持仓上限 <span class="text-white">{{ configStrip.maxPos }}</span></span>
+            <span class="text-[#A8B3C7]">日损上限 <span class="text-white">${{ configStrip.maxDaily }}</span></span>
+            <span class="text-[#A8B3C7]">名义上限 <span class="text-white">${{ configStrip.maxNotional }}</span></span>
+            <span class="text-[#A8B3C7]">张数上限 <span class="text-white">{{ configStrip.maxContracts }}</span></span>
             <span
               v-if="configStrip.isLiveEnv"
               class="text-[#A8B3C7]"
-              title="KEEL_LIVE_MAX_* first-live tighter caps (applied when env=live and not shadow)"
-            >live_caps <span class="text-amber-300">${{ configStrip.liveMaxNotional }} / {{ configStrip.liveMaxContracts }} ct</span></span>
-            <span class="text-[#A8B3C7]">kill <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
-            <span class="text-[#A8B3C7]">shadow <span :class="shadowModeOn ? 'text-violet-300' : 'text-white'">{{ configStrip.shadow }}</span></span>
+              title="实盘更紧的名义/张数上限"
+            >实盘上限 <span class="text-amber-300">${{ configStrip.liveMaxNotional }} / {{ configStrip.liveMaxContracts }} 张</span></span>
+            <span class="text-[#A8B3C7]">杀开关 <span :class="killSwitchOn ? 'text-rose-400' : 'text-white'">{{ configStrip.kill }}</span></span>
+            <span class="text-[#A8B3C7]">影子 <span :class="shadowModeOn ? 'text-violet-300' : 'text-white'">{{ configStrip.shadow }}</span></span>
             <span
               class="text-[#A8B3C7]"
-              :title="`KEEL_SHADOW_NEAR_PROBE · cooldown ${configStrip.nearProbeCd}s`"
-            >near_probe <span :class="shadowNearProbeOn ? 'text-fuchsia-300' : 'text-white'">{{ configStrip.nearProbe }}</span>
+              :title="`近探冷却 ${configStrip.nearProbeCd}s`"
+            >近探 <span :class="shadowNearProbeOn ? 'text-fuchsia-300' : 'text-white'">{{ configStrip.nearProbe }}</span>
               <span v-if="shadowNearProbeOn" class="text-[#707E94]">({{ configStrip.nearProbeCd }}s)</span>
             </span>
-            <span class="text-[#A8B3C7]">notify <span class="text-white">{{ configStrip.notify }}</span></span>
+            <span class="text-[#A8B3C7]">通知 <span class="text-white">{{ configStrip.notify }}</span></span>
             <span class="text-[#A8B3C7]" :title="configStrip.cycleTitle">周期 <span class="text-white">{{ configStrip.cycle }}</span></span>
             <span
               v-if="configStrip.preset"
@@ -1632,113 +1919,6 @@ const configStrip = computed(() => {
           </div>
 
           <div
-            v-if="lastCycle"
-            class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
-          >
-            <h2 class="text-xs font-semibold text-white mb-2">最近 Worker 周期</h2>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
-              <div>
-                <div class="text-[#707E94]">When</div>
-                <div class="text-white">{{ fmtTs(lastCycle.timestamp) }}</div>
-              </div>
-              <div>
-                <div class="text-[#707E94]">Mode / adapter</div>
-                <div class="text-white">{{ lastCycle.mode }} · {{ lastCycle.adapter || '—' }}</div>
-              </div>
-              <div>
-                <div class="text-[#707E94]">Policy</div>
-                <div class="text-white">{{ lastCycle.policy || '—' }}</div>
-              </div>
-              <div>
-                <div class="text-[#707E94]">Instruments</div>
-                <div class="text-white">{{ lastCycle.instruments ?? '—' }}</div>
-              </div>
-              <div>
-                <div class="text-[#707E94]">Duration</div>
-                <div class="text-white">{{ lastCycle.duration_ms != null ? `${lastCycle.duration_ms} ms` : '—' }}</div>
-              </div>
-              <div>
-                <div class="text-[#707E94]">Market source</div>
-                <div class="mt-0.5">
-                  <span
-                    class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
-                    :class="marketSourceClass(lastCycle.market_source)"
-                    :title="lastCycle.market_source || 'unknown'"
-                  >{{ marketSourceLabel(lastCycle.market_source) }}</span>
-                </div>
-              </div>
-              <div class="md:col-span-2">
-                <div class="text-[#707E94]">Decisions</div>
-                <div class="text-cyan-400">{{ lastCycleActions || '—' }}</div>
-              </div>
-              <div class="md:col-span-2">
-                <div class="text-[#707E94]">Risk denies</div>
-                <div class="mt-0.5 flex flex-col gap-1 min-w-0">
-                  <span
-                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border tabular-nums w-fit"
-                    :class="riskDeniesWarn
-                      ? 'bg-amber-500/15 text-amber-400 border-amber-500/40'
-                      : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'"
-                    :title="riskDeniesWarn
-                      ? `${riskDeniesCount} instrument(s) denied by risk gates this cycle`
-                      : 'No risk-gate denies this cycle'"
-                  >
-                    {{ riskDeniesCount }}
-                  </span>
-                  <div
-                    v-if="riskDenyReasonsPreview"
-                    class="text-[10px] font-mono text-amber-400/80 truncate max-w-full"
-                    :title="riskDenyReasonsTitle"
-                  >
-                    {{ riskDenyReasonsPreview }}
-                  </div>
-                </div>
-              </div>
-              <div class="md:col-span-2">
-                <div class="text-[#707E94]">Errors</div>
-                <div class="mt-0.5 flex flex-col gap-1 min-w-0">
-                  <span
-                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border tabular-nums w-fit"
-                    :class="cycleErrorsWarn
-                      ? 'bg-rose-500/15 text-rose-400 border-rose-500/40'
-                      : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/20'"
-                    :title="cycleErrorsWarn
-                      ? `${cycleErrorsCount} instrument error(s) this cycle`
-                      : 'No instrument errors this cycle'"
-                  >
-                    {{ cycleErrorsCount }}
-                  </span>
-                  <div
-                    v-if="cycleErrorsPreview"
-                    class="text-[10px] font-mono text-rose-400/80 truncate max-w-full"
-                    :title="cycleErrorsTitle"
-                  >
-                    {{ cycleErrorsPreview }}
-                  </div>
-                </div>
-              </div>
-              <div
-                v-if="lastCycleTrends.length"
-                class="md:col-span-4 flex flex-wrap items-center gap-2 pt-1"
-              >
-                <div class="text-[#707E94] w-full">Multi-TF trends</div>
-                <span
-                  v-for="t in lastCycleTrends"
-                  :key="t.inst_id"
-                  class="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono border border-[#1A2232] bg-[#080B10]/80"
-                  :title="`${t.inst_id} · ${formatMultiTfTrends(t)}`"
-                >
-                  <span class="text-white font-bold">{{ t.inst_id.replace('-USDT-SWAP', '') }}</span>
-                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(t.trend_15m)">15m {{ trendShort(t.trend_15m) }}</span>
-                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(t.trend_1h)">1h {{ trendShort(t.trend_1h) }}</span>
-                  <span class="inline-flex items-center px-1 rounded border" :class="trendChipClass(t.trend_4h)">4h {{ trendShort(t.trend_4h) }}</span>
-                </span>
-              </div>
-            </div>
-          </div>
-
-
-          <div
             v-if="decisionStats"
             class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4"
           >
@@ -1752,55 +1932,55 @@ const configStrip = computed(() => {
                 :title="shadowStats.last_timestamp
                   ? `last shadow_fill @ ${fmtTs(shadowStats.last_timestamp)}`
                   : 'no shadow_fill in lookback'"
-              >shadow {{ shadowStats.count }}</span>
+              >影子 {{ shadowStats.count }}</span>
               <span
                 v-if="shadowStats"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-fuchsia-500/40 text-fuchsia-300"
-                title="near-probe shadow_fill count in lookback"
-              >probe {{ shadowProbeCount }}</span>
+                title="回看窗口内近探影子成交"
+              >近探 {{ shadowProbeCount }}</span>
               <span
                 v-if="shadowProbeSkipChip"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-orange-500/40 text-orange-300"
-                :title="`near-probe skips ${shadowProbeSkipChip.total} · top ${shadowProbeSkipChip.reason}=${shadowProbeSkipChip.count} (Q3.5)`"
-              >skip {{ shadowProbeSkipChip.reason }} ×{{ shadowProbeSkipChip.count }}</span>
+                :title="`近探跳过 ${shadowProbeSkipChip.total} · 主要原因 ${shadowProbeSkipChip.reason}=${shadowProbeSkipChip.count}`"
+              >跳过 {{ shadowProbeSkipChip.reason }} ×{{ shadowProbeSkipChip.count }}</span>
               <span
                 v-if="shadowProbeMarkoutChip"
                 class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-amber-500/40 text-amber-300"
-                :title="`probe markout @ ${shadowProbeMarkoutChip.horizon}s · n=${shadowProbeMarkoutChip.samples} · ${shadowProbeMarkoutChip.feeHint} · offline`"
-              >mk {{ shadowProbeMarkoutChip.netTag }} {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }}</span>
+                :title="`近探标记收益 ${shadowProbeMarkoutChip.horizon}s · 样本 ${shadowProbeMarkoutChip.samples}`"
+              >标记 {{ shadowProbeMarkoutChip.netTag }} {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }}</span>
               <template v-if="shadowByInstrumentChips.length">
-                <span class="text-[10px] font-mono text-[#707E94]">by inst</span>
+                <span class="text-[10px] font-mono text-[#707E94]">分品种</span>
                 <span
                   v-for="chip in shadowByInstrumentChips"
                   :key="'si-' + chip.inst"
                   class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border border-violet-500/25 text-violet-200/90"
                   :title="chip.title"
-                ><span class="text-white font-bold">{{ chip.label }}</span> f{{ chip.fill }}/p{{ chip.probe }} {{ chip.mk }}</span>
+                ><span class="text-white font-bold">{{ chip.label }}</span> 成交{{ chip.fill }} 近探{{ chip.probe }} {{ chip.mk }}</span>
               </template>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
               <div>
-                <div class="text-[#707E94]">Decisions</div>
+                <div class="text-[#707E94]">决策数</div>
                 <div class="text-white tabular-nums">{{ decisionStats.decision_count }}</div>
               </div>
               <div>
-                <div class="text-[#707E94]">Wait rate</div>
+                <div class="text-[#707E94]">观望率</div>
                 <div class="text-cyan-400 tabular-nums">{{ decisionStatsWaitPct }}</div>
               </div>
               <div class="md:col-span-2">
-                <div class="text-[#707E94]">Top actions</div>
+                <div class="text-[#707E94]">动作分布</div>
                 <div class="text-white truncate" :title="decisionStatsTopActions">{{ decisionStatsTopActions || '—' }}</div>
               </div>
               <div class="md:col-span-2">
-                <div class="text-[#707E94]">By policy</div>
+                <div class="text-[#707E94]">策略分布</div>
                 <div class="text-white truncate" :title="decisionStatsByPolicy">{{ decisionStatsByPolicy || '—' }}</div>
               </div>
               <div>
-                <div class="text-[#707E94]">Cycles</div>
+                <div class="text-[#707E94]">周期数</div>
                 <div class="text-white tabular-nums">{{ decisionStats.cycle_count }}</div>
               </div>
               <div>
-                <div class="text-[#707E94]">Risk denies</div>
+                <div class="text-[#707E94]">风控拒绝</div>
                 <div class="text-white tabular-nums">{{ decisionStats.risk_deny_events }}</div>
               </div>
             </div>
@@ -1816,8 +1996,8 @@ const configStrip = computed(() => {
                 <span class="text-[#707E94] font-normal normal-case">({{ nearestSignals.hours }}h)</span>
               </h2>
               <div class="flex flex-wrap items-center gap-2 text-[10px] font-mono">
-                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-500/30 text-[#A8B3C7]" title="WAIT">
-                  WAIT <span class="text-white tabular-nums">{{ nearestSummary?.waiting ?? 0 }}</span>
+                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-zinc-500/30 text-[#A8B3C7]" title="观望">
+                  观望 <span class="text-white tabular-nums">{{ nearestSummary?.waiting ?? 0 }}</span>
                 </span>
                 <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-emerald-500/40 text-emerald-400" title="近多">
                   近多 <span class="tabular-nums">{{ nearestSummary?.long_nearest ?? 0 }}</span>
@@ -1834,20 +2014,20 @@ const configStrip = computed(() => {
               v-if="shadowStats"
               class="mb-3 text-[10px] font-mono text-[#A8B3C7] flex flex-wrap items-center gap-2"
             >
-              <span class="text-violet-300">Shadow stats ({{ shadowStats.hours }}h)</span>
-              <span class="text-white tabular-nums">n={{ shadowStats.count }}</span>
-              <span class="text-fuchsia-300 tabular-nums">probe={{ shadowProbeCount }}</span>
+              <span class="text-violet-300">影子统计（{{ shadowStats.hours }}小时）</span>
+              <span class="text-white tabular-nums">{{ shadowStats.count }} 笔</span>
+              <span class="text-fuchsia-300 tabular-nums">近探 {{ shadowProbeCount }}</span>
               <span
                 v-if="shadowProbeMarkoutChip"
                 class="text-amber-300/90 tabular-nums"
                 :title="`probe markout @ ${shadowProbeMarkoutChip.horizon}s · n=${shadowProbeMarkoutChip.samples} · ${shadowProbeMarkoutChip.feeHint} · win_rate / avg`"
-              >probe mk {{ shadowProbeMarkoutChip.netTag }} {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }} ({{ shadowProbeMarkoutChip.horizon }}s)</span>
+              >近探标记 {{ shadowProbeMarkoutChip.netTag }} {{ shadowProbeMarkoutChip.wrLabel }} / {{ shadowProbeMarkoutChip.avgLabel }} ({{ shadowProbeMarkoutChip.horizon }}s)</span>
               <span v-if="shadowStatsByAction" class="truncate" :title="shadowStatsByAction">{{ shadowStatsByAction }}</span>
-              <span v-if="shadowStats.last_timestamp" class="text-[#707E94]">last {{ fmtTs(shadowStats.last_timestamp) }}</span>
-              <span v-else class="text-[#707E94]">no fills</span>
+              <span v-if="shadowStats.last_timestamp" class="text-[#707E94]">最近 {{ fmtTs(shadowStats.last_timestamp) }}</span>
+              <span v-else class="text-[#707E94]">暂无成交</span>
             </div>
-            <div v-if="!nearestSignals.signals.length" class="text-xs font-mono text-[#707E94] py-4 text-center border border-dashed border-[#1A2232] rounded-lg">
-              No recent signal_diag decisions in lookback
+            <div v-if="!nearestSignals.signals.length" class="text-xs text-[#707E94] py-4 text-center border border-dashed border-[#1A2232] rounded-lg">
+              回看窗口内还没有近信号决策
             </div>
             <ul v-else class="space-y-2 max-h-72 overflow-y-auto">
               <li
@@ -1855,7 +2035,7 @@ const configStrip = computed(() => {
                 :key="s.inst_id"
                 class="flex flex-wrap items-center gap-2 text-xs font-mono border-b border-[#1A2232]/60 pb-2"
               >
-                <span class="text-white font-bold min-w-[8rem]">{{ s.inst_id }}</span>
+                <span class="text-white font-bold min-w-[4rem]">{{ shortInstLabel(s.inst_id) }}</span>
                 <span
                   class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
                   :class="radarNearestClass(s.nearest, s.action)"
@@ -1865,7 +2045,7 @@ const configStrip = computed(() => {
                   v-for="gate in radarMissing(s)"
                   :key="`${s.inst_id}-${gate}`"
                   class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400/90 border border-amber-500/30"
-                  :title="`missing: ${gate}`"
+                  :title="`缺：${gate}`"
                 >{{ gate }}</span>
                 <span
                   v-if="s.trend_15m || s.trend_1h || s.trend_4h"
@@ -1880,60 +2060,20 @@ const configStrip = computed(() => {
               </li>
             </ul>
           </div>
-
-
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <h2 class="text-xs font-semibold text-white mb-3">最近决策</h2>
-              <div v-if="!store.decisions.length" class="text-xs font-mono text-[#707E94] py-6 text-center border border-dashed border-[#1A2232] rounded-lg">
-                No ledger decisions yet — run <code class="text-cyan-400">python -m keel.worker --once</code>
-              </div>
-              <ul v-else class="space-y-2 max-h-72 overflow-y-auto">
-                <li
-                  v-for="d in store.decisions.slice(0, 8)"
-                  :key="String(d.id)"
-                  class="text-xs font-mono border-b border-[#1A2232]/60 pb-2"
-                >
-                  <div class="flex justify-between gap-2">
-                    <span class="text-white font-bold">{{ d.inst_id }}</span>
-                    <span class="text-cyan-400">{{ d.action }}</span>
-                  </div>
-                  <div class="text-[#707E94] flex justify-between gap-2 mt-0.5">
-                    <span>conf {{ fmt(d.confidence, 2) }}</span>
-                    <span>{{ fmtTs(d.timestamp) }}</span>
-                  </div>
-                </li>
-              </ul>
             </div>
-            <div class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
-              <h2 class="text-xs font-semibold text-white mb-3">最近事件</h2>
-              <div v-if="!store.events.length" class="text-xs font-mono text-[#707E94] py-6 text-center border border-dashed border-[#1A2232] rounded-lg">
-                No ledger events yet
-              </div>
-              <ul v-else class="space-y-2 max-h-72 overflow-y-auto">
-                <li
-                  v-for="(e, i) in store.events.slice(0, 8)"
-                  :key="i"
-                  class="text-xs font-mono border-b border-[#1A2232]/60 pb-2 text-[#A8B3C7]"
-                >
-                  <pre class="whitespace-pre-wrap break-all">{{ JSON.stringify(e) }}</pre>
-                </li>
-              </ul>
-            </div>
-          </div>            </div>
           </details>
 
         </div>
 
         <!-- POSITIONS -->
-        <div v-show="store.activeTab === 'positions'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+        <div v-if="store.activeTab === 'positions'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
           <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <h2 class="text-sm font-mono font-bold text-white">
-              Positions
-              <span class="text-[#707E94] font-normal">({{ store.filteredPositions.length }}/{{ store.positionCount }} · {{ store.positionsSource || '—' }})</span>
+            <h2 class="text-sm font-semibold text-white">
+              持仓
+              <span class="text-[#707E94] font-normal">({{ store.filteredPositions.length }}/{{ store.positionCount }} · {{ exchangeModeZh(store.positionsSource) }})</span>
             </h2>
-            <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
-              <span class="text-[#707E94]">Instrument</span>
+            <label class="flex items-center gap-2 text-xs text-[#A8B3C7]">
+              <span class="text-[#707E94]">品种</span>
               <select
                 class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
                 :value="store.positionInstFilter"
@@ -1947,37 +2087,37 @@ const configStrip = computed(() => {
               </select>
             </label>
           </div>
-          <div v-if="!store.positions.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
-            No open positions
+          <div v-if="!store.positions.length" class="py-10 text-center text-xs text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
+            暂无持仓
           </div>
           <div
             v-else-if="!store.filteredPositions.length"
-            class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg"
+            class="py-10 text-center text-xs text-[#707E94] border border-dashed border-[#1A2232] rounded-lg"
           >
-            Empty — no positions for {{ store.positionInstFilter }}
+            没有 {{ shortInstLabel(store.positionInstFilter) }} 的持仓
           </div>
           <div v-else class="overflow-x-auto">
-            <table class="w-full text-left text-xs font-mono">
+            <table class="w-full text-left text-xs">
               <thead>
                 <tr class="text-[#707E94] border-b border-[#1A2232]">
-                  <th class="pb-2 pr-3">Instrument</th>
-                  <th class="pb-2 pr-3">Side</th>
-                  <th class="pb-2 pr-3">Size</th>
-                  <th class="pb-2 pr-3">Lev</th>
-                  <th class="pb-2 pr-3">Avg</th>
-                  <th class="pb-2 pr-3">Mark</th>
-                  <th class="pb-2 pr-3">Margin</th>
-                  <th class="pb-2 text-right">UPL</th>
+                  <th class="pb-2 pr-3">品种</th>
+                  <th class="pb-2 pr-3">方向</th>
+                  <th class="pb-2 pr-3">数量</th>
+                  <th class="pb-2 pr-3">杠杆</th>
+                  <th class="pb-2 pr-3">均价</th>
+                  <th class="pb-2 pr-3">标记价</th>
+                  <th class="pb-2 pr-3">保证金</th>
+                  <th class="pb-2 text-right">未实现盈亏</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
                 <tr v-for="p in store.filteredPositions" :key="p.inst_id + p.side" class="hover:bg-[#121824]/50">
-                  <td class="py-2.5 pr-3 text-white font-bold">{{ p.inst_id }}</td>
+                  <td class="py-2.5 pr-3 text-white font-bold" :title="p.inst_id">{{ shortInstLabel(p.inst_id) }}</td>
                   <td class="py-2.5 pr-3">
                     <span
                       class="px-1.5 py-0.5 rounded text-[10px] font-extrabold"
                       :class="p.side === 'long' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'"
-                    >{{ p.side }}</span>
+                    >{{ sideZh(p.side) }}</span>
                   </td>
                   <td class="py-2.5 pr-3 text-zinc-300">{{ fmt(p.size, 4) }}</td>
                   <td class="py-2.5 pr-3 text-zinc-300">{{ fmt(p.leverage, 0) }}x</td>
@@ -1998,14 +2138,14 @@ const configStrip = computed(() => {
         </div>
 
         <!-- DECISIONS -->
-        <div v-show="store.activeTab === 'decisions'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+        <div v-if="store.activeTab === 'decisions'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
           <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <h2 class="text-sm font-mono font-bold text-white">
-              Decisions (ledger)
-              <span class="text-[#707E94] font-normal">({{ store.decisionsTabRows.length }})</span>
+            <h2 class="text-sm font-semibold text-white">
+              决策
+              <span class="text-[#707E94] font-normal">({{ store.decisionsTabRows.length }}{{ store.decisionInstFilter ? '' : ' · 观察列表' }})</span>
             </h2>
-            <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
-              <span class="text-[#707E94]">Instrument</span>
+            <label class="flex items-center gap-2 text-xs text-[#A8B3C7]">
+              <span class="text-[#707E94]">品种</span>
               <select
                 class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
                 :value="store.decisionInstFilter"
@@ -2019,35 +2159,35 @@ const configStrip = computed(() => {
               </select>
             </label>
           </div>
-          <div v-if="!store.decisionsTabRows.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
-            Empty — {{ store.decisionInstFilter ? `no decisions for ${store.decisionInstFilter}` : 'worker has not written decisions yet' }}
+          <div v-if="!store.decisionsTabRows.length" class="py-10 text-center text-xs text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
+            {{ store.decisionInstFilter ? `没有 ${shortInstLabel(store.decisionInstFilter)} 的决策` : '还没有决策记录' }}
           </div>
           <div v-else class="overflow-x-auto">
-            <table class="w-full text-left text-xs font-mono">
+            <table class="w-full text-left text-xs">
               <thead>
                 <tr class="text-[#707E94] border-b border-[#1A2232]">
-                  <th class="pb-2 pr-3">Time</th>
-                  <th class="pb-2 pr-3">Inst</th>
-                  <th class="pb-2 pr-3">Action</th>
-                  <th class="pb-2 pr-3">Policy</th>
-                  <th class="pb-2 pr-3">Conf</th>
-                  <th class="pb-2 pr-3">Entry</th>
-                  <th class="pb-2">Reason</th>
+                  <th class="pb-2 pr-3">时间</th>
+                  <th class="pb-2 pr-3">品种</th>
+                  <th class="pb-2 pr-3">动作</th>
+                  <th class="pb-2 pr-3">策略</th>
+                  <th class="pb-2 pr-3">置信</th>
+                  <th class="pb-2 pr-3">入场</th>
+                  <th class="pb-2">理由</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
                 <tr v-for="d in store.decisionsTabRows" :key="String(d.id)">
                   <td class="py-2 pr-3 text-[#707E94] whitespace-nowrap">{{ fmtTs(d.timestamp) }}</td>
-                  <td class="py-2 pr-3 text-white">{{ d.inst_id }}</td>
-                  <td class="py-2 pr-3 text-cyan-400">{{ d.action }}</td>
+                  <td class="py-2 pr-3 text-white font-semibold" :title="d.inst_id">{{ shortInstLabel(d.inst_id) }}</td>
+                  <td class="py-2 pr-3 font-semibold whitespace-nowrap" :class="actionClass(d.action)">{{ actionZh(d.action) }}</td>
                   <td
                     class="py-2 pr-3 text-zinc-300 max-w-[9rem] truncate"
                     :title="[d.policy_name || '', modulesPreview(d.prompt_modules)].filter(Boolean).join(' · ')"
-                  >{{ d.policy_name || '—' }}<span v-if="modulesPreview(d.prompt_modules)" class="text-[#707E94]"> · {{ modulesPreview(d.prompt_modules) }}</span></td>
-                  <td class="py-2 pr-3">{{ fmt(d.confidence, 2) }}</td>
+                  >{{ policyZh(d.policy_name) }}<span v-if="modulesPreview(d.prompt_modules)" class="text-[#707E94]"> · {{ modulesPreview(d.prompt_modules) }}</span></td>
+                  <td class="py-2 pr-3">{{ fmtConfidence(d.confidence) }}</td>
                   <td class="py-2 pr-3">{{ fmt(d.entry_price) }}</td>
                   <td class="py-2 text-zinc-400 max-w-lg whitespace-normal break-words" :title="d.reason">
-                    <div class="line-clamp-2">{{ d.reason || '—' }}</div>
+                    <div class="line-clamp-2">{{ displayReason(d.reason) }}</div>
                     <div
                       v-if="decisionMarketSource(d) || nearSignalNearest(d)"
                       class="mt-1 flex flex-wrap items-center gap-1"
@@ -2067,12 +2207,12 @@ const configStrip = computed(() => {
                             ? 'bg-rose-500/15 text-rose-400 border-rose-500/40'
                             : 'bg-zinc-500/10 text-[#A8B3C7] border-zinc-500/30'"
                         :title="`nearest ${nearSignalNearest(d)}`"
-                      >near {{ nearSignalNearest(d) }}</span>
+                      >近{{ nearSignalNearest(d) === 'long' ? '多' : nearSignalNearest(d) === 'short' ? '空' : nearSignalNearest(d) }}</span>
                       <span
                         v-for="gate in nearSignalMissing(d)"
                         :key="gate"
                         class="inline-flex items-center px-1 py-0.5 rounded text-[10px] font-mono bg-amber-500/10 text-amber-400/90 border border-amber-500/30"
-                        :title="`missing: ${gate}`"
+                        :title="`缺：${gate}`"
                       >{{ gate }}</span>
                     </div>
                   </td>
@@ -2083,14 +2223,14 @@ const configStrip = computed(() => {
         </div>
 
         <!-- TRADES -->
-        <div v-show="store.activeTab === 'trades'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+        <div v-if="store.activeTab === 'trades'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
           <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <h2 class="text-sm font-mono font-bold text-white">
-              Trades (ledger)
+            <h2 class="text-sm font-semibold text-white">
+              成交
               <span class="text-[#707E94] font-normal">({{ store.tradesTabRows.length }})</span>
             </h2>
-            <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
-              <span class="text-[#707E94]">Instrument</span>
+            <label class="flex items-center gap-2 text-xs text-[#A8B3C7]">
+              <span class="text-[#707E94]">品种</span>
               <select
                 class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
                 :value="store.tradeInstFilter"
@@ -2104,28 +2244,28 @@ const configStrip = computed(() => {
               </select>
             </label>
           </div>
-          <div v-if="!store.tradesTabRows.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
-            Empty — {{ store.tradeInstFilter ? `no trades for ${store.tradeInstFilter}` : 'no trades recorded' }}
+          <div v-if="!store.tradesTabRows.length" class="py-10 text-center text-xs text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
+            {{ store.tradeInstFilter ? `没有 ${shortInstLabel(store.tradeInstFilter)} 的成交` : '还没有成交记录' }}
           </div>
           <div v-else class="overflow-x-auto">
-            <table class="w-full text-left text-xs font-mono">
+            <table class="w-full text-left text-xs">
               <thead>
                 <tr class="text-[#707E94] border-b border-[#1A2232]">
-                  <th class="pb-2 pr-3">Time</th>
-                  <th class="pb-2 pr-3">Inst</th>
-                  <th class="pb-2 pr-3">Action</th>
-                  <th class="pb-2 pr-3">Dir</th>
-                  <th class="pb-2 pr-3">Size</th>
-                  <th class="pb-2 pr-3">Price</th>
-                  <th class="pb-2 text-right">PnL</th>
+                  <th class="pb-2 pr-3">时间</th>
+                  <th class="pb-2 pr-3">品种</th>
+                  <th class="pb-2 pr-3">动作</th>
+                  <th class="pb-2 pr-3">方向</th>
+                  <th class="pb-2 pr-3">数量</th>
+                  <th class="pb-2 pr-3">价格</th>
+                  <th class="pb-2 text-right">盈亏</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
                 <tr v-for="t in store.tradesTabRows" :key="String(t.id)">
                   <td class="py-2 pr-3 text-[#707E94] whitespace-nowrap">{{ fmtTs(t.timestamp) }}</td>
-                  <td class="py-2 pr-3 text-white">{{ t.inst_id }}</td>
-                  <td class="py-2 pr-3 text-cyan-400">{{ t.action }}</td>
-                  <td class="py-2 pr-3">{{ t.direction || '—' }}</td>
+                  <td class="py-2 pr-3 text-white font-semibold" :title="t.inst_id">{{ shortInstLabel(t.inst_id) }}</td>
+                  <td class="py-2 pr-3 font-semibold whitespace-nowrap" :class="actionClass(t.action)">{{ actionZh(t.action) }}</td>
+                  <td class="py-2 pr-3">{{ sideZh(t.direction) }}</td>
                   <td class="py-2 pr-3">{{ fmt(t.size, 4) }}</td>
                   <td class="py-2 pr-3">{{ fmt(t.price) }}</td>
                   <td
@@ -2139,15 +2279,15 @@ const configStrip = computed(() => {
         </div>
 
         <!-- EVENTS -->
-        <div v-show="store.activeTab === 'events'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+        <div v-if="store.activeTab === 'events'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
           <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <h2 class="text-sm font-mono font-bold text-white">
-              Ledger events
+            <h2 class="text-sm font-semibold text-white">
+              事件
               <span class="text-[#707E94] font-normal">({{ store.eventsTabRows.length }})</span>
             </h2>
             <div class="flex flex-wrap items-center gap-3">
-              <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
-                <span class="text-[#707E94]">Instrument</span>
+              <label class="flex items-center gap-2 text-xs text-[#A8B3C7]">
+                <span class="text-[#707E94]">品种</span>
                 <select
                   class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
                   :value="store.eventInstFilter"
@@ -2161,7 +2301,7 @@ const configStrip = computed(() => {
                 </select>
               </label>
               <label class="flex items-center gap-2 text-xs font-mono text-[#A8B3C7]">
-                <span class="text-[#707E94]">Type</span>
+                <span class="text-[#707E94]">类型</span>
                 <select
                   class="bg-[#080B10] border border-[#1A2232] rounded-lg px-2 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-cyan-500/50 cursor-pointer"
                   :value="store.eventTypeFilter"
@@ -2176,28 +2316,33 @@ const configStrip = computed(() => {
               </label>
             </div>
           </div>
-          <div v-if="!store.eventsTabRows.length" class="py-10 text-center text-xs font-mono text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
-            Empty — {{ eventsEmptyMessage }}
+          <div v-if="!store.eventsTabRows.length" class="py-10 text-center text-xs text-[#707E94] border border-dashed border-[#1A2232] rounded-lg">
+            {{ eventsEmptyMessage }}
           </div>
           <ul v-else class="space-y-2 max-h-[32rem] overflow-y-auto">
             <li
               v-for="(e, i) in store.eventsTabRows"
-              :key="i"
-              class="text-xs font-mono bg-[#080B10] border border-[#1A2232] rounded-lg px-3 py-2 text-[#A8B3C7]"
+              :key="eventKey(e, i)"
+              class="text-xs bg-[#080B10] border border-[#1A2232] rounded-lg px-3 py-2"
             >
-              <pre class="whitespace-pre-wrap break-all m-0">{{ JSON.stringify(e, null, 2) }}</pre>
+              <div class="flex justify-between gap-2">
+                <span class="text-white font-semibold">{{ eventHeadline(e) }}</span>
+                <span class="text-[#707E94] font-mono shrink-0">{{ fmtTs(e.timestamp) }}</span>
+              </div>
+              <div v-if="eventDetail(e)" class="text-[#A8B3C7] mt-1 line-clamp-3" :title="eventDetail(e)">
+                {{ eventDetail(e) }}
+              </div>
             </li>
           </ul>
         </div>
 
         <!-- FACTORS -->
-        <div v-show="store.activeTab === 'factors'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
+        <div v-if="store.activeTab === 'factors'" class="bg-[#0D121B] border border-[#1A2232] rounded-xl p-4">
           <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <h2 class="text-sm font-mono font-bold text-white">
-              Factors
-              <span class="text-[#707E94] font-normal">/api/v1/factors/&#123;inst_id&#125;</span>
+            <h2 class="text-sm font-semibold text-white">
+              因子
             </h2>
-            <label class="inline-flex items-center gap-2 text-xs font-mono text-[#A8B3C7] cursor-pointer select-none">
+            <label class="inline-flex items-center gap-2 text-xs text-[#A8B3C7] cursor-pointer select-none">
               <input
                 type="checkbox"
                 class="rounded border-[#1A2232] bg-[#080B10] text-cyan-500 focus:ring-cyan-500/40 cursor-pointer"
@@ -2205,27 +2350,26 @@ const configStrip = computed(() => {
                 @change="onFactorsLiveChange"
               />
               <span>实时蜡烛</span>
-              <span class="text-[#707E94]">(live candles)</span>
             </label>
           </div>
           <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs font-mono">
+            <table class="w-full text-left text-xs">
               <thead>
                 <tr class="text-[#707E94] border-b border-[#1A2232]">
-                  <th class="pb-2 pr-3">Inst</th>
-                  <th class="pb-2 pr-3">Src</th>
-                  <th class="pb-2 pr-3">Price</th>
+                  <th class="pb-2 pr-3">品种</th>
+                  <th class="pb-2 pr-3">来源</th>
+                  <th class="pb-2 pr-3">价格</th>
                   <th class="pb-2 pr-3">RSI14</th>
                   <th class="pb-2 pr-3">EMA9</th>
                   <th class="pb-2 pr-3">EMA21</th>
-                  <th class="pb-2 pr-3">VolΔ</th>
-                  <th class="pb-2 pr-3">MACD hist</th>
-                  <th class="pb-2">Trends 15m/1h/4h</th>
+                  <th class="pb-2 pr-3">量比</th>
+                  <th class="pb-2 pr-3">MACD柱</th>
+                  <th class="pb-2">趋势 15m/1h/4h</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
                 <tr v-for="row in factorRows" :key="row.instId">
-                  <td class="py-2 pr-3 text-white font-bold">{{ row.instId }}</td>
+                  <td class="py-2 pr-3 text-white font-bold" :title="row.instId">{{ shortInstLabel(row.instId) }}</td>
                   <td class="py-2 pr-3">
                     <span
                       class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
@@ -2240,12 +2384,12 @@ const configStrip = computed(() => {
                   <td class="py-2 pr-3">{{ fmt(row.f?.volume_ratio, 2) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.macd?.histogram) }}</td>
                   <td class="py-2">
-                    <span v-if="row.loading" class="text-cyan-400/80">loading…</span>
+                    <span v-if="row.loading && !row.f" class="text-cyan-400/80">加载中…</span>
                     <span
                       v-else-if="row.error"
                       class="text-amber-400/90 truncate max-w-[14rem] inline-block align-bottom"
                       :title="row.error"
-                    >err: {{ row.error }}</span>
+                    >行情失败</span>
                     <span
                       v-else
                       class="inline-flex items-center gap-1 flex-wrap"
@@ -2265,8 +2409,8 @@ const configStrip = computed(() => {
     </main>
 
     <footer class="border-t border-[#1A2232] bg-[#0A0D14] py-3 text-center text-[10px] font-mono text-[#707E94]">
-      Keel Trader · Phase U2 monitor · binds to /health + /api/v1/* only ·
-      <a href="/docs" class="text-cyan-500/80 hover:text-cyan-400">API docs</a>
+      Keel Trader · 界面只读 ·
+      <a href="/docs" class="text-cyan-500/80 hover:text-cyan-400">API 文档</a>
     </footer>
   </div>
 </template>

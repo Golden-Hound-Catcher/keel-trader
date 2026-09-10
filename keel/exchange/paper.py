@@ -11,6 +11,7 @@ import threading
 from typing import Literal
 from dataclasses import replace
 
+from keel.domain.instruments import contract_face_usdt, lookup_instrument
 from keel.exchange.protocol import (
     ExchangeProtocol,
     Position,
@@ -147,7 +148,7 @@ class PaperAdapter:
                 del self._positions[pos_key]
             else:
                 leverage = 3.0
-                margin = (request.size * fill_price) / leverage
+                margin = self._notional(request.inst_id, request.size, fill_price) / leverage
                 if margin > self._available:
                     return OrderResult(success=False, error="Insufficient margin")
 
@@ -206,12 +207,16 @@ class PaperAdapter:
             )
         )
 
+    def _notional(self, inst_id: str, size: float, price: float) -> float:
+        return float(size) * contract_face_usdt(price, lookup_instrument(inst_id))
+
     def _calculate_pnl(self, position: Position, exit_price: float) -> float:
-        """Calculate PnL for closing a position."""
-        if position.side == "long":
-            return (exit_price - position.avg_price) * position.size
-        else:
-            return (position.avg_price - exit_price) * position.size
+        """Calculate PnL for closing a position (size is contract count)."""
+        cv = lookup_instrument(position.inst_id).contract_value or 1.0
+        signed = (exit_price - position.avg_price) * position.size * cv
+        if position.side == "short":
+            signed = -signed
+        return signed
 
     def update_mark_prices(self) -> None:
         """Update position mark prices from current tickers."""

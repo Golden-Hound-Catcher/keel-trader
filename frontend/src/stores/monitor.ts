@@ -76,6 +76,7 @@ export const useMonitorStore = defineStore('monitor', () => {
   const isConnected = ref(false)
   const pollingTimer = ref<ReturnType<typeof setInterval> | null>(null)
   const activeTab = ref<'overview' | 'positions' | 'decisions' | 'trades' | 'events' | 'factors'>('overview')
+  let fetchInFlight = false
 
   const positionCount = computed(() => positions.value.length)
   /** Positions rows after client-side instrument filter (empty filter = all). */
@@ -84,28 +85,42 @@ export const useMonitorStore = defineStore('monitor', () => {
     if (!f) return positions.value
     return positions.value.filter((p) => p.inst_id === f)
   })
-  /** Decisions tab binding: filtered when inst filter set, else unfiltered. */
-  const decisionsTabRows = computed(() =>
-    decisionInstFilter.value ? decisionsFiltered.value : decisions.value,
-  )
-  /** Trades tab binding: filtered when inst filter set, else unfiltered. */
-  const tradesTabRows = computed(() =>
-    tradeInstFilter.value ? tradesFiltered.value : trades.value,
-  )
-  /** Events tab binding: filtered when any event filter set, else unfiltered. */
-  const eventsTabRows = computed(() =>
-    eventInstFilter.value || eventTypeFilter.value ? eventsFiltered.value : events.value,
-  )
+  /** Decisions tab: explicit inst filter, else current watchlist only. */
+  const decisionsTabRows = computed(() => {
+    if (decisionInstFilter.value) return decisionsFiltered.value
+    const allow = new Set(watchlist.value)
+    if (!allow.size) return decisions.value
+    return decisions.value.filter((d) => allow.has(d.inst_id))
+  })
+  /** Trades tab: explicit inst filter, else current watchlist only. */
+  const tradesTabRows = computed(() => {
+    if (tradeInstFilter.value) return tradesFiltered.value
+    const allow = new Set(watchlist.value)
+    if (!allow.size) return trades.value
+    return trades.value.filter((t) => allow.has(t.inst_id))
+  })
+  /** Events tab: explicit filters, else drop non-watchlist instrument events. */
+  const eventsTabRows = computed(() => {
+    if (eventInstFilter.value || eventTypeFilter.value) return eventsFiltered.value
+    const allow = new Set(watchlist.value)
+    if (!allow.size) return events.value
+    return events.value.filter((e) => {
+      const inst = typeof e.inst_id === 'string' ? e.inst_id : ''
+      return !inst || allow.has(inst)
+    })
+  })
   const uptimeLabel = computed(() => {
     const s = status.value?.uptime_seconds ?? 0
     if (s < 60) return `${s}s`
-    if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
+    if (s < 3600) return `${Math.floor(s / 60)}m`
     const h = Math.floor(s / 3600)
     const m = Math.floor((s % 3600) / 60)
-    return `${h}h ${m}m`
+    return m ? `${h}h ${m}m` : `${h}h`
   })
 
   async function fetchAll(silent = false) {
+    if (fetchInFlight) return
+    fetchInFlight = true
     if (!silent) isRefreshing.value = true
     loading.value = !silent && !lastUpdated.value
     const errors: string[] = []
@@ -136,7 +151,10 @@ export const useMonitorStore = defineStore('monitor', () => {
       if (cfg.status === 'fulfilled') {
         config.value = cfg.value
         if (Array.isArray(cfg.value.instruments) && cfg.value.instruments.length) {
-          watchlist.value = [...cfg.value.instruments]
+          const next = cfg.value.instruments
+          if (next.join('\0') !== watchlist.value.join('\0')) {
+            watchlist.value = [...next]
+          }
         }
       } else {
         errors.push(`config: ${cfg.reason?.message || cfg.reason}`)
@@ -164,37 +182,16 @@ export const useMonitorStore = defineStore('monitor', () => {
       if (ev.status === 'fulfilled') events.value = ev.value.events || []
       else errors.push(`events: ${ev.reason?.message || ev.reason}`)
 
-      // Soft-fail: decision stats card (endpoint may be absent on older APIs)
-      try {
-        const stats = await keelFetch<KeelDecisionStats>('/api/v1/stats/decisions?hours=24')
-        decisionStats.value = stats
-      } catch {
-        decisionStats.value = null
-      }
-
-      // Soft-fail: shadow_fill rehearsal counts (Q2)
-      try {
-        const shadow = await keelFetch<KeelShadowStats>('/api/v1/stats/shadow?hours=24')
-        shadowStats.value = shadow
-      } catch {
-        shadowStats.value = null
-      }
-
-      // Soft-fail: near-signal radar (Q0 observation)
-      try {
-        const radar = await keelFetch<KeelNearestSignals>('/api/v1/signals/nearest?hours=24')
-        nearestSignals.value = radar
-      } catch {
-        nearestSignals.value = null
-      }
-
-      // Soft-fail: observation quality scorecard (Q2.2)
-      try {
-        const quality = await keelFetch<KeelQualityStats>('/api/v1/stats/quality?hours=24')
-        qualityStats.value = quality
-      } catch {
-        qualityStats.value = null
-      }
+      const extras = await Promise.allSettled([
+        keelFetch<KeelDecisionStats>('/api/v1/stats/decisions?hours=24'),
+        keelFetch<KeelShadowStats>('/api/v1/stats/shadow?hours=24'),
+        keelFetch<KeelNearestSignals>('/api/v1/signals/nearest?hours=24'),
+        keelFetch<KeelQualityStats>('/api/v1/stats/quality?hours=24'),
+      ])
+      decisionStats.value = extras[0].status === 'fulfilled' ? extras[0].value : null
+      shadowStats.value = extras[1].status === 'fulfilled' ? extras[1].value : null
+      nearestSignals.value = extras[2].status === 'fulfilled' ? extras[2].value : null
+      qualityStats.value = extras[3].status === 'fulfilled' ? extras[3].value : null
 
       // Refresh tab-only filtered lists without touching Overview unfiltered refs
       const filteredRefresh = await Promise.allSettled([
@@ -214,20 +211,22 @@ export const useMonitorStore = defineStore('monitor', () => {
       // Factors per instrument (best-effort; per-inst loading/error; do not block poll)
       await fetchFactors()
 
-      // Connected if core health+status work
       isConnected.value = h.status === 'fulfilled' && st.status === 'fulfilled'
       lastUpdated.value = new Date()
-      error.value = errors.length ? errors.join(' | ') : null
+      if (errors.length) {
+        if (!silent) error.value = errors.join(' | ')
+      } else {
+        error.value = null
+      }
     } catch (err: any) {
       console.error('[MonitorStore] fetch failed:', err)
       error.value = err.message || 'Failed to fetch Keel API'
       isConnected.value = false
     } finally {
+      fetchInFlight = false
       loading.value = false
       if (!silent) {
-        setTimeout(() => {
-          isRefreshing.value = false
-        }, 400)
+        isRefreshing.value = false
       }
     }
   }
@@ -236,8 +235,13 @@ export const useMonitorStore = defineStore('monitor', () => {
     const ids = watchlist.value
     const liveQ = factorsLive.value ? '?live=1' : ''
     const loadingNext: Record<string, boolean> = { ...factorLoading.value }
-    for (const id of ids) loadingNext[id] = true
-    factorLoading.value = loadingNext
+    let marked = false
+    for (const id of ids) {
+      if (factors.value[id]) continue
+      loadingNext[id] = true
+      marked = true
+    }
+    if (marked) factorLoading.value = loadingNext
 
     const factorEntries = await Promise.allSettled(
       ids.map((instId) =>

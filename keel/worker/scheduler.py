@@ -11,11 +11,16 @@ Design principles:
 """
 from __future__ import annotations
 
-import fcntl
+import os
 import subprocess
 import sys
 import threading
 import time
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -97,13 +102,25 @@ class KeelScheduler:
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._lock_file = open(self._lock_path, "a+")
         try:
-            fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self._lock_file.seek(0)
-            self._lock_file.truncate()
-            self._lock_file.write(f"{time.time()}\n")
-            self._lock_file.flush()
+            if os.name == "nt":
+                self._lock_file.seek(0)
+                if self._lock_file.read(1) == "":
+                    self._lock_file.write("0")
+                    self._lock_file.flush()
+                self._lock_file.seek(0)
+                msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                # Avoid truncate() on a locked byte (msvcrt).
+                self._lock_file.seek(0)
+                self._lock_file.write(f"{time.time()}\n")
+                self._lock_file.flush()
+            else:
+                fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._lock_file.seek(0)
+                self._lock_file.truncate()
+                self._lock_file.write(f"{time.time()}\n")
+                self._lock_file.flush()
             return True
-        except BlockingIOError:
+        except (BlockingIOError, OSError):
             self._lock_file.close()
             self._lock_file = None
             return False
@@ -112,7 +129,11 @@ class KeelScheduler:
         """Release the scheduler lock."""
         if self._lock_file:
             try:
-                fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
+                if os.name == "nt":
+                    self._lock_file.seek(0)
+                    msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
                 self._lock_file.close()
             except Exception:
                 pass

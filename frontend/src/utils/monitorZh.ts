@@ -21,6 +21,7 @@ const BLOCKER_ZH: Record<string, string> = {
 /** Prefix / substring patterns for dynamic blocker strings. */
 const BLOCKER_PATTERNS: Array<{ test: RegExp; zh: string }> = [
   { test: /^okx_environment must be/i, zh: 'OKX 环境须为 live 或 demo' },
+  { test: /okx_environment=demo/i, zh: '当前是模拟盘，切实盘需改环境' },
   { test: /okx_capability/i, zh: 'OKX 能力未就绪' },
   { test: /shadow_fill rehearsal/i, zh: '缺少近期影子排练' },
   { test: /markout/i, zh: '标记收益未达标' },
@@ -98,81 +99,186 @@ function primaryBlockerOf(input: StatusHeroInput): string | null {
   return blockerToZh(pool[0])
 }
 
+export function envZh(raw: unknown): string {
+  const e = String(raw || '').trim().toLowerCase()
+  if (e === 'demo') return '模拟盘'
+  if (e === 'live') return '实盘'
+  if (e === 'paper') return '本地模拟'
+  return String(raw || '—') || '—'
+}
+
+export function policyZh(raw: unknown): string {
+  const p = String(raw || '').trim().toLowerCase()
+  if (p === 'llm') return 'LLM'
+  if (p === 'rule' || p === 'rules') return '规则'
+  if (p === 'stub') return '占位'
+  return String(raw || '—') || '—'
+}
+
+export function exchangeModeZh(raw: unknown): string {
+  const m = String(raw || '').trim().toLowerCase()
+  if (m.includes('okx')) return '欧易'
+  if (m.includes('paper')) return '本地模拟'
+  return String(raw || '—') || '—'
+}
+
+export function marketSourceZh(raw: unknown): string {
+  const s = String(raw || '').trim().toLowerCase()
+  if (s === 'okx_public' || s === 'okx') return '欧易行情'
+  if (s === 'synthetic' || s.startsWith('synthetic')) return '合成行情'
+  if (s === 'ledger') return '账本'
+  if (s === 'mixed') return '混合'
+  return String(raw || '—') || '—'
+}
+
+export function actionZh(action: string | undefined | null): string {
+  const a = String(action || '').toUpperCase()
+  if (a === 'BUY_LONG') return '做多'
+  if (a === 'SELL_SHORT') return '做空'
+  if (a === 'WAIT') return '观望'
+  if (a === 'CLOSE' || a === 'CLOSE_LONG' || a === 'CLOSE_SHORT') return '平仓'
+  if (a === 'OPEN') return '开仓'
+  if (a === 'BUY') return '买入'
+  if (a === 'SELL') return '卖出'
+  return action || '—'
+}
+
+export function sideZh(side: string | undefined | null): string {
+  const s = String(side || '').toLowerCase()
+  if (s === 'long') return '多'
+  if (s === 'short') return '空'
+  if (s === 'net') return '净'
+  return side || '—'
+}
+
+const MISSING_GATE_ZH: Record<string, string> = {
+  volume_ok: '量能',
+  rsi_ok: 'RSI',
+  macd_ok: 'MACD',
+  trend_ok: '趋势',
+  rr_ok: '盈亏比',
+  risk_ok: '风控',
+  atr_ok: 'ATR',
+  alignment_ok: '多周期同向',
+  edge_ok: '边际不足',
+}
+
+export function missingGateZh(raw: unknown): string {
+  const g = String(raw || '').trim()
+  if (!g) return ''
+  if (MISSING_GATE_ZH[g]) return MISSING_GATE_ZH[g]
+  return g.replace(/_ok$/, '').replace(/_/g, ' ')
+}
+
+export function radarNearestLabel(nearest: string | null | undefined, action: string): string {
+  const a = (action || '').toUpperCase()
+  if (a === 'BUY_LONG') return '已做多'
+  if (a === 'SELL_SHORT') return '已做空'
+  const n = (nearest || 'none').toLowerCase()
+  if (n === 'long') return '近多'
+  if (n === 'short') return '近空'
+  return '观望'
+}
+
+export function fmtConfidence(v: unknown): string {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''))
+  if (!Number.isFinite(n)) return '—'
+  const pct = n <= 1 ? n * 100 : n
+  return `${pct.toFixed(0)}%`
+}
+
+/** System / infra errors → 中文；模型论述原文保留。 */
+export function humanizeError(raw: unknown): string {
+  const s = String(raw || '').replace(/\s+/g, ' ').trim()
+  if (!s) return ''
+  if (/empty content|content was null/i.test(s)) return '模型返回空正文'
+  if (/JSON parse error/i.test(s)) return '模型输出不是 JSON，本轮已改 WAIT'
+  if (/\b429\b|rate-limited|rate limit/i.test(s)) return 'LLM 限流，下一轮会重试'
+  if (/JSON parse error|Expecting value: line/i.test(s)) return '模型返回无法解析的 JSON'
+  if (/llm unavailable/i.test(s)) return '模型暂时不可用'
+  if (/简易模式|acctLv=1/i.test(s)) return '欧易账户仍是简易模式，无法下永续'
+  if (/All operations failed/i.test(s)) return '欧易拒单（账户模式或字段）'
+  if (/'NoneType' object has no attribute 'strip'/i.test(s)) return '模型返回格式无法解析'
+  if (/Risk:reward .+ below minimum/i.test(s)) return '盈亏比未达下限'
+  if (s.length > 96) return `${s.slice(0, 93)}…`
+  return s
+}
+
+export function displayReason(raw: unknown): string {
+  return humanizeError(raw) || '—'
+}
+
 /**
- * One calm answer to "can we trade / what are we waiting on?".
+ * One calm answer to "are we trading, rehearsing, or frozen?".
+ * Demo with kill off is live-sim trading — not an "arming" story.
  */
 export function buildStatusHero(input: StatusHeroInput): StatusHeroModel {
-  const env = (input.environment || '—').toLowerCase()
-  const policy = input.policy || '—'
+  const env = envZh(input.environment)
+  const policy = policyZh(input.policy)
   const primary = primaryBlockerOf(input)
+  const tradingNow = !input.killSwitch && !input.shadowMode
+  const envKey = (input.environment || '').toLowerCase()
 
   let headline = '运行中'
   let tone: StatusHeroTone = 'zinc'
+  let orderLine = '待命'
 
-  const waitingEcon =
-    input.economicEnabled
-    && input.economicPassed === false
-    && (input.armingBlockers || []).some((b) =>
-      /markout|win_rate|full_gate|sample|经济|insufficient/i.test(String(b)),
-    )
-
-  if (input.firstLiveAllowed && !input.killSwitch) {
-    headline = '可开最小实盘'
-    tone = 'emerald'
-  } else if (input.workerStale) {
-    headline = 'Worker 可能停滞'
+  if (input.workerStale) {
+    headline = '调度可能停滞'
     tone = 'amber'
-  } else if (waitingEcon || (input.killSwitch && primary && /样本|胜率|回报|满门/.test(primary))) {
-    headline = '等待经济样本'
-    tone = 'amber'
-  } else if (input.killSwitch && input.armingReady) {
-    headline = '可武装 · 杀开关仍开'
-    tone = 'sky'
-  } else if (input.killSwitch && input.shadowMode) {
-    headline = '观测中 · 不可实盘'
-    tone = 'violet'
+    orderLine = '周期过久未完成'
   } else if (input.killSwitch) {
-    headline = '杀开关开启 · 不可实盘'
+    headline = '熔断中 · 不会下单'
     tone = 'rose'
+    orderLine = '杀开关开启'
   } else if (input.shadowMode) {
-    headline = '影子模式 · 无真实下单'
+    headline = '影子排练 · 不会真实下单'
     tone = 'violet'
-  } else {
-    headline = '运行中 · 留意风控'
+    orderLine = input.nearProbe ? '只记影子成交（含近探）' : '只记影子成交'
+  } else if (envKey === 'demo') {
+    headline = '模拟盘交易中'
     tone = 'emerald'
+    orderLine = '会向欧易模拟盘下单'
+  } else if (envKey === 'live') {
+    headline = '实盘交易中'
+    tone = 'rose'
+    orderLine = '会向欧易实盘下单'
+  } else if (envKey === 'paper') {
+    headline = '本地模拟中'
+    tone = 'sky'
+    orderLine = '不连接交易所'
+  } else {
+    headline = '运行中'
+    tone = 'emerald'
+    orderLine = '请核对环境'
   }
 
-  const canArmLabel = input.armingReady ? '可以武装' : '暂不可武装'
+  const lines: StatusHeroModel['lines'] = [
+    { label: '盘口', value: env },
+    { label: '策略', value: policy },
+    { label: '下单', value: orderLine, emphasize: tradingNow || input.killSwitch },
+  ]
+  if (input.killSwitch) {
+    lines.push({ label: '熔断', value: '开', emphasize: true })
+  }
+  if (input.shadowMode) {
+    lines.push({ label: '影子', value: input.nearProbe ? '开 · 近探' : '开', emphasize: true })
+  }
+  if (!tradingNow && primary) {
+    lines.push({ label: '阻断', value: primary, emphasize: true })
+  }
+
+  const canArmLabel = tradingNow
+    ? (envKey === 'demo' ? '模拟盘已在交易' : '已在交易')
+    : input.armingReady
+      ? '清单已绿，仍未开盘'
+      : '暂未开盘'
 
   return {
     headline,
     tone,
-    lines: [
-      { label: '环境', value: env || '—' },
-      { label: '策略', value: policy },
-      {
-        label: '杀开关',
-        value: input.killSwitch ? '开（冻结实盘）' : '关',
-        emphasize: input.killSwitch,
-      },
-      {
-        label: '影子模式',
-        value: input.shadowMode ? '开（只记影子成交）' : '关',
-        emphasize: input.shadowMode,
-      },
-      {
-        label: '近探',
-        value: input.nearProbe ? '开（近信号排练）' : '关',
-        emphasize: input.nearProbe,
-      },
-      { label: '可否武装', value: canArmLabel, emphasize: !input.armingReady },
-      {
-        label: '首要阻断',
-        value: primary || (input.armingReady ? '无' : '—'),
-        emphasize: Boolean(primary),
-      },
-    ],
-    primaryBlocker: primary,
+    lines,
+    primaryBlocker: tradingNow ? null : primary,
     canArmLabel,
   }
 }

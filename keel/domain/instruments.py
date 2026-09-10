@@ -136,3 +136,19 @@ class InstrumentPool:
 
     def __iter__(self):
         return iter(self._instruments.values())
+
+
+def lookup_instrument(inst_id: str) -> Instrument:
+    """Resolve contract specs; unknown ids fall back to 1.0 face value."""
+    known = {item.inst_id: item for item in DEFAULT_CRYPTO_INSTRUMENTS}
+    return known.get(inst_id) or Instrument.from_okx_swap(inst_id)
+
+
+def contract_face_usdt(price: float, instrument: Instrument) -> float:
+    """USDT notional of one contract at ``price``."""
+    cv = instrument.contract_value if instrument.contract_value > 0 else 1.0
+    return max(float(price), 0.0) * cv
+
+
+def notional_from_size(size: float, price: float, instrument: Instrument) -> float:
+    return float(size) * contract_face_usdt(price, instrument)

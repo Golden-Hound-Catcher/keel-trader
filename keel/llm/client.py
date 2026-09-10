@@ -6,6 +6,7 @@ Supports strict JSON schema output for reliable parsing.
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 import urllib.error
 from dataclasses import dataclass, field
@@ -76,14 +77,18 @@ class LLMClient:
         base_url: str | None = None,
         api_key: str | None = None,
         model: str | None = None,
-        reasoning_effort: str = "high",
+        reasoning_effort: str | None = None,
         timeout: float = 60.0,
+        json_object: bool | None = None,
     ):
         settings = get_settings()
         self._base_url = (base_url or settings.llm_base_url).rstrip("/")
         self._api_key = api_key or settings.llm_api_key
         self._model = model or settings.llm_model
-        self._reasoning_effort = reasoning_effort
+        self._reasoning_effort = (
+            reasoning_effort if reasoning_effort is not None else settings.llm_reasoning_effort
+        )
+        self._json_object = settings.llm_json_object if json_object is None else json_object
         self._timeout = timeout
 
     def request_decisions(
@@ -115,12 +120,11 @@ class LLMClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"},
+            "temperature": 0.7,
         }
-
-        if self._reasoning_effort not in ("none", "auto"):
-            payload["reasoning_effort"] = self._reasoning_effort
+        if self._json_object:
+            payload["response_format"] = {"type": "json_object"}
+        self._apply_reasoning(payload)
 
         try:
             req = urllib.request.Request(
@@ -138,12 +142,36 @@ class LLMClient:
                 result = json.loads(resp.read().decode("utf-8"))
 
             latency = int((time.time() - start) * 1000)
-            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            usage = result.get("usage", {})
+            choice = (result.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            raw_text = _extract_message_text(message)
+            usage = result.get("usage") or {}
+            if not raw_text:
+                return LLMResponse(
+                    success=False,
+                    error="LLM returned empty content (content was null; no reasoning text)",
+                    latency_ms=latency,
+                    model=self._model,
+                    usage=usage,
+                )
 
-            content = self._clean_json(content)
+            content = self._clean_json(raw_text)
+            if not _is_decision_payload(content):
+                preview = _preview_text(raw_text)
+                finish = str(choice.get("finish_reason") or "")
+                extra = f" finish_reason={finish}" if finish else ""
+                body = "empty body" if not (content or "").strip() else "non-JSON body"
+                return LLMResponse(
+                    success=False,
+                    raw_content=raw_text,
+                    error=f"JSON parse error: {body}{extra}"
+                    + (f" preview={preview!r}" if preview else ""),
+                    latency_ms=latency,
+                    model=self._model,
+                    usage=usage,
+                )
+
             decisions = self._parse_decisions(content, instrument_ids)
-
             return LLMResponse(
                 success=True,
                 raw_content=content,
@@ -168,16 +196,28 @@ class LLMClient:
                 latency_ms=int((time.time() - start) * 1000),
             )
 
+    def _apply_reasoning(self, payload: dict[str, Any]) -> None:
+        """Disable or set reasoning. Ling defaults to thinking if this is omitted."""
+        effort = (self._reasoning_effort or "").strip().lower()
+        openrouter = "openrouter.ai" in (self._base_url or "").lower()
+        if effort in ("none", "off", "false", "0"):
+            if openrouter:
+                payload["reasoning"] = {"enabled": False, "effort": "none"}
+            return
+        if effort and effort != "auto":
+            payload["reasoning_effort"] = effort
+            if openrouter:
+                payload["reasoning"] = {"effort": effort}
+
     def _clean_json(self, content: str) -> str:
-        """Clean JSON from markdown code blocks."""
-        content = content.strip()
-        if content.startswith("```json"):
-            content = content[7:]
-        if content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        return content.strip()
+        """Clean JSON from markdown code blocks / surrounding reasoning prose."""
+        text = _THINK_TAG_RE.sub(" ", content or "")
+        text = text.replace("```json", " ").replace("```JSON", " ").replace("```", " ")
+        text = text.strip()
+        if not text:
+            return ""
+        extracted = _extract_json_object(text)
+        return extracted if extracted is not None else text
 
     def _extract_macro(self, content: str) -> str:
         """Extract macro assessment from response."""
@@ -198,6 +238,8 @@ class LLMClient:
         try:
             data = json.loads(content)
             raw_decisions = data.get("decisions", {})
+            if not isinstance(raw_decisions, dict):
+                raw_decisions = {}
 
             for inst_id in instrument_ids:
                 raw = raw_decisions.get(inst_id, {})
@@ -255,3 +297,80 @@ class LLMClient:
             return result
         except (TypeError, ValueError):
             return default
+
+
+def _is_decision_payload(content: str) -> bool:
+    try:
+        data = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict)
+
+
+def _preview_text(text: str, limit: int = 160) -> str:
+    return " ".join((text or "").split())[:limit]
+
+
+_THINK_TAG_RE = re.compile(
+    r"<(think|thinking|reasoning)>\s*.*?</\1>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _append_text(chunks: list[str], value: Any) -> None:
+    if isinstance(value, str):
+        text = value.strip()
+        if text and text not in chunks:
+            chunks.append(text)
+        return
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str):
+                _append_text(chunks, item)
+            elif isinstance(item, dict):
+                _append_text(chunks, item.get("text") or item.get("content"))
+        return
+    if isinstance(value, dict):
+        for key in ("content", "text", "summary"):
+            _append_text(chunks, value.get(key))
+
+
+def _extract_json_object(text: str) -> str | None:
+    """Return the first JSON object, preferring one that contains ``decisions``."""
+    decoder = json.JSONDecoder()
+    chosen: str | None = None
+    fallback: str | None = None
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            i += 1
+            continue
+        if isinstance(obj, dict):
+            dumped = json.dumps(obj, ensure_ascii=False)
+            if "decisions" in obj:
+                chosen = dumped
+            elif fallback is None:
+                fallback = dumped
+        i = max(end, i + 1)
+    return chosen if chosen is not None else fallback
+
+
+def _extract_message_text(message: dict[str, Any] | None) -> str:
+    """
+    OpenAI-compatible assistants may set ``content`` to null and put text in
+    ``reasoning`` / ``reasoning_content``, or return content as a list of parts.
+    Collect every text field so thinking-only ``content`` cannot hide JSON.
+    """
+    if not isinstance(message, dict):
+        return ""
+    chunks: list[str] = []
+    _append_text(chunks, message.get("content"))
+    for key in ("reasoning_content", "reasoning"):
+        _append_text(chunks, message.get(key))
+    return "\n".join(chunks).strip()

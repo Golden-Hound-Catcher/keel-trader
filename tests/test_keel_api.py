@@ -344,6 +344,7 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertEqual(body["date"], today)
         self.assertEqual(body["source"], "ledger")
         self.assertGreaterEqual(body["realized_pnl"], 42.5)
+        self.assertIn("total_pnl", body)
 
         r = self.client.get(f"/api/v1/pnl/daily?date={today}")
         self.assertEqual(r.status_code, 200)
