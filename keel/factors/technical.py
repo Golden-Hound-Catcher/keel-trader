@@ -476,3 +476,88 @@ def volume_sma_ratio(volumes: list[float], period: int = 20) -> float:
     if avg <= 0.0:
         return 1.0
     return float(volumes[-1]) / float(avg)
+
+
+@dataclass
+class ADXResult:
+    """Average Directional Index (Wilder) — last-bar snapshot."""
+
+    adx: float
+    plus_di: float
+    minus_di: float
+    period: int
+
+
+def calculate_adx(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int = 14,
+) -> ADXResult:
+    """
+    Wilder ADX / +DI / -DI (oldest → newest).
+
+    Returns zeros when data is insufficient (< 2*period bars). Public TA
+    concept used as an optional trend-vs-range regime gate (F6).
+    """
+    p = max(1, int(period))
+    n = min(len(highs), len(lows), len(closes))
+    empty = ADXResult(0.0, 0.0, 0.0, p)
+    # Need ~2p bars for a stable Wilder smooth (TR/DM warm-up + ADX warm-up).
+    if n < 2 * p + 1:
+        return empty
+
+    highs_f = [float(x) for x in highs[-n:]]
+    lows_f = [float(x) for x in lows[-n:]]
+    closes_f = [float(x) for x in closes[-n:]]
+
+    trs: list[float] = [0.0]
+    plus_dm: list[float] = [0.0]
+    minus_dm: list[float] = [0.0]
+    for i in range(1, n):
+        up = highs_f[i] - highs_f[i - 1]
+        down = lows_f[i - 1] - lows_f[i]
+        plus_dm.append(up if up > down and up > 0 else 0.0)
+        minus_dm.append(down if down > up and down > 0 else 0.0)
+        trs.append(
+            max(
+                highs_f[i] - lows_f[i],
+                abs(highs_f[i] - closes_f[i - 1]),
+                abs(lows_f[i] - closes_f[i - 1]),
+            )
+        )
+
+    atr = sum(trs[1 : p + 1]) / float(p)
+    sm_plus = sum(plus_dm[1 : p + 1]) / float(p)
+    sm_minus = sum(minus_dm[1 : p + 1]) / float(p)
+
+    dx_vals: list[float] = []
+    plus_di = 0.0
+    minus_di = 0.0
+    for i in range(p + 1, n):
+        atr = (atr * (p - 1) + trs[i]) / float(p)
+        sm_plus = (sm_plus * (p - 1) + plus_dm[i]) / float(p)
+        sm_minus = (sm_minus * (p - 1) + minus_dm[i]) / float(p)
+        if atr <= 0:
+            plus_di = 0.0
+            minus_di = 0.0
+        else:
+            plus_di = 100.0 * sm_plus / atr
+            minus_di = 100.0 * sm_minus / atr
+        denom = plus_di + minus_di
+        dx = 0.0 if denom <= 0 else 100.0 * abs(plus_di - minus_di) / denom
+        dx_vals.append(dx)
+
+    if len(dx_vals) < p:
+        return ADXResult(0.0, float(plus_di), float(minus_di), p)
+
+    adx = sum(dx_vals[:p]) / float(p)
+    for dx in dx_vals[p:]:
+        adx = (adx * (p - 1) + dx) / float(p)
+
+    return ADXResult(
+        adx=float(adx),
+        plus_di=float(plus_di),
+        minus_di=float(minus_di),
+        period=p,
+    )

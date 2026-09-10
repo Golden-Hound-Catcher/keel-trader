@@ -8,9 +8,11 @@ from keel.factors.technical import (
     calculate_vwap,
     calculate_obv,
     calculate_supertrend,
+    calculate_adx,
     donchian_prior_channel,
     volume_sma_ratio,
     SuperTrendResult,
+    ADXResult,
     DonchianChannel,
 )
 from keel.factors.market_data import MarketSnapshot, Candle
@@ -33,9 +35,11 @@ __all__ = [
     "calculate_vwap",
     "calculate_obv",
     "calculate_supertrend",
+    "calculate_adx",
     "donchian_prior_channel",
     "volume_sma_ratio",
     "SuperTrendResult",
+    "ADXResult",
     "DonchianChannel",
     "MarketSnapshot",
     "Candle",

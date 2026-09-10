@@ -623,6 +623,48 @@ PYTHONPATH=. python scripts/okx_tv_strategy_compare.py \
 **Env (opt-in only):** `KEEL_RULE_VARIANT=supertrend|donchian` plus `KEEL_RULE_ST_*` / `KEEL_RULE_DONCHIAN_*`. Code default for **unset** remains `mean_revert`; live observe keeps `.env` (`trend_follow`). Cool-down still applies. **Do not** clear kill / enable near_probe / flip live variant unless valid barrier win ≥0.55 **and** avg_net≥0 **and** n≥20. Still **E0 freeze**.
 
 
+
+### Phase F6 — ATR trail exit + ADX regime + SuperTrend soft entry
+
+Jo: F5 entry families failed valid (tiny-n ST, TF/DC ≪0.55). F6 focuses on **what TV quality systems do after entry** (and light regime filtering) — not more entry families.
+
+| Piece | Behavior | Live default |
+|-------|----------|--------------|
+| ATR trail exit | Offline `trail_exit_markout`: stop = peak ± k×ATR (initial SL floor); optional `time_stop_bars` | backtest/compare only |
+| ADX regime | Skip entries when ADX < `KEEL_RULE_ADX_MIN` (range); TF + ST + DC | **0 = off** |
+| ST soft entry | `KEEL_RULE_ST_ENTRY_MODE=soft` allows side-hold entries (cooldown prevents spray); `flip` kept | **flip** |
+
+| Piece | Location |
+|-------|----------|
+| ADX | `keel.factors.technical.calculate_adx` |
+| Trail exit | `keel.backtest.okx_history_rule.trail_exit_markout` (+ walk `include_trail`) |
+| Soft ST / ADX gates | `keel.policy.tv_rules` (+ TF fold in `stub`) |
+| Compare CLI | `scripts/okx_f6_exit_regime_compare.py` |
+| Tests | `tests/test_f6_adx_trail_soft.py` |
+
+```bash
+PYTHONPATH=. python scripts/okx_f6_exit_regime_compare.py \
+  --inst-ids BTC-USDT-SWAP \
+  --entry-bars 15m,30m,1H \
+  --json-out /tmp/keel_f6_exit_regime.json
+```
+
+**Offline result (BTC, 15m/30m/1H, trail primary, modest grids):** no variant cleared valid trail|barrier win≥0.55 with avg_net≥0 and n≥20. Soft ST helped **sample size** on 1H (train FG=16 / valid n=17 vs F5 flip tiny-n) but valid win 17.65% avg −37bps — still no edge. Best valid trail wins: TF 5–7% / ST 0–50% tiny-n / DC 0%. Honest fail — do not claim / do not flip `.env`.
+
+| TF | variant | chosen | tr_FG | tr_pW | va_FG | va_pW | va_n | pass |
+|----|---------|--------|------:|------:|------:|------:|-----:|------|
+| 15m | trend_follow | adx=off trail=2 tsb=12 | 36 | 39% | 21 | 5% | 19 | no |
+| 15m | supertrend | flip st=10×2 trail=2 | 5 | 80% | 1 | 0% | 1 | no |
+| 15m | donchian | adx≥25 trail=1.5 | 4 | 50% | 2 | 0% | 2 | no |
+| 30m | trend_follow | adx≥20 trail=2 tsb=12 | 26 | 31% | 14 | 7% | 14 | no |
+| 30m | supertrend | flip st=10×2 | 4 | 50% | 2 | 50% | 2 | no |
+| 30m | donchian | adx≥25 | 1 | 100% | 1 | 0% | 1 | no |
+| 1H | trend_follow | adx≥25 trail=1.5 | 5 | 60% | 1 | 0% | 1 | no |
+| 1H | supertrend | **soft** adx≥20 st=10×2 | 16 | 44% | 17 | 18% | 17 | no |
+| 1H | donchian | adx=off | 3 | 33% | 3 | 0% | 3 | no |
+
+**Env (opt-in only):** `KEEL_RULE_ADX_MIN` (default 0), `KEEL_RULE_ST_ENTRY_MODE=flip|soft` (default flip). Trail exit is offline/compare only. Live observe keeps `.env` (`trend_follow`). **Do not** clear kill / enable near_probe / flip live variant unless valid trail|barrier win ≥0.55 **and** avg_net≥0 **and** n≥20. Still **E0 freeze**.
+
 ### Phase F3 — train / validation strategy pipeline (no peeking)
 
 Jo protocol (offline, public OKX candles only):

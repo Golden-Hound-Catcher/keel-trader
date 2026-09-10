@@ -1,10 +1,13 @@
 """
-F5: TradingView-inspired rule variants (public TA concepts — not Pine copy).
+F5/F6: TradingView-inspired rule variants (public TA concepts — not Pine copy).
 
-- ``supertrend``: ATR-band direction flip entry; HTF filter optional; ATR TP/SL
-  geometry unchanged (barrier_exit_markout is the primary offline score).
+- ``supertrend``: ATR-band direction flip entry (F5) or soft side-hold entry
+  (F6 ``KEEL_RULE_ST_ENTRY_MODE=soft``); HTF filter optional; ATR TP/SL
+  geometry unchanged. Offline scores: barrier + optional ATR trail exit (F6).
 - ``donchian``: prior-bar Donchian breakout + EMA stack filter + volume≥SMA×k;
   no repaint (channel excludes current bar).
+- F6 ADX regime gate (optional, default off live): skip when ADX < min
+  (range). Shared with trend_follow via ``adx_regime_ok``.
 
 Cool-down is enforced by the walk / live fire_cooldown path, not here.
 """
@@ -15,6 +18,7 @@ from typing import Any
 
 from keel.factors.market_data import MarketSnapshot
 from keel.factors.technical import (
+    calculate_adx,
     calculate_supertrend,
     donchian_prior_channel,
     volume_sma_ratio,
@@ -26,6 +30,9 @@ _ST_FACTOR_DEFAULT = 3.0
 _DONCHIAN_PERIOD_DEFAULT = 20
 _DONCHIAN_VOL_MULT_DEFAULT = 1.0
 _DONCHIAN_VOL_SMA_PERIOD_DEFAULT = 20
+_ADX_MIN_DEFAULT = 0.0  # 0 = off (live default)
+_ADX_PERIOD_DEFAULT = 14
+_ST_ENTRY_MODE_DEFAULT = "flip"  # flip | soft
 
 
 def _env_float(key: str, default: float) -> float:
@@ -86,6 +93,55 @@ def donchian_vol_mult() -> float:
 def donchian_vol_sma_period() -> int:
     v = _env_int("KEEL_RULE_DONCHIAN_VOL_SMA_PERIOD", _DONCHIAN_VOL_SMA_PERIOD_DEFAULT)
     return max(5, min(100, v))
+
+
+def adx_min_threshold() -> float:
+    """F6: KEEL_RULE_ADX_MIN — 0 disables regime gate (live default)."""
+    v = _env_float("KEEL_RULE_ADX_MIN", _ADX_MIN_DEFAULT)
+    if v != v:
+        return float(_ADX_MIN_DEFAULT)
+    return max(0.0, min(60.0, float(v)))
+
+
+def adx_period() -> int:
+    v = _env_int("KEEL_RULE_ADX_PERIOD", _ADX_PERIOD_DEFAULT)
+    return max(5, min(50, v))
+
+
+def st_entry_mode() -> str:
+    """F6: ``flip`` (default) or ``soft`` (enter while on ST side)."""
+    raw = (os.environ.get("KEEL_RULE_ST_ENTRY_MODE") or _ST_ENTRY_MODE_DEFAULT).strip().lower()
+    if raw in ("soft", "side", "hold"):
+        return "soft"
+    return "flip"
+
+
+def adx_regime_ok(snapshot: MarketSnapshot) -> dict[str, Any]:
+    """
+    Optional ADX regime gate for TF / ST / Donchian.
+
+    When ``KEEL_RULE_ADX_MIN`` <= 0 → always ok (gate off). Else require
+    ADX >= min on entry-TF candles. No peeking: uses snapshot candles only.
+    """
+    amin = adx_min_threshold()
+    period = adx_period()
+    candles = list(snapshot.candles_15m or [])
+    highs = [c.high for c in candles]
+    lows = [c.low for c in candles]
+    closes = [c.close for c in candles]
+    res = calculate_adx(highs, lows, closes, period=period)
+    adx_v = float(res.adx)
+    ok = True if amin <= 0.0 else (adx_v >= float(amin) and adx_v > 0.0)
+    return {
+        "adx": adx_v,
+        "adx_plus_di": float(res.plus_di),
+        "adx_minus_di": float(res.minus_di),
+        "adx_period": int(period),
+        "adx_min": float(amin),
+        "adx_enabled": bool(amin > 0.0),
+        "adx_ok": bool(ok),
+    }
+
 
 
 def _htf_flags(snapshot: MarketSnapshot, *, require_1h: bool, require_4h: bool) -> dict[str, Any]:
@@ -149,17 +205,26 @@ def diagnose_supertrend(snapshot: MarketSnapshot) -> dict[str, Any]:
     lows = [c.low for c in candles]
     closes = [c.close for c in candles]
     st = calculate_supertrend(highs, lows, closes, period=length, factor=factor)
+    entry_mode = st_entry_mode()
+    adx_info = adx_regime_ok(snapshot)
 
     flip_long = bool(st.flipped and st.direction == 1)
     flip_short = bool(st.flipped and st.direction == -1)
-    st_long_ok = flip_long
-    st_short_ok = flip_short
+    if entry_mode == "soft":
+        # Soft: allow while price is on the ST side (cooldown elsewhere prevents spray).
+        st_long_ok = bool(st.direction == 1)
+        st_short_ok = bool(st.direction == -1)
+    else:
+        st_long_ok = flip_long
+        st_short_ok = flip_short
+    adx_ok = bool(adx_info["adx_ok"])
 
     gates: dict[str, Any] = {
         "data_valid": data_ok,
         "rule_variant": "supertrend",
         "st_atr_length": length,
         "st_factor": factor,
+        "st_entry_mode": entry_mode,
         "st_direction": int(st.direction),
         "st_value": float(st.value),
         "st_upper": float(st.upper),
@@ -169,6 +234,7 @@ def diagnose_supertrend(snapshot: MarketSnapshot) -> dict[str, Any]:
         "st_flip_short": flip_short,
         "st_long_ok": st_long_ok,
         "st_short_ok": st_short_ok,
+        **adx_info,
         # Compatibility placeholders so shared audit consumers stay happy.
         "rsi_long_ok": True,
         "rsi_short_ok": True,
@@ -212,13 +278,17 @@ def diagnose_supertrend(snapshot: MarketSnapshot) -> dict[str, Any]:
     long_missing: list[str] = []
     short_missing: list[str] = []
     if not st_long_ok:
-        long_missing.append("st_flip_long")
+        long_missing.append("st_flip_long" if entry_mode == "flip" else "st_side_long")
     if not htf["htf_long_ok"]:
         long_missing.append("htf_long_ok")
+    if not adx_ok:
+        long_missing.append("adx_ok")
     if not st_short_ok:
-        short_missing.append("st_flip_short")
+        short_missing.append("st_flip_short" if entry_mode == "flip" else "st_side_short")
     if not htf["htf_short_ok"]:
         short_missing.append("htf_short_ok")
+    if not adx_ok:
+        short_missing.append("adx_ok")
 
     if len(long_missing) <= len(short_missing):
         nearest = "long"
@@ -238,8 +308,8 @@ def diagnose_supertrend(snapshot: MarketSnapshot) -> dict[str, Any]:
         missing = []
 
     # Recompute nearest cleanly.
-    long_ok = st_long_ok and htf["htf_long_ok"]
-    short_ok = st_short_ok and htf["htf_short_ok"]
+    long_ok = st_long_ok and htf["htf_long_ok"] and adx_ok
+    short_ok = st_short_ok and htf["htf_short_ok"] and adx_ok
     if long_ok:
         nearest, missing = "long", []
     elif short_ok:
@@ -272,6 +342,8 @@ def diagnose_donchian(snapshot: MarketSnapshot) -> dict[str, Any]:
     lows = [c.low for c in candles]
     closes = [c.close for c in candles]
     volumes = [c.volume for c in candles]
+    adx_info = adx_regime_ok(snapshot)
+    adx_ok = bool(adx_info["adx_ok"])
     channel = donchian_prior_channel(highs, lows, period=period)
     close = float(closes[-1]) if closes else 0.0
     upper = float(channel.upper) if channel else 0.0
@@ -339,6 +411,7 @@ def diagnose_donchian(snapshot: MarketSnapshot) -> dict[str, Any]:
         "rsi_pullback_long_max": 0.0,
         "rsi_pullback_short_min": 0.0,
         "pullback_ok": True,
+        **adx_info,
         **htf,
     }
 
@@ -361,6 +434,8 @@ def diagnose_donchian(snapshot: MarketSnapshot) -> dict[str, Any]:
                 miss.append("volume_ok")
             if not htf["htf_long_ok"]:
                 miss.append("htf_long_ok")
+            if not adx_ok:
+                miss.append("adx_ok")
         else:
             if not channel_ok:
                 miss.append("donchian_channel_ok")
@@ -372,6 +447,8 @@ def diagnose_donchian(snapshot: MarketSnapshot) -> dict[str, Any]:
                 miss.append("volume_ok")
             if not htf["htf_short_ok"]:
                 miss.append("htf_short_ok")
+            if not adx_ok:
+                miss.append("adx_ok")
         return miss
 
     long_missing = _side_missing("long")
@@ -406,12 +483,17 @@ def tv_long_short_ok(diag: dict[str, Any]) -> tuple[bool, bool]:
 
 
 __all__ = [
+    "adx_min_threshold",
+    "adx_period",
+    "adx_regime_ok",
     "diagnose_donchian",
     "diagnose_supertrend",
     "donchian_period",
     "donchian_vol_mult",
     "donchian_vol_sma_period",
     "st_atr_length",
+    "st_entry_mode",
     "st_factor",
     "tv_long_short_ok",
 ]
+

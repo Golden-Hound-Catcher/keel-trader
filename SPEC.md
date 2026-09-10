@@ -655,3 +655,8 @@ Primary UI route: `/` (`MonitorView`). Jinja dashboard, `/legacy`, and R20 `/adm
 
 `KEEL_RULE_VARIANT` accepts `supertrend` and `donchian` (aliases `st` / `dc`) in addition to `mean_revert` / `trend_follow`. Indicators are pure helpers (ATR SuperTrend-style flip; prior-bar Donchian + EMA + volume SMA ratio). Full-gate reason codes: `st_flip_long/short`, `htf_*`, `donchian_break_*`, `volume_ok`. Offline primary score: ATR barrier netRT via `barrier_exit_markout`. Defaults leave live observe unchanged (`.env` still `trend_follow`). E0 freeze — no claim without valid ≥0.55 / avg_net≥0 / n≥20.
 
+
+### Phase F6 — trail exit / ADX / ST soft (opt-in)
+
+Offline ATR trailing exit (`trail_exit_markout`) alongside fixed TP/SL barrier. Optional ADX regime gate (`KEEL_RULE_ADX_MIN`, default 0=off) on `trend_follow` / `supertrend` / `donchian`. SuperTrend soft side-hold entry via `KEEL_RULE_ST_ENTRY_MODE=soft` (default `flip`). Compare: `scripts/okx_f6_exit_regime_compare.py`. Live observe defaults unchanged. E0 freeze — no claim without valid ≥0.55 / avg_net≥0 / n≥20.
+
