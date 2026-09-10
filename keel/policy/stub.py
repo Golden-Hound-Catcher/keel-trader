@@ -50,6 +50,7 @@ from keel.factors.market_data import MarketSnapshot
 from keel.domain.decision import Decision, validate_decision
 from keel.policy.protocol import DecisionPolicy, PolicyContext, PolicyResult
 from keel.policy.tv_rules import (
+    adx_regime_ok,
     diagnose_donchian,
     diagnose_supertrend,
     tv_long_short_ok,
@@ -1157,6 +1158,36 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
             nearest, missing = "short", short_missing
         else:
             nearest, missing = "long", long_missing
+    # F6: optional ADX regime gate for trend_follow (default off live).
+    adx_info = adx_regime_ok(snapshot) if is_tf else {
+        "adx": 0.0,
+        "adx_plus_di": 0.0,
+        "adx_minus_di": 0.0,
+        "adx_period": 14,
+        "adx_min": 0.0,
+        "adx_enabled": False,
+        "adx_ok": True,
+    }
+    adx_ok = bool(adx_info.get("adx_ok", True))
+    gates.update(adx_info)
+    if is_tf and bool(adx_info.get("adx_enabled")):
+        if not adx_ok and "adx_ok" not in long_missing:
+            long_missing = list(long_missing) + ["adx_ok"]
+        if not adx_ok and "adx_ok" not in short_missing:
+            short_missing = list(short_missing) + ["adx_ok"]
+        n_long, n_short = len(long_missing), len(short_missing)
+        if n_long == 0 and n_short == 0:
+            nearest, missing = "long", []
+        elif n_long == 0:
+            nearest, missing = "long", []
+        elif n_short == 0:
+            nearest, missing = "short", []
+        elif n_long < n_short:
+            nearest, missing = "long", long_missing
+        elif n_short < n_long:
+            nearest, missing = "short", short_missing
+        else:
+            nearest, missing = "long", long_missing
     if nearest == "short":
         extension_atr = extension_atr_short
         extension_ok = extension_ok_short
@@ -1170,6 +1201,7 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     gates["extension_atr"] = extension_atr
     gates["extension_ok"] = extension_ok
     gates["pullback_ok"] = pullback_ok
+    gates["adx_ok"] = adx_ok
     if max_extension_atr > 0 and extension_atr is not None:
         gates["extension_headroom_atr"] = float(max_extension_atr) - float(
             extension_atr
@@ -1339,6 +1371,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         long_max=pb_long_max,
         short_min=pb_short_min,
     )
+    adx_ok_tf = bool(diag.get("adx_ok", True))
     long_ok = (
         diag["rsi_long_ok"]
         and diag["trend_bullish"]
@@ -1347,6 +1380,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         and diag["volume_ok"]
         and ext_long_ok
         and pb_long_ok
+        and adx_ok_tf
     )
     if long_ok:
         entry = price
@@ -1378,6 +1412,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         and diag["volume_ok"]
         and ext_short_ok
         and pb_short_ok
+        and adx_ok_tf
     )
     if short_ok:
         entry = price

@@ -89,6 +89,7 @@ class BacktestEntry:
     suppressed_cooldown: bool = False
     atr_14: float = 0.0
     barrier: dict[str, Any] | None = None
+    trail: dict[str, Any] | None = None
 
 
 def rows_to_series(
@@ -448,6 +449,170 @@ def barrier_exit_markout(
     }
 
 
+
+DEFAULT_TRAIL_ATR = 1.5
+DEFAULT_TRAIL_INITIAL_SL_ATR = 1.0
+
+
+def trail_exit_markout(
+    *,
+    action: str,
+    entry_price: float,
+    entry_ts: float,
+    atr_14: float,
+    candles_15m: Sequence[Candle],
+    trail_atr: float = DEFAULT_TRAIL_ATR,
+    initial_sl_atr: float = DEFAULT_TRAIL_INITIAL_SL_ATR,
+    time_stop_bars: int | None = None,
+    timeout_seconds: float = DEFAULT_BARRIER_TIMEOUT_SECONDS,
+    open_fee_bps: float = REGULAR_USDT_SWAP_TAKER_BPS,
+    rt_fee_bps: float | None = None,
+    clear_hurdle_bps: float = DEFAULT_CLEAR_HURDLE_BPS,
+    bar_seconds: float | None = None,
+) -> dict[str, Any]:
+    """
+    Fee-aware ATR trailing exit from peak favorable excursion (F6).
+
+    Long: peak = running max high after entry; stop = peak − trail_atr×ATR
+    (floored by initial SL = entry − initial_sl_atr×ATR). Short mirrored.
+    Optional ``time_stop_bars`` exits at that bar's close if still open.
+    Else timeout via ``timeout_seconds`` / ``price_at_horizon``. Same-bar
+    conservative: if stop is hit, exit at stop (no peek at favorable close).
+    """
+    rt = float(rt_fee_bps) if rt_fee_bps is not None else 2.0 * float(open_fee_bps)
+    bar_s = float(BAR_15M_SECONDS if bar_seconds is None else bar_seconds)
+    act = str(action or "").upper()
+    atr = float(atr_14 or 0.0)
+    entry = float(entry_price)
+    k = float(trail_atr)
+    isl = float(initial_sl_atr)
+    base: dict[str, Any] = {
+        "available": False,
+        "trail_atr": k,
+        "initial_sl_atr": isl,
+        "time_stop_bars": int(time_stop_bars) if time_stop_bars is not None else None,
+        "timeout_seconds": float(timeout_seconds),
+        "atr_14": atr,
+        "entry_price": entry,
+        "open_fee_bps": float(open_fee_bps),
+        "rt_fee_bps": float(rt),
+        "clear_hurdle_bps": float(clear_hurdle_bps),
+    }
+    if atr <= 0.0 or entry <= 0.0 or k <= 0.0:
+        return {**base, "reason": "invalid_atr_or_entry"}
+    if act == "BUY_LONG":
+        initial_sl = entry - isl * atr
+        side = "long"
+    elif act == "SELL_SHORT":
+        initial_sl = entry + isl * atr
+        side = "short"
+    else:
+        return {**base, "reason": "unsupported_action"}
+
+    timeout_ts = float(entry_ts) + max(0.0, float(timeout_seconds))
+    exit_price: float | None = None
+    exit_ts: float | None = None
+    exit_reason: str | None = None
+    peak = entry
+    bars_seen = 0
+    stop = initial_sl
+
+    for c in candles_15m:
+        bar_open = float(c.timestamp)
+        if bar_open + 1e-9 < float(entry_ts):
+            continue
+        if bar_open >= timeout_ts - 1e-9:
+            break
+        bars_seen += 1
+        hi = float(c.high)
+        lo = float(c.low)
+        bar_close_ts = bar_open + bar_s
+        if side == "long":
+            peak = max(peak, hi)
+            trail_stop = peak - k * atr
+            stop = max(initial_sl, trail_stop)
+            if lo <= stop:
+                exit_price, exit_ts, exit_reason = stop, bar_open, "trail"
+        else:
+            peak = min(peak, lo)
+            trail_stop = peak + k * atr
+            stop = min(initial_sl, trail_stop)
+            if hi >= stop:
+                exit_price, exit_ts, exit_reason = stop, bar_open, "trail"
+        if exit_reason is not None:
+            break
+        if time_stop_bars is not None and bars_seen >= int(time_stop_bars):
+            exit_price = float(c.close)
+            exit_ts = bar_close_ts
+            exit_reason = "time_stop"
+            break
+        if bar_close_ts >= timeout_ts - 1e-9:
+            found = price_at_horizon(
+                candles_15m,
+                entry_ts=float(entry_ts),
+                horizon_seconds=float(timeout_seconds),
+                bar_seconds=bar_s,
+            )
+            if found is None:
+                exit_price = float(c.close)
+                exit_ts = min(bar_close_ts, timeout_ts)
+                exit_reason = "timeout"
+            else:
+                pts, px, _src = found
+                exit_price, exit_ts, exit_reason = float(px), float(pts), "timeout"
+            break
+
+    if exit_reason is None:
+        found = price_at_horizon(
+            candles_15m,
+            entry_ts=float(entry_ts),
+            horizon_seconds=float(timeout_seconds),
+            bar_seconds=bar_s,
+        )
+        if found is None:
+            return {
+                **base,
+                "reason": "past_series_end",
+                "peak": float(peak),
+                "stop": float(stop),
+            }
+        pts, px, _src = found
+        exit_price, exit_ts, exit_reason = float(px), float(pts), "timeout"
+
+    assert exit_price is not None and exit_ts is not None and exit_reason is not None
+    gross = markout_bps(act, entry, float(exit_price))
+    if gross is None:
+        return {
+            **base,
+            "reason": "markout_failed",
+            "peak": float(peak),
+            "stop": float(stop),
+            "exit_reason": exit_reason,
+            "exit_price": float(exit_price),
+            "exit_ts": float(exit_ts),
+        }
+    net_open = float(gross) - float(open_fee_bps)
+    net_rt = float(gross) - float(rt)
+    hold_s = max(0.0, float(exit_ts) - float(entry_ts))
+    return {
+        **base,
+        "available": True,
+        "peak": float(peak),
+        "stop": float(stop),
+        "exit_reason": exit_reason,
+        "exit_price": float(exit_price),
+        "exit_ts": float(exit_ts),
+        "hold_seconds": hold_s,
+        "bars_held": int(bars_seen),
+        "gross_bps": float(gross),
+        "net_open_bps": net_open,
+        "net_rt_bps": net_rt,
+        "clears_hurdle": net_rt >= float(clear_hurdle_bps),
+        "win": net_rt > 0.0,
+    }
+
+
+
 @contextmanager
 def forced_e31_rule_env(
     *,
@@ -463,8 +628,11 @@ def forced_e31_rule_env(
     donchian_period: int | None = None,
     donchian_vol_mult: float | None = None,
     require_1h: bool | None = None,
+    adx_min: float | None = None,
+    adx_period: int | None = None,
+    st_entry_mode: str | None = None,
 ) -> Iterator[str]:
-    """Force TF/F5 env + E3.1 require_4h + E2B MACD lag; pin F2a/F2b off by default."""
+    """Force TF/F5/F6 env + E3.1 require_4h + E2B MACD lag; pin F2a/F2b off by default."""
     keys = {
         _ENV_TF_REQUIRE_4H: "1" if require_4h else "0",
         _ENV_TF_MACD_LAG: str(float(macd_lag_bps)),
@@ -481,6 +649,12 @@ def forced_e31_rule_env(
         keys["KEEL_RULE_DONCHIAN_PERIOD"] = str(int(donchian_period))
     if donchian_vol_mult is not None:
         keys["KEEL_RULE_DONCHIAN_VOL_MULT"] = str(float(donchian_vol_mult))
+    if adx_min is not None:
+        keys["KEEL_RULE_ADX_MIN"] = str(float(adx_min))
+    if adx_period is not None:
+        keys["KEEL_RULE_ADX_PERIOD"] = str(int(adx_period))
+    if st_entry_mode is not None:
+        keys["KEEL_RULE_ST_ENTRY_MODE"] = str(st_entry_mode).strip().lower() or "flip"
     if pullback and rsi_pullback_long_max is not None:
         keys[_ENV_TF_RSI_PB_LONG] = str(float(rsi_pullback_long_max))
     if pullback and rsi_pullback_short_min is not None:
@@ -529,6 +703,13 @@ def walk_forward_backtest(
     donchian_period: int | None = None,
     donchian_vol_mult: float | None = None,
     require_1h: bool | None = None,
+    adx_min: float | None = None,
+    adx_period: int | None = None,
+    st_entry_mode: str | None = None,
+    include_trail: bool = False,
+    trail_atr: float = DEFAULT_TRAIL_ATR,
+    trail_initial_sl_atr: float = DEFAULT_TRAIL_INITIAL_SL_ATR,
+    trail_time_stop_bars: int | None = None,
 ) -> dict[str, Any]:
     """
     Walk closed entry-TF bars per instrument; record full-gate entries + markouts.
@@ -564,6 +745,9 @@ def walk_forward_backtest(
         donchian_period=donchian_period,
         donchian_vol_mult=donchian_vol_mult,
         require_1h=require_1h,
+        adx_min=adx_min,
+        adx_period=adx_period,
+        st_entry_mode=st_entry_mode,
     ):
         for series in series_list:
             inst = series.inst_id
@@ -670,6 +854,22 @@ def walk_forward_backtest(
                         clear_hurdle_bps=clear_hurdle_bps,
                         bar_seconds=bar_s,
                     )
+                trail_row: dict[str, Any] | None = None
+                if include_trail:
+                    trail_row = trail_exit_markout(
+                        action=action,
+                        entry_price=float(snap.price),
+                        entry_ts=entry_ts,
+                        atr_14=atr_v,
+                        candles_15m=series.candles_15m,
+                        trail_atr=trail_atr,
+                        initial_sl_atr=trail_initial_sl_atr,
+                        time_stop_bars=trail_time_stop_bars,
+                        timeout_seconds=barrier_timeout_seconds,
+                        open_fee_bps=open_fee_bps,
+                        clear_hurdle_bps=clear_hurdle_bps,
+                        bar_seconds=bar_s,
+                    )
                 entries.append(
                     BacktestEntry(
                         inst_id=inst,
@@ -681,6 +881,7 @@ def walk_forward_backtest(
                         suppressed_cooldown=False,
                         atr_14=atr_v,
                         barrier=barrier_row,
+                        trail=trail_row,
                     )
                 )
 
@@ -705,6 +906,7 @@ def walk_forward_backtest(
         clear_horizon_seconds=int(clear_horizon_seconds),
         horizons=list(int(h) for h in horizons),
         include_barrier=include_barrier,
+        include_trail=include_trail,
         max_extension_atr=float(max_extension_atr),
         pullback=bool(pullback),
         rsi_pullback_long_max=rsi_pullback_long_max,
@@ -712,6 +914,8 @@ def walk_forward_backtest(
         decision_ts_min=decision_ts_min,
         decision_ts_max=decision_ts_max,
         entry_bar=str(resolved_entry or "15m"),
+        trail_atr=float(trail_atr),
+        trail_time_stop_bars=trail_time_stop_bars,
     )
 
 
@@ -745,6 +949,7 @@ def _summarize(
     clear_horizon_seconds: int,
     horizons: list[int],
     include_barrier: bool = False,
+    include_trail: bool = False,
     max_extension_atr: float = 0.0,
     pullback: bool = False,
     rsi_pullback_long_max: float | None = None,
@@ -752,6 +957,8 @@ def _summarize(
     decision_ts_min: float | None = None,
     decision_ts_max: float | None = None,
     entry_bar: str = "15m",
+    trail_atr: float = DEFAULT_TRAIL_ATR,
+    trail_time_stop_bars: int | None = None,
 ) -> dict[str, Any]:
     by_inst: dict[str, Any] = {}
     for inst, steps in sorted(by_inst_steps.items()):
@@ -828,6 +1035,38 @@ def _summarize(
             "vs_fixed_horizon_seconds": int(clear_horizon_seconds),
         }
 
+    trail_summary: dict[str, Any] | None = None
+    if include_trail:
+        t_nets: list[float] = []
+        t_reasons: Counter[str] = Counter()
+        t_avail = 0
+        t_clears = 0
+        for e in fired:
+            t = e.trail or {}
+            if not t.get("available"):
+                continue
+            t_avail += 1
+            nrt = t.get("net_rt_bps")
+            if nrt is not None:
+                t_nets.append(float(nrt))
+            if t.get("clears_hurdle"):
+                t_clears += 1
+            reason = str(t.get("exit_reason") or "unknown")
+            t_reasons[reason] += 1
+        trail_summary = {
+            "n_available": t_avail,
+            "avg_net_rt_bps": _avg(t_nets),
+            "win_rate_net_rt": _win_rate(t_nets),
+            "frac_clear_hurdle": (t_clears / t_avail) if t_avail else None,
+            "clear_hurdle_bps": float(clear_hurdle_bps),
+            "by_exit_reason": dict(t_reasons),
+            "trail_atr": float(trail_atr),
+            "time_stop_bars": (
+                int(trail_time_stop_bars) if trail_time_stop_bars is not None else None
+            ),
+            "vs_fixed_horizon_seconds": int(clear_horizon_seconds),
+        }
+
     return {
         "entry_bar": str(entry_bar),
         "variant": variant,
@@ -864,6 +1103,7 @@ def _summarize(
             "win_rate_net_rt_5m": primary.get("win_rate_net_rt"),
             "frac_clear_10bps_5m": primary.get("frac_clear_hurdle"),
             "barrier": barrier_summary,
+            "trail": trail_summary,
         },
         "entries": [
             {
@@ -877,6 +1117,7 @@ def _summarize(
                 "trend_gate": (e.signal_diag or {}).get("trend_gate"),
                 "markouts": e.markouts,
                 "barrier": e.barrier,
+                "trail": e.trail,
             }
             for e in entries
             if not e.suppressed_cooldown
@@ -896,10 +1137,13 @@ __all__ = [
     "DEFAULT_BARRIER_SL_ATR",
     "DEFAULT_BARRIER_TIMEOUT_SECONDS",
     "DEFAULT_BARRIER_TP_ATR",
+    "DEFAULT_TRAIL_ATR",
+    "DEFAULT_TRAIL_INITIAL_SL_ATR",
     "DEFAULT_COOLDOWN_SECONDS",
     "DEFAULT_LOOKBACK_BARS",
     "HistorySeries",
     "barrier_exit_markout",
+    "trail_exit_markout",
     "build_snapshot_at",
     "fee_aware_markouts",
     "forced_e31_rule_env",
