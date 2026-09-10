@@ -1,7 +1,8 @@
 """
 F0b / F2c / F3: offline OKX historical candle backtest under E3.1 rule semantics.
 
-Walks closed 15m bars, builds worker-like snapshots (15m/1H/4H + enrich),
+Walks closed entry-TF bars (default 15m; F4 multi-TF passes entry bar size),
+builds worker-like snapshots (entry/mid/high confirm slots + enrich),
 runs ``diagnose_rule_signal`` / ``rule_based_decision`` under forced TF+E2B+E3.1
 env (ext=0, pullback=0), applies per-instrument fire cooldown, and fee-aware
 markout on future 15m closes (taker RT ~10 bps hurdle).
@@ -61,12 +62,18 @@ _ENV_TF_RSI_PB_SHORT = "KEEL_RULE_TF_RSI_PULLBACK_SHORT_MIN"
 
 @dataclass
 class HistorySeries:
-    """Aligned multi-TF candle history for one instrument (oldest→newest)."""
+    """Aligned multi-TF candle history for one instrument (oldest→newest).
+
+    Slot names are legacy: ``candles_15m`` = entry TF, ``candles_1h`` = mid
+    confirm, ``candles_4h`` = high confirm. ``entry_bar`` records the OKX bar
+    size for the entry slot (default ``15m``).
+    """
 
     inst_id: str
     candles_15m: list[Candle]
     candles_1h: list[Candle]
     candles_4h: list[Candle]
+    entry_bar: str = "15m"
 
 
 @dataclass
@@ -123,11 +130,16 @@ def build_snapshot_at(
     *,
     index_15m: int,
     lookback: int = DEFAULT_LOOKBACK_BARS,
+    entry_bar_seconds: float | None = None,
+    confirm_mid_bar: str | None = None,
+    confirm_high_bar: str | None = None,
 ) -> MarketSnapshot:
     """
-    Build + enrich a MarketSnapshot ending at closed 15m bar ``index_15m``.
+    Build + enrich a MarketSnapshot ending at closed entry bar ``index_15m``.
 
-    Uses only history available at that bar's close (15m window + closed 1H/4H).
+    Uses only history available at that bar's close (entry window + closed
+    mid/high confirm). ``entry_bar_seconds`` defaults from ``series.entry_bar``
+    or 15m. Confirm bar labels default to 1H/4H (F4 overrides per entry T).
     """
     c15_all = series.candles_15m
     if index_15m < 0 or index_15m >= len(c15_all):
@@ -135,9 +147,16 @@ def build_snapshot_at(
     start = max(0, index_15m + 1 - max(1, int(lookback)))
     c15 = list(c15_all[start : index_15m + 1])
     bar_open = float(c15[-1].timestamp)
-    decision_ts = bar_open + float(BAR_15M_SECONDS)
-    c1h = _closed_higher_tf(series.candles_1h, decision_ts=decision_ts, bar="1H")
-    c4h = _closed_higher_tf(series.candles_4h, decision_ts=decision_ts, bar="4H")
+    if entry_bar_seconds is not None:
+        bar_s = float(entry_bar_seconds)
+    else:
+        entry_bar = getattr(series, "entry_bar", None) or "15m"
+        bar_s = float(bar_duration_seconds(entry_bar))
+    decision_ts = bar_open + bar_s
+    mid_bar = confirm_mid_bar or "1H"
+    high_bar = confirm_high_bar or "4H"
+    c1h = _closed_higher_tf(series.candles_1h, decision_ts=decision_ts, bar=mid_bar)
+    c4h = _closed_higher_tf(series.candles_4h, decision_ts=decision_ts, bar=high_bar)
     # Keep lookback tail on higher TF (mirror worker ~64).
     lb = max(1, int(lookback))
     if len(c1h) > lb:
@@ -174,21 +193,25 @@ def price_at_horizon(
     *,
     entry_ts: float,
     horizon_seconds: float,
+    bar_seconds: float | None = None,
 ) -> tuple[float, float, str] | None:
     """
-    Price at ``entry_ts + horizon`` from 15m closes.
+    Price at ``entry_ts + horizon`` from entry-TF closes.
 
     Prefers linear interpolation between adjacent bar closes (mid-path proxy).
     Falls back to first close at/after target. Returns
     ``(price_ts, price, source)`` or None.
+
+    ``bar_seconds`` defaults to 15m (900); F4 multi-TF passes entry bar length.
     """
     if not candles_15m:
         return None
+    bar_s = float(BAR_15M_SECONDS if bar_seconds is None else bar_seconds)
     target = float(entry_ts) + max(0.0, float(horizon_seconds))
     # Close times for each bar.
     closes_meta: list[tuple[float, float]] = []
     for c in candles_15m:
-        close_ts = float(c.timestamp) + float(BAR_15M_SECONDS)
+        close_ts = float(c.timestamp) + bar_s
         closes_meta.append((close_ts, float(c.close)))
     # Exact / past last
     if target <= closes_meta[0][0]:
@@ -220,6 +243,7 @@ def fee_aware_markouts(
     open_fee_bps: float = REGULAR_USDT_SWAP_TAKER_BPS,
     rt_fee_bps: float | None = None,
     clear_hurdle_bps: float = DEFAULT_CLEAR_HURDLE_BPS,
+    bar_seconds: float | None = None,
 ) -> dict[int, dict[str, Any]]:
     """Per-horizon gross + net open / net RT markout dicts (funding ignored)."""
     rt = float(rt_fee_bps) if rt_fee_bps is not None else 2.0 * float(open_fee_bps)
@@ -227,7 +251,10 @@ def fee_aware_markouts(
     for h in horizons:
         hi = int(h)
         found = price_at_horizon(
-            candles_15m, entry_ts=entry_ts, horizon_seconds=float(hi)
+            candles_15m,
+            entry_ts=entry_ts,
+            horizon_seconds=float(hi),
+            bar_seconds=bar_seconds,
         )
         if found is None:
             out[hi] = {
@@ -284,16 +311,19 @@ def barrier_exit_markout(
     open_fee_bps: float = REGULAR_USDT_SWAP_TAKER_BPS,
     rt_fee_bps: float | None = None,
     clear_hurdle_bps: float = DEFAULT_CLEAR_HURDLE_BPS,
+    bar_seconds: float | None = None,
 ) -> dict[str, Any]:
     """
-    Fee-aware ATR barrier exit on subsequent 15m OHLC path (F2c measurement).
+    Fee-aware ATR barrier exit on subsequent entry-TF OHLC path (F2c/F4).
 
     Long: TP = entry + tp_atr×ATR, SL = entry − sl_atr×ATR.
     Short: mirrored. Walks bars with open ≥ entry_ts; if both TP and SL print
     in the same bar, assume SL first (conservative). Else exit at timeout
     (``timeout_seconds``, default 900) via ``price_at_horizon``.
+    ``bar_seconds`` defaults to 15m; F4 passes entry bar length.
     """
     rt = float(rt_fee_bps) if rt_fee_bps is not None else 2.0 * float(open_fee_bps)
+    bar_s = float(BAR_15M_SECONDS if bar_seconds is None else bar_seconds)
     act = str(action or "").upper()
     atr = float(atr_14 or 0.0)
     entry = float(entry_price)
@@ -333,7 +363,7 @@ def barrier_exit_markout(
             continue
         if bar_open >= timeout_ts - 1e-9:
             break
-        bar_close_ts = bar_open + float(BAR_15M_SECONDS)
+        bar_close_ts = bar_open + bar_s
         hi = float(c.high)
         lo = float(c.low)
         if side == "long":
@@ -362,6 +392,7 @@ def barrier_exit_markout(
                 candles_15m,
                 entry_ts=float(entry_ts),
                 horizon_seconds=float(timeout_seconds),
+                bar_seconds=bar_s,
             )
             if found is None:
                 exit_price = float(c.close)
@@ -378,6 +409,7 @@ def barrier_exit_markout(
             candles_15m,
             entry_ts=float(entry_ts),
             horizon_seconds=float(timeout_seconds),
+            bar_seconds=bar_s,
         )
         if found is None:
             return {**base, "reason": "past_series_end", "tp": tp, "sl": sl}
@@ -474,13 +506,20 @@ def walk_forward_backtest(
     rsi_pullback_short_min: float | None = None,
     decision_ts_min: float | None = None,
     decision_ts_max: float | None = None,
+    entry_bar: str | None = None,
+    confirm_mid_bar: str | None = None,
+    confirm_high_bar: str | None = None,
 ) -> dict[str, Any]:
     """
-    Walk closed 15m bars per instrument; record full-gate entries + markouts.
+    Walk closed entry-TF bars per instrument; record full-gate entries + markouts.
 
     Cooldown: after a full-gate fire, suppress another fire for the same
     ``inst_id`` until ``entry_ts + cooldown_seconds`` (live fire_cooldown
     semantics, in-memory).
+
+    F4: pass ``entry_bar`` (e.g. ``5m``/``1H``/``4H``) so decision close time,
+    markout path, and barrier timeout use that bar length; horizons should be
+    bar multiples of T (see ``keel.backtest.multitf``).
     """
     variant_n = normalize_variant(variant)
     cd = max(0, int(cooldown_seconds))
@@ -505,14 +544,27 @@ def walk_forward_backtest(
             inst = series.inst_id
             by_inst_action.setdefault(inst, Counter())
             n = len(series.candles_15m)
-            # Need lookback window; leave room for longest markout (~900s = 1 bar).
+            series_entry_bar = (
+                entry_bar
+                or getattr(series, "entry_bar", None)
+                or "15m"
+            )
+            bar_s = float(bar_duration_seconds(str(series_entry_bar)))
+            # Need lookback window; leave room for longest markout.
             max_h = max(int(h) for h in horizons) if horizons else 0
             # Last index we can decide on: need future path for markout optional;
             # still count steps even if markout missing.
             start_i = max(lookback - 1, 20)
             end_i = n - 1
             for i in range(start_i, end_i + 1):
-                snap = build_snapshot_at(series, index_15m=i, lookback=lookback)
+                snap = build_snapshot_at(
+                    series,
+                    index_15m=i,
+                    lookback=lookback,
+                    entry_bar_seconds=bar_s,
+                    confirm_mid_bar=confirm_mid_bar,
+                    confirm_high_bar=confirm_high_bar,
+                )
                 if not snap.data_valid:
                     continue
                 decision_ts = float(snap.timestamp)
@@ -561,6 +613,7 @@ def walk_forward_backtest(
                     horizons=horizons,
                     open_fee_bps=open_fee_bps,
                     clear_hurdle_bps=clear_hurdle_bps,
+                    bar_seconds=bar_s,
                 )
                 # Drop markouts that need future beyond series end.
                 for h, mo in list(mos.items()):
@@ -568,7 +621,7 @@ def walk_forward_backtest(
                         # Try: if horizon close would be after last bar, mark missing.
                         target = entry_ts + float(h)
                         last_close_ts = (
-                            float(series.candles_15m[-1].timestamp) + BAR_15M_SECONDS
+                            float(series.candles_15m[-1].timestamp) + bar_s
                         )
                         if target > last_close_ts + 1e-9:
                             mos[h] = {
@@ -590,6 +643,7 @@ def walk_forward_backtest(
                         timeout_seconds=barrier_timeout_seconds,
                         open_fee_bps=open_fee_bps,
                         clear_hurdle_bps=clear_hurdle_bps,
+                        bar_seconds=bar_s,
                     )
                 entries.append(
                     BacktestEntry(
@@ -606,6 +660,9 @@ def walk_forward_backtest(
                 )
 
     fired = [e for e in entries if not e.suppressed_cooldown]
+    resolved_entry = entry_bar or (
+        series_list[0].entry_bar if series_list else "15m"
+    )
     return _summarize(
         n_steps=n_steps,
         n_full_gate=n_full_gate,
@@ -629,6 +686,7 @@ def walk_forward_backtest(
         rsi_pullback_short_min=rsi_pullback_short_min,
         decision_ts_min=decision_ts_min,
         decision_ts_max=decision_ts_max,
+        entry_bar=str(resolved_entry or "15m"),
     )
 
 
@@ -668,6 +726,7 @@ def _summarize(
     rsi_pullback_short_min: float | None = None,
     decision_ts_min: float | None = None,
     decision_ts_max: float | None = None,
+    entry_bar: str = "15m",
 ) -> dict[str, Any]:
     by_inst: dict[str, Any] = {}
     for inst, steps in sorted(by_inst_steps.items()):
@@ -745,6 +804,7 @@ def _summarize(
         }
 
     return {
+        "entry_bar": str(entry_bar),
         "variant": variant,
         "require_4h": bool(require_4h),
         "macd_lag_bps": float(macd_lag_bps),

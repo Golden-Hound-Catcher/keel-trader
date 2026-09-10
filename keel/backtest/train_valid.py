@@ -143,6 +143,7 @@ def series_for_train_markout(
         candles_4h=_filter_candles_open_before(
             series.candles_4h, open_ts_max_exclusive=open_max
         ),
+        entry_bar=getattr(series, "entry_bar", "15m") or "15m",
     )
 
 
@@ -219,8 +220,18 @@ def modest_strategy_grid() -> list[StrategyConfig]:
 
 
 def extract_train_metrics(summary: dict[str, Any]) -> dict[str, Any]:
-    """Flatten primary train metrics used for ranking / selection."""
+    """Flatten primary train metrics used for ranking / selection.
+
+    Field names ``*_5m`` are legacy (F0b/F3 clear-horizon label); for F4 the
+    primary horizon is bar-scaled via ``clear_horizon_seconds`` — values still
+    land in these keys from ``_summarize``.
+    """
     mo = summary.get("markout") or {}
+    by_h = mo.get("by_horizon") or {}
+    primary_s = mo.get("primary_horizon_seconds")
+    primary_row = None
+    if primary_s is not None:
+        primary_row = by_h.get(str(int(primary_s)))
     return {
         "full_gate_count": int(summary.get("full_gate_count") or 0),
         "full_gate_rate": summary.get("full_gate_rate"),
@@ -228,8 +239,11 @@ def extract_train_metrics(summary: dict[str, Any]) -> dict[str, Any]:
         "win_rate_net_rt_5m": mo.get("win_rate_net_rt_5m"),
         "avg_net_rt_bps_5m": mo.get("avg_net_rt_bps_5m"),
         "frac_clear_10bps_5m": mo.get("frac_clear_10bps_5m"),
-        "by_horizon_900": (mo.get("by_horizon") or {}).get("900"),
+        "primary_horizon_seconds": primary_s,
+        "primary_markout": primary_row,
+        "by_horizon_900": by_h.get("900"),
         "barrier": mo.get("barrier"),
+        "entry_bar": summary.get("entry_bar"),
     }
 
 
@@ -336,10 +350,17 @@ def run_config_on_window(
     decision_ts_max: float,
     include_barrier: bool = False,
     horizons: Sequence[int] = DEFAULT_MARKOUT_HORIZONS_SECONDS,
+    clear_horizon_seconds: int | None = None,
+    barrier_timeout_seconds: float | None = None,
+    entry_bar: str | None = None,
+    confirm_mid_bar: str | None = None,
+    confirm_high_bar: str | None = None,
 ) -> dict[str, Any]:
-    """Walk with frozen config; decisions only in [min, max)."""
-    return walk_forward_backtest(
-        series_list,
+    """Walk with frozen config; decisions only in [min, max).
+
+    F4: pass ``entry_bar`` + bar-scaled ``horizons`` / ``clear_horizon_seconds``.
+    """
+    kwargs: dict[str, Any] = dict(
         variant=config.variant,
         cooldown_seconds=config.cooldown_seconds,
         require_4h=config.require_4h,
@@ -352,6 +373,17 @@ def run_config_on_window(
         decision_ts_min=decision_ts_min,
         decision_ts_max=decision_ts_max,
     )
+    if clear_horizon_seconds is not None:
+        kwargs["clear_horizon_seconds"] = int(clear_horizon_seconds)
+    if barrier_timeout_seconds is not None:
+        kwargs["barrier_timeout_seconds"] = float(barrier_timeout_seconds)
+    if entry_bar is not None:
+        kwargs["entry_bar"] = str(entry_bar)
+    if confirm_mid_bar is not None:
+        kwargs["confirm_mid_bar"] = str(confirm_mid_bar)
+    if confirm_high_bar is not None:
+        kwargs["confirm_high_bar"] = str(confirm_high_bar)
+    return walk_forward_backtest(series_list, **kwargs)
 
 
 def config_from_dict(d: dict[str, Any]) -> StrategyConfig:
