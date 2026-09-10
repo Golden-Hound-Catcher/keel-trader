@@ -29,12 +29,16 @@ _FIRE_ACTIONS = frozenset({"BUY_LONG", "SELL_SHORT"})
 
 
 def normalize_variant(raw: str | None) -> str:
-    """Map CLI / env aliases to ``trend_follow`` or ``mean_revert``."""
+    """Map CLI / env aliases to known rule variants (incl. F5 TV-inspired)."""
     v = (raw or "trend_follow").strip().lower()
     if v in ("trend_follow", "trend-follow", "tf"):
         return "trend_follow"
     if v in ("mean_revert", "mean-revert", "mr"):
         return "mean_revert"
+    if v in ("supertrend", "super_trend", "super-trend", "st"):
+        return "supertrend"
+    if v in ("donchian", "donchian_breakout", "donchian-breakout", "dc"):
+        return "donchian"
     return "trend_follow"
 
 

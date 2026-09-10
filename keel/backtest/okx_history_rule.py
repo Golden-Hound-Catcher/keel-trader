@@ -458,14 +458,29 @@ def forced_e31_rule_env(
     pullback: bool = False,
     rsi_pullback_long_max: float | None = None,
     rsi_pullback_short_min: float | None = None,
+    st_atr_length: int | None = None,
+    st_factor: float | None = None,
+    donchian_period: int | None = None,
+    donchian_vol_mult: float | None = None,
+    require_1h: bool | None = None,
 ) -> Iterator[str]:
-    """Force TF + E3.1 require_4h + E2B MACD lag; pin F2a/F2b off by default."""
+    """Force TF/F5 env + E3.1 require_4h + E2B MACD lag; pin F2a/F2b off by default."""
     keys = {
         _ENV_TF_REQUIRE_4H: "1" if require_4h else "0",
         _ENV_TF_MACD_LAG: str(float(macd_lag_bps)),
         _ENV_TF_MAX_EXT: str(float(max_extension_atr)),
         _ENV_TF_PULLBACK: "1" if pullback else "0",
     }
+    if require_1h is not None:
+        keys["KEEL_RULE_REQUIRE_1H_TREND"] = "1" if require_1h else "0"
+    if st_atr_length is not None:
+        keys["KEEL_RULE_ST_ATR_LENGTH"] = str(int(st_atr_length))
+    if st_factor is not None:
+        keys["KEEL_RULE_ST_FACTOR"] = str(float(st_factor))
+    if donchian_period is not None:
+        keys["KEEL_RULE_DONCHIAN_PERIOD"] = str(int(donchian_period))
+    if donchian_vol_mult is not None:
+        keys["KEEL_RULE_DONCHIAN_VOL_MULT"] = str(float(donchian_vol_mult))
     if pullback and rsi_pullback_long_max is not None:
         keys[_ENV_TF_RSI_PB_LONG] = str(float(rsi_pullback_long_max))
     if pullback and rsi_pullback_short_min is not None:
@@ -509,6 +524,11 @@ def walk_forward_backtest(
     entry_bar: str | None = None,
     confirm_mid_bar: str | None = None,
     confirm_high_bar: str | None = None,
+    st_atr_length: int | None = None,
+    st_factor: float | None = None,
+    donchian_period: int | None = None,
+    donchian_vol_mult: float | None = None,
+    require_1h: bool | None = None,
 ) -> dict[str, Any]:
     """
     Walk closed entry-TF bars per instrument; record full-gate entries + markouts.
@@ -539,6 +559,11 @@ def walk_forward_backtest(
         pullback=pullback,
         rsi_pullback_long_max=rsi_pullback_long_max,
         rsi_pullback_short_min=rsi_pullback_short_min,
+        st_atr_length=st_atr_length,
+        st_factor=st_factor,
+        donchian_period=donchian_period,
+        donchian_vol_mult=donchian_vol_mult,
+        require_1h=require_1h,
     ):
         for series in series_list:
             inst = series.inst_id

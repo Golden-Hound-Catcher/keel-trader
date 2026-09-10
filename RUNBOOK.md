@@ -582,6 +582,47 @@ PYTHONPATH=. python scripts/okx_multitf_train_valid.py \
 
 **Residuals:** horizon alignment is the point of F4 (short-vs-short / long-vs-long); closed-bar higher-TF + train truncate; per-T grid selection bias — valid is the only honest score. Still **E0 freeze**.
 
+### Phase F5 — TradingView-inspired rule variants (opt-in)
+
+Jo: `trend_follow` fails ~10bps taker RT hurdle on train/valid and live post_e31. F5 maps **public** strategy *concepts* (not copyrighted Pine) into Keel:
+
+| Variant | Entry idea | Primary offline score |
+|---------|------------|----------------------|
+| `supertrend` | ATR-band **direction flip** (+ HTF filter) | `barrier_exit_markout` netRT |
+| `donchian` | Close beyond **prior-N** high/low + EMA filter + volume ≥ SMA×k (no repaint) | same |
+| `trend_follow` | Baseline (unchanged) | same compare |
+
+| Piece | Location |
+|-------|----------|
+| Indicators | `keel.factors.technical` (`calculate_supertrend`, `donchian_prior_channel`, `volume_sma_ratio`) |
+| Gates / reason codes | `keel.policy.tv_rules` + `_rule_variant()` |
+| Compare CLI | `scripts/okx_tv_strategy_compare.py` |
+| Tests | `tests/test_f5_tv_indicators.py`, `tests/test_f5_tv_variants.py` |
+
+```bash
+PYTHONPATH=. python scripts/okx_tv_strategy_compare.py \
+  --inst-ids BTC-USDT-SWAP \
+  --entry-bars 15m,30m,1H \
+  --json-out /tmp/keel_f5_tv_compare.json
+```
+
+**Offline result (BTC, 15m/30m/1H, barrier primary, modest grids):** no variant cleared valid barrier win≥0.55 with avg_net≥0 and n≥20. Best-looking train cells overfit (e.g. ST 15m train bar_win 80% n=5 → valid 0% n=1). Valid barrier wins: TF 10–15% / ST tiny-n 0–50% / DC 0–20%. Honest fail — do not claim / do not flip `.env`.
+
+| TF | variant | chosen | tr_FG | tr_bW | va_FG | va_bW | va_n | pass |
+|----|---------|--------|------:|------:|------:|------:|-----:|------|
+| 15m | trend_follow | 4h=1 cd=900 ext=0 | 36 | 47% | 21 | 11% | 19 | no |
+| 15m | supertrend | 4h=1 st=10×2 | 5 | 80% | 1 | 0% | 1 | no |
+| 15m | donchian | 4h=0 dc=20 vol≥1 | 12 | 42% | 15 | 20% | 15 | no |
+| 30m | trend_follow | 4h=1 ext=1.5 | 26 | 31% | 22 | 15% | 20 | no |
+| 30m | supertrend | 4h=0 st=10×2 | 4 | 50% | 2 | 50% | 2 | no |
+| 30m | donchian | 4h=1 dc=20 vol≥0.8 | 4 | 25% | 2 | 0% | 2 | no |
+| 1H | trend_follow | 4h=0 ext=1.5 | 26 | 31% | 14 | 15% | 13 | no |
+| 1H | supertrend | 4h=0 st=14×3 | 2 | 50% | 2 | 50% | 2 | no |
+| 1H | donchian | 4h=0 dc=20 vol≥0.8 | 3 | 0% | 3 | 0% | 3 | no |
+
+**Env (opt-in only):** `KEEL_RULE_VARIANT=supertrend|donchian` plus `KEEL_RULE_ST_*` / `KEEL_RULE_DONCHIAN_*`. Code default for **unset** remains `mean_revert`; live observe keeps `.env` (`trend_follow`). Cool-down still applies. **Do not** clear kill / enable near_probe / flip live variant unless valid barrier win ≥0.55 **and** avg_net≥0 **and** n≥20. Still **E0 freeze**.
+
+
 ### Phase F3 — train / validation strategy pipeline (no peeking)
 
 Jo protocol (offline, public OKX candles only):
