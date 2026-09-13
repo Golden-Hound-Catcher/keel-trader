@@ -29,12 +29,18 @@ _FIRE_ACTIONS = frozenset({"BUY_LONG", "SELL_SHORT"})
 
 
 def normalize_variant(raw: str | None) -> str:
-    """Map CLI / env aliases to ``trend_follow`` or ``mean_revert``."""
+    """Map CLI / env aliases to known rule variants (default ``trend_follow``)."""
     v = (raw or "trend_follow").strip().lower()
     if v in ("trend_follow", "trend-follow", "tf"):
         return "trend_follow"
     if v in ("mean_revert", "mean-revert", "mr"):
         return "mean_revert"
+    if v in ("regime", "router", "regime_router"):
+        return "regime"
+    if v in ("score", "regime_score", "scored"):
+        return "score"
+    if v in ("squeeze_release", "sqz", "squeeze"):
+        return "squeeze_release"
     return "trend_follow"
 
 

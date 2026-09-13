@@ -38,6 +38,9 @@ class TestSyntheticFactors(unittest.TestCase):
         self.assertTrue(snap.data_valid)
         self.assertGreater(snap.price, 0)
         self.assertGreater(snap.atr_14, 0)
+        self.assertNotEqual(snap.supertrend_direction, 0)
+        self.assertGreater(snap.supertrend, 0)
+        self.assertIn(snap.regime, ("trend", "range", "squeeze", "shock"))
         decision = rule_based_decision(snap)
         self.assertIn(decision.action, ("BUY_LONG", "SELL_SHORT", "WAIT"))
 
@@ -399,6 +402,9 @@ class TestOkxPublicCandlesInCycle(unittest.TestCase):
         self.assertTrue(snap.payload.get("data_valid"))
         self.assertEqual(snap.payload.get("data_quality_reason"), "okx_public")
         self.assertEqual(summary["cycle_summary"].get("market_source"), "okx_public")
+        self.assertIn("volume_percentile", snap.payload)
+        self.assertIn("regime", snap.payload)
+        self.assertIn("squeeze", snap.payload)
 
     def test_okx_fetch_failure_falls_back_synthetic(self):
         exchange = OkxRestAdapter(

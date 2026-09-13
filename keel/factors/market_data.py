@@ -89,6 +89,22 @@ class MarketSnapshot:
     trend_1h: Literal["bullish", "bearish", "neutral"] = "neutral"
     trend_4h: Literal["bullish", "bearish", "neutral"] = "neutral"
 
+    # Supertrend / ATR trailing stop (P0). direction: +1 bull, -1 bear, 0 none.
+    supertrend: float = 0.0
+    supertrend_direction: int = 0
+    supertrend_upper: float = 0.0
+    supertrend_lower: float = 0.0
+
+    # P1 regime: Bollinger / Keltner squeeze + router label.
+    bb_percent_b: float = 0.5
+    bb_bandwidth: float = 0.0
+    keltner_upper: float = 0.0
+    keltner_lower: float = 0.0
+    squeeze: bool = False
+    squeeze_prev: bool = False
+    squeeze_release: bool = False
+    regime: str = "range"
+
     # Data quality
     data_valid: bool = False
     data_quality_reason: str = ""

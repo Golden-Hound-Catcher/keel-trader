@@ -110,6 +110,11 @@ class TestApiAfterPaperCycle(unittest.TestCase):
                     "macd_line": 0.2,
                     "macd_signal": 0.1,
                     "data_quality_reason": "okx_public",
+                    "regime": "trend",
+                    "squeeze": False,
+                    "volume_percentile": 70.0,
+                    "supertrend_direction": 1,
+                    "bb_percent_b": 0.62,
                 },
             )
         )
@@ -119,6 +124,10 @@ class TestApiAfterPaperCycle(unittest.TestCase):
         self.assertEqual(body["source"], "ledger")
         self.assertEqual(body["data_quality_reason"], "okx_public")
         self.assertAlmostEqual(body["volume_ratio"], 1.2, places=4)
+        self.assertEqual(body.get("regime"), "trend")
+        self.assertEqual(body.get("squeeze"), False)
+        self.assertAlmostEqual(body.get("volume_percentile"), 70.0)
+        self.assertEqual(body.get("supertrend_direction"), 1)
 
     def test_status_shows_ledger_path(self):
         r = self.client.get("/api/v1/status")

@@ -205,6 +205,9 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("market_source", last_cycle_props)
         factors_props = comps["FactorsResponse"]["properties"]
         self.assertIn("data_quality_reason", factors_props)
+        self.assertIn("regime", factors_props)
+        self.assertIn("squeeze", factors_props)
+        self.assertIn("volume_percentile", factors_props)
         self.assertIn("RiskDenyReason", comps)
         self.assertIn("CycleError", comps)
         self.assertIn("DecisionsResponse", comps)
@@ -308,6 +311,10 @@ class TestApiSchemas(unittest.TestCase):
         ns_props = comps["NearestSignalsResponse"]["properties"]
         self.assertIn("summary", ns_props)
         self.assertIn("signals", ns_props)
+        nsi_props = comps["NearestSignalItem"]["properties"]
+        self.assertIn("llm_veto", nsi_props)
+        self.assertIn("fire_cooldown_active", nsi_props)
+        self.assertIn("rule_variant", nsi_props)
         di_props = comps["DecisionItem"]["properties"]
         self.assertIn("policy_name", di_props)
         self.assertIn("prompt_modules", di_props)

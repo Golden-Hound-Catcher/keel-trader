@@ -78,6 +78,45 @@ class TestDecisionExportHelpers(unittest.TestCase):
         self.assertGreater(snap.price, 0)
         self.assertGreater(snap.atr_14, 0)
 
+    def test_snapshot_roundtrips_regime_fields_from_payload(self):
+        snap = snapshot_from_export_row(
+            {
+                "inst_id": "ETH-USDT-SWAP",
+                "timestamp": time.time(),
+                "factors": {
+                    "price": 3000.0,
+                    "rsi_14": 55.0,
+                    "ema_9": 3010.0,
+                    "ema_21": 2990.0,
+                    "atr_14": 20.0,
+                    "macd_histogram": 0.4,
+                    "trend_15m": "bullish",
+                    "trend_1h": "bullish",
+                    "volume_ratio": 1.1,
+                    "volume_percentile": 62.0,
+                    "squeeze": True,
+                    "squeeze_prev": True,
+                    "squeeze_release": False,
+                    "regime": "squeeze",
+                    "supertrend_direction": 1,
+                    "vwap": 2995.0,
+                    "vwap_bias_pct": 0.16,
+                    "bb_percent_b": 0.8,
+                    "data_valid": True,
+                },
+            }
+        )
+        self.assertIsNotNone(snap)
+        assert snap is not None
+        self.assertTrue(snap.squeeze)
+        self.assertTrue(snap.squeeze_prev)
+        self.assertFalse(snap.squeeze_release)
+        self.assertEqual(snap.regime, "squeeze")
+        self.assertEqual(snap.supertrend_direction, 1)
+        self.assertAlmostEqual(snap.volume_percentile or 0.0, 62.0)
+        self.assertAlmostEqual(snap.vwap_bias_pct, 0.16)
+        self.assertAlmostEqual(snap.bb_percent_b, 0.8)
+
     def test_incomplete_row_skipped(self):
         row = {
             "inst_id": "ETH-USDT-SWAP",

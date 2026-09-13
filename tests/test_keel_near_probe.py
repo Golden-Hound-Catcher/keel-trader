@@ -98,6 +98,28 @@ class TestNearProbeGates(unittest.TestCase):
             near_signal_meets_gates({"nearest": "none", "missing": []}, max_missing=2)
         )
 
+    def test_rejects_suppressed_fire_diag(self):
+        self.assertFalse(
+            near_signal_meets_gates(
+                {
+                    "nearest": "long",
+                    "missing": [],
+                    "llm_veto": True,
+                },
+                max_missing=2,
+            )
+        )
+        self.assertFalse(
+            near_signal_meets_gates(
+                {
+                    "nearest": "short",
+                    "missing": [],
+                    "fire_cooldown_active": True,
+                },
+                max_missing=2,
+            )
+        )
+
     def test_min_confidence_gate(self):
         self.assertFalse(
             near_signal_meets_gates(

@@ -153,8 +153,12 @@ export interface KeelStatus {
   shadow_near_probe_edge_mode?: string
   shadow_near_probe_min_edge_bps?: number | null
   shadow_near_probe_hurdle_bps?: number | null
-  /** Active decision policy name (rule|stub|llm) from build_decision_policy. */
+  /** Active decision policy name (rule|stub|llm|llm_veto) from build_decision_policy. */
   decision_policy: string
+  /** E2A+: mean_revert | trend_follow | regime | score | squeeze_release */
+  rule_variant?: string
+  /** E3.1: TF 4h hard-require (effective; false unless trend_follow). */
+  tf_require_4h?: boolean
   last_cycle?: KeelLastCycle | null
   /** Seconds since last_cycle.timestamp; null if missing/unparsable. */
   seconds_since_last_cycle?: number | null
@@ -196,6 +200,9 @@ export interface KeelConfig {
   shadow_near_probe_hurdle_bps?: number | null
   /** Active decision policy name (same as status.decision_policy). */
   decision_policy: string
+  /** Same as status.rule_variant. */
+  rule_variant?: string
+  tf_require_4h?: boolean
   instruments: string[]
   notify_configured: boolean
   notify_alerts_only?: boolean
@@ -279,6 +286,11 @@ export interface KeelNearestSignalItem {
   ema_9?: number | null
   ema_21?: number | null
   macd_histogram?: number | null
+  /** True when this WAIT is an LLM veto of a rule fire (not a near-signal). */
+  llm_veto?: boolean
+  /** True when this WAIT is a full-gate spray cooldown (not a near-signal). */
+  fire_cooldown_active?: boolean
+  rule_variant?: string | null
 }
 
 export interface KeelNearestSignalsSummary {
@@ -523,9 +535,18 @@ export interface KeelTradesResponse {
   trades: KeelTrade[]
 }
 
+export interface KeelEvent {
+  id?: number | string | null
+  timestamp?: string | number
+  event_type?: string
+  type?: string
+  inst_id?: string | null
+  data?: Record<string, unknown> | null
+}
+
 export interface KeelEventsResponse {
   count: number
-  events: Array<Record<string, unknown>>
+  events: KeelEvent[]
 }
 
 export interface KeelFactors {
@@ -553,6 +574,16 @@ export interface KeelFactors {
   candle_count?: number
   /** Worker snapshot quality (okx_public / synthetic / synthetic_fallback:…); live = okx_public */
   data_quality_reason?: string | null
+  volume_percentile?: number | null
+  vwap?: number | null
+  vwap_bias_pct?: number | null
+  supertrend?: number | null
+  supertrend_direction?: number | null
+  bb_percent_b?: number | null
+  squeeze?: boolean | null
+  squeeze_prev?: boolean | null
+  squeeze_release?: boolean | null
+  regime?: string | null
 }
 
 /** Default watchlist — mirrors keel.domain.instruments.DEFAULT_CRYPTO_INSTRUMENTS */

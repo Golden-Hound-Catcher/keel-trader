@@ -14,6 +14,7 @@ from keel.execution.fire_cooldown import (
     apply_rule_fire_cooldown,
     clamp_rule_fire_cooldown_seconds,
     full_gate_fire_recent,
+    is_cooldown_fire,
 )
 from keel.ledger import KeelLedger
 from keel.ledger.full_gate import is_full_gate_fire
@@ -50,6 +51,7 @@ class TestFireCooldownApply(unittest.TestCase):
         }
 
     def tearDown(self):
+        self.ledger.close()
         self.temp.cleanup()
 
     def _record_fire(self, ts: float, action: str = "SELL_SHORT") -> None:
@@ -112,6 +114,30 @@ class TestFireCooldownApply(unittest.TestCase):
         self.assertFalse(
             is_full_gate_fire(out.action, out.signal_diag, policy_name="rule")
         )
+        self.assertEqual(out.signal_diag.get("nearest"), "none")
+        self.assertEqual(out.signal_diag.get("nearest_before_suppress"), "short")
+        self.assertIn("fire_cooldown_ok", out.signal_diag.get("missing") or [])
+        from keel.execution.near_probe import near_signal_meets_gates, evaluate_near_probe
+        from keel.factors.market_data import MarketSnapshot
+
+        self.assertFalse(near_signal_meets_gates(out.signal_diag, max_missing=2))
+        snap = MarketSnapshot(
+            inst_id=self.inst,
+            name="BTC",
+            timestamp=self.now,
+            price=100.0,
+            atr_14=1.0,
+            data_valid=True,
+        )
+        probe = evaluate_near_probe(
+            out,
+            snap,
+            kill_switch=True,
+            shadow_mode=True,
+            probe_enabled=True,
+        )
+        self.assertFalse(probe.fired)
+        self.assertEqual(probe.skip_reason, "not_near")
 
     def test_after_window_can_fire_again(self):
         self._record_fire(self.now - 1000)
@@ -184,6 +210,176 @@ class TestFireCooldownApply(unittest.TestCase):
             policy_name="rule",
         )
         self.assertEqual(out.action, "SELL_SHORT")
+
+
+    def test_llm_veto_confirmed_fire_enters_cooldown(self):
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=self.now - 60,
+                inst_id=self.inst,
+                action="SELL_SHORT",
+                confidence=70.0,
+                entry_price=100.0,
+                take_profit=95.0,
+                stop_loss=102.0,
+                reason="llm confirm",
+                policy_name="llm_veto",
+                calculus_data={
+                    "market_source": "okx_public",
+                    "signal_diag": dict(self.diag),
+                },
+            )
+        )
+        self.assertTrue(
+            full_gate_fire_recent(
+                self.ledger,
+                inst_id=self.inst,
+                cooldown_seconds=900,
+                now=self.now,
+            )
+        )
+        candidate = Decision(
+            inst_id=self.inst,
+            action="SELL_SHORT",
+            confidence=70.0,
+            entry_price=100.0,
+            take_profit=95.0,
+            stop_loss=102.0,
+            reason="would fire again",
+            signal_diag=dict(self.diag),
+        )
+        out = apply_rule_fire_cooldown(
+            candidate,
+            ledger=self.ledger,
+            cooldown_seconds=900,
+            now=self.now,
+            policy_name="llm_veto",
+        )
+        self.assertEqual(out.action, "WAIT")
+        self.assertTrue(out.signal_diag.get("fire_cooldown_active"))
+
+    def test_llm_buy_enters_cooldown_without_full_gate(self):
+        llm_diag = {"reason": "model"}
+        self.assertFalse(
+            is_full_gate_fire("BUY_LONG", llm_diag, policy_name="llm")
+        )
+        self.assertTrue(
+            is_cooldown_fire("BUY_LONG", llm_diag, policy_name="llm")
+        )
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=self.now - 60,
+                inst_id=self.inst,
+                action="BUY_LONG",
+                confidence=70.0,
+                entry_price=100.0,
+                take_profit=105.0,
+                stop_loss=98.0,
+                reason="llm fire",
+                policy_name="llm",
+                calculus_data={"signal_diag": llm_diag},
+            )
+        )
+        self.assertTrue(
+            full_gate_fire_recent(
+                self.ledger,
+                inst_id=self.inst,
+                cooldown_seconds=900,
+                now=self.now,
+            )
+        )
+        candidate = Decision(
+            inst_id=self.inst,
+            action="BUY_LONG",
+            confidence=70.0,
+            entry_price=100.0,
+            take_profit=105.0,
+            stop_loss=98.0,
+            reason="would spray",
+            signal_diag=dict(llm_diag),
+        )
+        out = apply_rule_fire_cooldown(
+            candidate,
+            ledger=self.ledger,
+            cooldown_seconds=900,
+            now=self.now,
+            policy_name="llm",
+        )
+        self.assertEqual(out.action, "WAIT")
+        self.assertTrue(out.signal_diag.get("fire_cooldown_active"))
+        self.assertFalse(
+            is_full_gate_fire(out.action, out.signal_diag, policy_name="llm")
+        )
+        self.assertFalse(
+            is_cooldown_fire(out.action, out.signal_diag, policy_name="llm")
+        )
+
+    def test_llm_wait_does_not_start_cooldown(self):
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=self.now - 30,
+                inst_id=self.inst,
+                action="WAIT",
+                confidence=40.0,
+                reason="htf block",
+                policy_name="llm",
+                calculus_data={"signal_diag": {"missing": ["htf_ok"]}},
+            )
+        )
+        candidate = Decision(
+            inst_id=self.inst,
+            action="BUY_LONG",
+            confidence=70.0,
+            entry_price=100.0,
+            take_profit=105.0,
+            stop_loss=98.0,
+            reason="aligned fire",
+        )
+        out = apply_rule_fire_cooldown(
+            candidate,
+            ledger=self.ledger,
+            cooldown_seconds=900,
+            now=self.now,
+            policy_name="llm",
+        )
+        self.assertEqual(out.action, "BUY_LONG")
+
+    def test_llm_reentry_blocks_beyond_900s(self):
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=self.now - 1000,
+                inst_id=self.inst,
+                action="BUY_LONG",
+                confidence=70.0,
+                entry_price=100.0,
+                take_profit=105.0,
+                stop_loss=98.0,
+                reason="llm fire",
+                policy_name="llm",
+                calculus_data={"signal_diag": {"reason": "model"}},
+            )
+        )
+        candidate = Decision(
+            inst_id=self.inst,
+            action="BUY_LONG",
+            confidence=70.0,
+            entry_price=100.0,
+            take_profit=105.0,
+            stop_loss=98.0,
+            reason="would spray after sl",
+        )
+        out = apply_rule_fire_cooldown(
+            candidate,
+            ledger=self.ledger,
+            cooldown_seconds=900,
+            now=self.now,
+            policy_name="llm",
+        )
+        self.assertEqual(out.action, "WAIT")
+        self.assertTrue(out.signal_diag.get("fire_cooldown_active"))
+        self.assertGreaterEqual(
+            int(out.signal_diag.get("fire_cooldown_seconds") or 0), 3600
+        )
 
 
 if __name__ == "__main__":

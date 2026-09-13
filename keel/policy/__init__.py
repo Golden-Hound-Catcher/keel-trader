@@ -12,7 +12,12 @@ from keel.policy.stub import (
     resolve_tf_rsi_pullback_short_min,
     rule_based_decision,
 )
-from keel.policy.llm_policy import LLMDecisionPolicy
+from keel.policy.llm_policy import LLMDecisionPolicy, VetoLLMDecisionPolicy, apply_llm_veto
+from keel.policy.edge_overlay import (
+    apply_llm_book_lock,
+    apply_llm_edge_overlay,
+    plan_llm_geometry,
+)
 from keel.policy.factory import build_decision_policy, describe_policy
 
 __all__ = [
@@ -22,6 +27,11 @@ __all__ = [
     "StubDecisionPolicy",
     "RuleDecisionPolicy",
     "LLMDecisionPolicy",
+    "VetoLLMDecisionPolicy",
+    "apply_llm_veto",
+    "apply_llm_book_lock",
+    "apply_llm_edge_overlay",
+    "plan_llm_geometry",
     "diagnose_rule_signal",
     "resolve_rule_variant",
     "resolve_tf_require_4h",

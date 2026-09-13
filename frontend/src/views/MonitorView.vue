@@ -36,7 +36,9 @@ import {
   marketSourceZh,
   missingGateZh,
   policyZh,
+  policyLabel,
   radarNearestLabel,
+  regimeZh,
   sideZh,
 } from '../utils/monitorZh'
 
@@ -80,11 +82,21 @@ function decisionSignalDiag(d: { signal_diag?: Record<string, unknown> | null; c
   return null
 }
 
+function decisionRuleVariant(d: {
+  signal_diag?: Record<string, unknown> | null
+  calculus_data?: Record<string, unknown>
+}): string | undefined {
+  const diag = decisionSignalDiag(d)
+  const v = diag?.rule_variant
+  return typeof v === 'string' && v.trim() ? v : undefined
+}
+
 function nearSignalNearest(d: { action?: string; signal_diag?: Record<string, unknown> | null; calculus_data?: Record<string, unknown> }): string | null {
   if ((d.action || '').toUpperCase() !== 'WAIT') return null
   const diag = decisionSignalDiag(d)
+  if (diag?.llm_veto || diag?.fire_cooldown_active) return null
   const n = diag?.nearest
-  return typeof n === 'string' && n ? n : null
+  return typeof n === 'string' && n && n !== 'none' ? n : null
 }
 
 function nearSignalMissing(d: { action?: string; signal_diag?: Record<string, unknown> | null; calculus_data?: Record<string, unknown> }): string[] {
@@ -448,6 +460,7 @@ const EVENT_TYPE_ZH: Record<string, string> = {
   order_accepted: '订单已接受',
   order_sized: '仓位已缩放',
   shadow_fill: '影子成交',
+  shadow_near_probe_skip: '近探跳过',
 }
 
 function eventTypeZh(raw: unknown): string {
@@ -653,7 +666,13 @@ const shadowProbeMarkoutChip = computed(() => {
         : 'gross mid',
   }
 })
-function radarNearestClass(nearest: string | null | undefined, action: string): string {
+function radarNearestClass(
+  nearest: string | null | undefined,
+  action: string,
+  extra?: { llm_veto?: boolean | null; fire_cooldown_active?: boolean | null },
+): string {
+  if (extra?.llm_veto) return 'bg-violet-500/15 text-violet-300 border-violet-500/40'
+  if (extra?.fire_cooldown_active) return 'bg-amber-500/15 text-amber-300 border-amber-500/40'
   const a = (action || '').toUpperCase()
   if (a === 'BUY_LONG') return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
   if (a === 'SELL_SHORT') return 'bg-rose-500/20 text-rose-300 border-rose-500/50'
@@ -1034,6 +1053,7 @@ const statusHero = computed(() => {
     policy: String(
       store.config?.decision_policy || store.status?.decision_policy || '—',
     ),
+    ruleVariant: store.config?.rule_variant || store.status?.rule_variant || '',
     armingReady: armingReady.value,
     armingBlockers: armingBlockers.value || [],
     firstLiveAllowed: firstLiveAllowed.value,
@@ -1110,7 +1130,10 @@ const configStrip = computed(() => {
     c?.shadow_near_probe_cooldown_seconds ?? store.status?.shadow_near_probe_cooldown_seconds
   const isLiveEnv = String(env).toLowerCase() === 'live'
   const notify = c?.notify_configured
-  const policy = c?.decision_policy || store.status?.decision_policy || '—'
+  const policy = policyLabel(
+    c?.decision_policy || store.status?.decision_policy || '—',
+    c?.rule_variant || store.status?.rule_variant,
+  )
   const intervalSec = cycleIntervalSeconds.value
   const presetRaw = c?.observe_preset
   const preset = typeof presetRaw === 'string' && presetRaw.trim() ? presetRaw.trim() : null
@@ -1132,7 +1155,9 @@ const configStrip = computed(() => {
     nearProbe: nearProbe ? '开' : '关',
     nearProbeCd: nearProbeCd == null ? '—' : String(nearProbeCd),
     notify: notify == null ? '—' : notify ? '有' : '无',
-    policy: policyZh(policy),
+    policy,
+    variant: c?.rule_variant || store.status?.rule_variant || '',
+    tfRequire4h: Boolean(c?.tf_require_4h ?? store.status?.tf_require_4h),
     cycle: formatCycleIntervalLabel(intervalSec),
     cycleTitle: `Trader cycle interval ${intervalSec}s; stale threshold uses max(2×interval, interval+300) = ${workerStaleThreshold.value}s`,
     preset,
@@ -1459,7 +1484,7 @@ const configStrip = computed(() => {
               </div>
               <div>
                 <div class="text-[#707E94]">策略</div>
-                <div class="text-white">{{ policyZh(lastCycle.policy) }}</div>
+                <div class="text-white">{{ policyLabel(lastCycle.policy, store.config?.rule_variant || store.status?.rule_variant) }}</div>
               </div>
               <div>
                 <div class="text-[#707E94]">品种数</div>
@@ -1870,6 +1895,11 @@ const configStrip = computed(() => {
             <span class="text-[#A8B3C7]">模式 <span class="text-white">{{ configStrip.mode }}</span></span>
             <span class="text-[#A8B3C7]">策略 <span class="text-white">{{ configStrip.policy }}</span></span>
             <span
+              v-if="configStrip.tfRequire4h"
+              class="text-[#A8B3C7]"
+              title="趋势跟踪强制 15m+1h+4h 同向"
+            >4h <span class="text-white">强制</span></span>
+            <span
               class="text-[#A8B3C7] max-w-[18rem] truncate"
               :title="configStrip.instListFull"
             >品种 <span class="text-white">{{ configStrip.instListShort }}</span>
@@ -2038,9 +2068,9 @@ const configStrip = computed(() => {
                 <span class="text-white font-bold min-w-[4rem]">{{ shortInstLabel(s.inst_id) }}</span>
                 <span
                   class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
-                  :class="radarNearestClass(s.nearest, s.action)"
-                  :title="`${s.action} · nearest ${s.nearest || '—'}`"
-                >{{ radarNearestLabel(s.nearest, s.action) }}</span>
+                  :class="radarNearestClass(s.nearest, s.action, s)"
+                  :title="`${s.action} · nearest ${s.nearest || '—'} · ${s.rule_variant || ''}`"
+                >{{ radarNearestLabel(s.nearest, s.action, s) }}</span>
                 <span
                   v-for="gate in radarMissing(s)"
                   :key="`${s.inst_id}-${gate}`"
@@ -2182,8 +2212,8 @@ const configStrip = computed(() => {
                   <td class="py-2 pr-3 font-semibold whitespace-nowrap" :class="actionClass(d.action)">{{ actionZh(d.action) }}</td>
                   <td
                     class="py-2 pr-3 text-zinc-300 max-w-[9rem] truncate"
-                    :title="[d.policy_name || '', modulesPreview(d.prompt_modules)].filter(Boolean).join(' · ')"
-                  >{{ policyZh(d.policy_name) }}<span v-if="modulesPreview(d.prompt_modules)" class="text-[#707E94]"> · {{ modulesPreview(d.prompt_modules) }}</span></td>
+                    :title="[d.policy_name || '', decisionRuleVariant(d) || '', modulesPreview(d.prompt_modules)].filter(Boolean).join(' · ')"
+                  >{{ policyLabel(d.policy_name, decisionRuleVariant(d) || store.config?.rule_variant) }}<span v-if="modulesPreview(d.prompt_modules)" class="text-[#707E94]"> · {{ modulesPreview(d.prompt_modules) }}</span></td>
                   <td class="py-2 pr-3">{{ fmtConfidence(d.confidence) }}</td>
                   <td class="py-2 pr-3">{{ fmt(d.entry_price) }}</td>
                   <td class="py-2 text-zinc-400 max-w-lg whitespace-normal break-words" :title="d.reason">
@@ -2364,6 +2394,7 @@ const configStrip = computed(() => {
                   <th class="pb-2 pr-3">EMA21</th>
                   <th class="pb-2 pr-3">量比</th>
                   <th class="pb-2 pr-3">MACD柱</th>
+                  <th class="pb-2 pr-3">状态</th>
                   <th class="pb-2">趋势 15m/1h/4h</th>
                 </tr>
               </thead>
@@ -2383,6 +2414,24 @@ const configStrip = computed(() => {
                   <td class="py-2 pr-3">{{ fmt(row.f?.ema_21) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.volume_ratio, 2) }}</td>
                   <td class="py-2 pr-3">{{ fmt(row.f?.macd?.histogram) }}</td>
+                  <td class="py-2 pr-3">
+                    <span
+                      v-if="row.f?.regime || row.f?.squeeze != null"
+                      class="inline-flex items-center gap-1 flex-wrap"
+                      :title="`regime=${row.f?.regime || '—'} squeeze=${row.f?.squeeze ?? '—'} release=${row.f?.squeeze_release ?? '—'} %B=${row.f?.bb_percent_b ?? '—'} ST=${row.f?.supertrend_direction ?? '—'}`"
+                    >
+                      <span class="inline-flex items-center px-1 rounded border text-[10px] font-mono bg-zinc-500/10 text-[#A8B3C7] border-zinc-500/30">{{ regimeZh(row.f?.regime) }}</span>
+                      <span
+                        v-if="row.f?.squeeze"
+                        class="inline-flex items-center px-1 rounded border text-[10px] font-mono bg-amber-500/10 text-amber-400 border-amber-500/30"
+                      >挤压</span>
+                      <span
+                        v-else-if="row.f?.squeeze_release"
+                        class="inline-flex items-center px-1 rounded border text-[10px] font-mono bg-cyan-500/10 text-cyan-400 border-cyan-500/30"
+                      >释放</span>
+                    </span>
+                    <span v-else class="text-[#707E94]">—</span>
+                  </td>
                   <td class="py-2">
                     <span v-if="row.loading && !row.f" class="text-cyan-400/80">加载中…</span>
                     <span

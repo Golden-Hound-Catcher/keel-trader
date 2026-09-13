@@ -52,6 +52,10 @@ export function economicEvidenceZh(code: string | null | undefined): string {
       return '近探'
     case 'full_gate':
       return '满门'
+    case 'full_gate_post_e31':
+      return '满门(新队列)'
+    case 'insufficient_post_e31':
+      return '满门新队列不足'
     case 'mixed':
       return '混合'
     case 'stale_pre_e31':
@@ -73,6 +77,7 @@ export interface StatusHeroInput {
   nearProbe: boolean
   environment: string
   policy: string
+  ruleVariant?: string | null
   armingReady: boolean
   armingBlockers: string[]
   firstLiveAllowed: boolean
@@ -110,9 +115,38 @@ export function envZh(raw: unknown): string {
 export function policyZh(raw: unknown): string {
   const p = String(raw || '').trim().toLowerCase()
   if (p === 'llm') return 'LLM'
+  if (p === 'llm_veto' || p === 'veto' || p === 'rule_llm') return 'LLM否决'
   if (p === 'rule' || p === 'rules') return '规则'
   if (p === 'stub') return '占位'
   return String(raw || '—') || '—'
+}
+
+export function ruleVariantZh(raw: unknown): string {
+  const v = String(raw || '').trim().toLowerCase()
+  switch (v) {
+    case 'mean_revert':
+      return '均值回归'
+    case 'trend_follow':
+      return '趋势跟踪'
+    case 'regime':
+      return '状态路由'
+    case 'score':
+      return '评分路由'
+    case 'squeeze_release':
+      return '挤压释放'
+    default:
+      return ''
+  }
+}
+
+/** Policy + rule variant in one label (rule overlay still shows the variant). */
+export function policyLabel(policy: unknown, variant?: unknown): string {
+  const p = policyZh(policy)
+  const v = ruleVariantZh(variant)
+  if (!v) return p
+  const key = String(policy || '').trim().toLowerCase()
+  if (key === 'stub') return p
+  return `${p} · ${v}`
 }
 
 export function exchangeModeZh(raw: unknown): string {
@@ -120,6 +154,24 @@ export function exchangeModeZh(raw: unknown): string {
   if (m.includes('okx')) return '欧易'
   if (m.includes('paper')) return '本地模拟'
   return String(raw || '—') || '—'
+}
+
+export function regimeZh(raw: unknown): string {
+  const r = String(raw || '').trim().toLowerCase()
+  switch (r) {
+    case 'trend':
+      return '趋势'
+    case 'range':
+      return '震荡'
+    case 'squeeze':
+      return '挤压'
+    case 'shock':
+      return '冲击'
+    case 'squeeze_release':
+      return '释放'
+    default:
+      return r || '—'
+  }
 }
 
 export function marketSourceZh(raw: unknown): string {
@@ -154,13 +206,25 @@ export function sideZh(side: string | undefined | null): string {
 const MISSING_GATE_ZH: Record<string, string> = {
   volume_ok: '量能',
   rsi_ok: 'RSI',
+  rsi_long_ok: 'RSI多',
+  rsi_short_ok: 'RSI空',
   macd_ok: 'MACD',
+  macd_long_ok: 'MACD多',
+  macd_short_ok: 'MACD空',
   trend_ok: '趋势',
   rr_ok: '盈亏比',
   risk_ok: '风控',
   atr_ok: 'ATR',
   alignment_ok: '多周期同向',
   edge_ok: '边际不足',
+  regime_ok: '状态',
+  squeeze_release: '挤压释放',
+  range_vwap_ok: 'VWAP',
+  fire_cooldown_ok: '开仓冷却',
+  llm_veto_ok: '模型否决',
+  data_valid: '数据',
+  extension_ok: '延伸',
+  pullback_ok: '回撤',
 }
 
 export function missingGateZh(raw: unknown): string {
@@ -170,7 +234,13 @@ export function missingGateZh(raw: unknown): string {
   return g.replace(/_ok$/, '').replace(/_/g, ' ')
 }
 
-export function radarNearestLabel(nearest: string | null | undefined, action: string): string {
+export function radarNearestLabel(
+  nearest: string | null | undefined,
+  action: string,
+  extra?: { llm_veto?: boolean | null; fire_cooldown_active?: boolean | null },
+): string {
+  if (extra?.llm_veto) return '已否决'
+  if (extra?.fire_cooldown_active) return '冷却中'
   const a = (action || '').toUpperCase()
   if (a === 'BUY_LONG') return '已做多'
   if (a === 'SELL_SHORT') return '已做空'
@@ -214,7 +284,7 @@ export function displayReason(raw: unknown): string {
  */
 export function buildStatusHero(input: StatusHeroInput): StatusHeroModel {
   const env = envZh(input.environment)
-  const policy = policyZh(input.policy)
+  const policy = policyLabel(input.policy, input.ruleVariant)
   const primary = primaryBlockerOf(input)
   const tradingNow = !input.killSwitch && !input.shadowMode
   const envKey = (input.environment || '').toLowerCase()

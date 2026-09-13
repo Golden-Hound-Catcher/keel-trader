@@ -481,6 +481,9 @@ class NearestSignalItem(BaseModel):
     ema_9: float | None = None
     ema_21: float | None = None
     macd_histogram: float | None = None
+    llm_veto: bool = False
+    fire_cooldown_active: bool = False
+    rule_variant: str | None = None
 
 
 class NearestSignalsSummary(BaseModel):
@@ -574,3 +577,14 @@ class FactorsResponse(BaseModel):
     candle_count: int | None = None
     # Worker snapshot quality tag (okx_public / synthetic / synthetic_fallback:…); live path = okx_public.
     data_quality_reason: str | None = None
+    # P1 fields the rule actually uses (soft-fail if older snapshots omit them).
+    volume_percentile: float | None = None
+    vwap: float | None = None
+    vwap_bias_pct: float | None = None
+    supertrend: float | None = None
+    supertrend_direction: int | None = None
+    bb_percent_b: float | None = None
+    squeeze: bool | None = None
+    squeeze_prev: bool | None = None
+    squeeze_release: bool | None = None
+    regime: str | None = None

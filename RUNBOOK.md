@@ -385,7 +385,7 @@ Live observe showed `full_gate_fires=0` under default **mean-reversion** RSI (WA
 
 | Knob | Default | Notes |
 |------|---------|--------|
-| `KEEL_RULE_VARIANT` | `mean_revert` | `trend_follow` enables E2A semantics |
+| `KEEL_RULE_VARIANT` | `mean_revert` | `trend_follow` enables E2A; **`regime`** = P1 router; **`score`** = P2 scored router; **`squeeze_release`** = P5 event entry (measurement; do not arm) |
 | `KEEL_RULE_TF_RSI_LONG_MAX` | `68` | Long OK when RSI **not overbought** (`rsi_14 ≤ max`) |
 | `KEEL_RULE_TF_RSI_SHORT_MIN` | `32` | Short OK when RSI **not oversold** (`rsi_14 ≥ min`) |
 
@@ -578,31 +578,51 @@ Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear, no arm from F3
 
 ### Phase F2c — strategy compare on same candles (measurement)
 
-Jo: F2a/F2b entry filters did not lift 5m net toward **0.55**. F2c asks whether **mean_revert** beats TF E3.1 on the same public candles, and whether a **barrier exit** (TP 2.2×ATR / SL 1.0×ATR / timeout 900s on subsequent 15m OHLC; SL-first if both print) looks better than fixed **300s** markout — **measurement only**, not a live exit change.
+Jo: F2a/F2b entry filters did not lift 5m net toward **0.55**. F2c asks whether **mean_revert** beats TF E3.1 on the same public candles, and whether a **barrier exit** (TP 2.2×ATR / SL 1.0×ATR / timeout 900s on subsequent 15m OHLC; SL-first if both print) looks better than fixed **300s** markout. **P0** adds a **Supertrend ATR trail** on the same TF fires (no distant TP; ratchet SL each closed 15m bar; exit on SL / Supertrend flip / 4h timeout) because F2c barrier was dominated by 900s timeout (TP almost never prints). Still **measurement only**, not a live exit change.
 
-**Offline result (BTC+ETH+SOL, ~700×15m, cd=900):** A TF FG=60 / 5m win **10%** avg **−11.2bps** frac_clear **0%**; B mean_revert FG=**0**; C barrier on same TF fires win **20%** avg **−9.9bps** frac_clear **13%** (exits timeout 51 / SL 7 / TP 2). None reach 0.55 — keep waiting / do not flip family or live exits from F2c alone.
+**Offline result (BTC+ETH+SOL, ~700×15m, cd=900):** A TF FG≈68 / 5m win **~9%** avg **−10bps**; B mean_revert FG=**0**; C barrier win **~19%** avg **−10.6bps** (timeout-dominated). **C2 same path, Regular maker 4bps RT:** win **~35%** avg **−4.6bps** (fee line +6bps, still net≤0; 100% limit fill assumed). **H P5 squeeze_release** (cd=4h, 4h time-stop): FG=**6** (sparse) win **33%** avg **−22bps** (4 SL / 1 TP / 1 timeout; avg hold ~1.5h). **H2 maker:** still **−16bps**. Stop: H net≤0 and too sparse; C2 does not clear 0. Do not set live variant/exits from this.
 
 | Leg | Setup | Markout |
 |-----|-------|---------|
 | **A** | `trend_follow` + require_4h + cooldown; **ext=0, pullback=0** | Fixed 60/300/900s fee-aware net RT |
 | **B** | `mean_revert` (same cooldown) | Fixed 300s primary |
 | **C** | Same TF fires as A | Barrier TP/SL/timeout (optional; vs 300s) |
+| **D** | Same TF fires as A | Supertrend trail (ATR 10×3, initial SL 1.0 ATR, timeout 4h; optional) |
+| **E** | `KEEL_RULE_VARIANT=regime` (4h off) | Fixed 300s; optional barrier as E2 |
+| **F** | `KEEL_RULE_VARIANT=score` (4h off; score≥4) | Fixed 300s; optional barrier as F2 |
+| **G** | Same fires as A/F | TP 1.0 full close / 1R scale-half (15m timeout; measurement) |
+| **C2** | Same C path | Regular **maker** 2bps/leg (RT 4bps) reprice — 100% fill assumed |
+| **H** | `KEEL_RULE_VARIANT=squeeze_release` (cd=4h) | Barrier TP 2.2 / SL 1.0 / **4h hard time-stop** |
+| **H2** | Same H path | Maker 4bps RT reprice |
 
 ```bash
 # Public API only — strips OKX keys / KEEL_SKIP_DOTENV (never writes .env)
 PYTHONPATH=. python scripts/okx_history_strategy_compare.py \
   --inst-ids BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP \
   --bars-15m 700 --cooldown-seconds 900 \
-  --json-out /tmp/keel_f2c_strategy_compare.json
+  --skip-trail
 ```
 
 | Piece | Location |
 |-------|----------|
+| Supertrend factor | `keel.factors.technical.calculate_supertrend` |
+| Keltner / squeeze / release / regime | `calculate_keltner` / `detect_squeeze` / `detect_squeeze_release` / `classify_market_regime` |
 | Barrier exit markout | `keel.backtest.okx_history_rule.barrier_exit_markout` |
-| Walk flag | `walk_forward_backtest(..., include_barrier=True)` |
-| Compare CLI | `scripts/okx_history_strategy_compare.py` |
+| Trail exit markout | `keel.backtest.okx_history_rule.trailing_supertrend_exit_markout` |
+| MFE/MAE path | `excursion_markout` (1R=1.0 ATR; 15m snapshot + 4h or SL) |
+| 1R scale-out | `scale_exit_markout` |
+| Walk flags | `walk_forward_backtest(..., variant=regime\|score\|squeeze_release, include_mfe, include_early_tp, barrier_timeout_seconds)` |
+| Compare CLI | `scripts/okx_history_strategy_compare.py` (`--skip-trail` / `--skip-mfe` / `--skip-early-tp` / `--skip-squeeze` / `--skip-maker`) |
+| Maker reprice | `reprice_exit_rows` from `gross_bps` (Regular maker 2 / taker 5 bps per leg) |
+| LLM veto overlay | `KEEL_DECISION_POLICY=llm_veto` (`VetoLLMDecisionPolicy`; not in this walk) |
 
-Still **E0 freeze** (no near_probe, no hurdle cut, no kill clear). Do not flip live variant or exits from F2c alone.
+**P1 regime (`KEEL_RULE_VARIANT=regime`, default off):** squeeze or shock → WAIT; trend → TF-like 15m+1h (4h default **off**); range → `percent_b` ≤0.20 / ≥0.80 + VWAP side + RSI 50 + volume (no EMA/MACD AND).
+
+**P2 score (`KEEL_RULE_VARIANT=score`, default off):** same router. Trend: 0–5 (HTF 1h, Supertrend, EMA21/VWAP pullback on discount side, MACD, volume); **must** HTF+Supertrend; fire ≥4; RSI>70 / <30 vetoes chase. Range: **must** `%B` ≤0.15 / ≥0.85 + VWAP adverse, then ≥4 of five (incl. RSI 40/60, volume without `soft_range`, Supertrend not against). P1 `regime` stays frozen.
+
+**P4 LLM veto (`KEEL_DECISION_POLICY=llm_veto`, default off):** rule proposes first; LLM is only called on fires; may WAIT (veto) or confirm the same side (shrink margin only). Cannot upgrade WAIT, cannot flip side. LLM down → WAIT (`KEEL_LLM_VETO_FAIL_OPEN=1` to keep the rule). Not a substitute for a fee-positive rule.
+
+**P5 squeeze-release + cost (`KEEL_RULE_VARIANT=squeeze_release`, default off):** fire only on the first expansion bar after a TTM squeeze, with Supertrend and 1h agreement (RSI chase veto 70/30). Compare CLI leg **H** holds with a **4h hard time-stop** (not Supertrend trail). Legs **C2/H2** reprice the same barrier path at Regular maker 2bps/leg (RT 4 vs taker 10). Fill is assumed 100% at the limit — not a live post-only guarantee. Still **E0 freeze**. Do not flip live variant, exits, or decision policy from F2c/P0–P5/MFE alone.
 
 ### Phase F0b — historical OKX candle backtest (offline)
 

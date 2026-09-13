@@ -327,6 +327,50 @@ class OKXRestAdapter:
             )
         return orders
 
+    def get_pending_oco(self, inst_id: str | None = None) -> list[dict[str, Any]]:
+        """Pending OCO / attached TP-SL algos (demo+live). Empty on failure."""
+        params: dict[str, Any] = {"ordType": "oco", "instType": "SWAP"}
+        if inst_id:
+            params["instId"] = inst_id
+        try:
+            result = self._request(
+                "GET", "/api/v5/trade/orders-algo-pending", params=params
+            )
+        except Exception:
+            return []
+        rows = result.get("data") or []
+        return [r for r in rows if isinstance(r, dict)]
+
+    def amend_oco_tpsl(
+        self,
+        inst_id: str,
+        algo_id: str,
+        *,
+        sl: float | None = None,
+        tp: float | None = None,
+    ) -> bool:
+        """Amend a live OCO's SL/TP. Returns False on rejection."""
+        body: dict[str, Any] = {
+            "instId": inst_id,
+            "algoId": str(algo_id),
+        }
+        if sl is not None:
+            body["newSlTriggerPx"] = _fmt_px(float(sl), inst_id)
+            body["newSlOrdPx"] = "-1"
+            body["newSlTriggerPxType"] = "last"
+        if tp is not None:
+            body["newTpTriggerPx"] = _fmt_px(float(tp), inst_id)
+            body["newTpOrdPx"] = "-1"
+            body["newTpTriggerPxType"] = "last"
+        if "newSlTriggerPx" not in body and "newTpTriggerPx" not in body:
+            return False
+        try:
+            result = self._request("POST", "/api/v5/trade/amend-algos", body=body)
+            data = (result.get("data") or [{}])[0]
+            return str(data.get("sCode", "0")) == "0"
+        except Exception:
+            return False
+
     def _account_config(self) -> dict[str, Any]:
         if self._account_cfg is None:
             result = self._request("GET", "/api/v5/account/config")

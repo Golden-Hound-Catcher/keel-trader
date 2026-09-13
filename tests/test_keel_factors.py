@@ -6,10 +6,16 @@ from keel.factors.technical import (
     calculate_sma,
     calculate_rsi,
     calculate_atr,
+    calculate_atr_series,
     calculate_macd,
     calculate_bollinger,
     calculate_vwap,
     calculate_obv,
+    calculate_supertrend,
+    calculate_keltner,
+    detect_squeeze,
+    detect_squeeze_release,
+    classify_market_regime,
     classify_trend,
 )
 
@@ -106,6 +112,125 @@ class TestATR(unittest.TestCase):
         high_atr = calculate_atr(high_vol_highs, high_vol_lows, high_vol_closes, 14)
         
         self.assertGreater(high_atr, low_atr)
+
+
+class TestSupertrend(unittest.TestCase):
+    """P0 Supertrend / ATR trailing stop."""
+
+    def _ohlc(self, closes: list[float], width: float = 0.4) -> tuple[list[float], list[float], list[float]]:
+        highs = [c + width for c in closes]
+        lows = [c - width for c in closes]
+        return highs, lows, closes
+
+    def test_insufficient_data_invalid(self):
+        st = calculate_supertrend([100.0] * 5, [99.0] * 5, [99.5] * 5, period=10)
+        self.assertFalse(st.valid)
+        self.assertEqual(st.direction, 0)
+
+    def test_uptrend_bullish_line_below_price(self):
+        closes = [100.0 + i * 0.8 for i in range(40)]
+        highs, lows, closes = self._ohlc(closes)
+        st = calculate_supertrend(highs, lows, closes, period=10, multiplier=3.0)
+        self.assertTrue(st.valid)
+        self.assertEqual(st.direction, 1)
+        self.assertLess(st.value, closes[-1])
+
+    def test_downtrend_bearish_line_above_price(self):
+        closes = [140.0 - i * 0.8 for i in range(40)]
+        highs, lows, closes = self._ohlc(closes)
+        st = calculate_supertrend(highs, lows, closes, period=10, multiplier=3.0)
+        self.assertTrue(st.valid)
+        self.assertEqual(st.direction, -1)
+        self.assertGreater(st.value, closes[-1])
+
+    def test_atr_series_matches_calculate_atr_tail(self):
+        highs = [102.0, 103.0, 104.0, 105.0, 106.0] * 8
+        lows = [98.0, 99.0, 100.0, 101.0, 102.0] * 8
+        closes = [100.0, 101.0, 102.0, 103.0, 104.0] * 8
+        series = calculate_atr_series(highs, lows, closes, 14)
+        self.assertEqual(len(series), len(closes))
+        self.assertAlmostEqual(series[-1], calculate_atr(highs, lows, closes, 14), places=8)
+
+
+class TestKeltnerSqueezeRegime(unittest.TestCase):
+    """P1 squeeze / regime classification."""
+
+    def test_keltner_has_width(self):
+        prices = [100.0] * 25
+        highs = [101.0] * 25
+        lows = [99.0] * 25
+        kc = calculate_keltner(highs, lows, prices, period=20, multiplier=1.5)
+        self.assertGreater(kc.upper, kc.middle)
+        self.assertLess(kc.lower, kc.middle)
+
+    def test_squeeze_when_bb_inside_kc(self):
+        closes = [100.0 + ((-1) ** i) * 0.05 for i in range(30)]
+        highs = [c + 2.0 for c in closes]
+        lows = [c - 2.0 for c in closes]
+        bb = calculate_bollinger(closes, period=20, std_dev=2.0)
+        kc = calculate_keltner(highs, lows, closes, period=20, multiplier=1.5)
+        self.assertTrue(detect_squeeze(bb, kc))
+
+    def test_squeeze_release_first_expansion_only(self):
+        self.assertTrue(
+            detect_squeeze_release(squeeze_now=False, squeeze_prev=True)
+        )
+        self.assertFalse(
+            detect_squeeze_release(squeeze_now=True, squeeze_prev=True)
+        )
+        self.assertFalse(
+            detect_squeeze_release(squeeze_now=False, squeeze_prev=False)
+        )
+        self.assertFalse(
+            detect_squeeze_release(squeeze_now=True, squeeze_prev=False)
+        )
+
+    def test_regime_shock_beats_squeeze(self):
+        self.assertEqual(
+            classify_market_regime(
+                squeeze=True,
+                supertrend_direction=1,
+                trend_1h="bullish",
+                bar_range=5.0,
+                atr=1.0,
+                shock_atr_mult=2.5,
+            ),
+            "shock",
+        )
+
+    def test_regime_trend_when_st_and_1h_agree(self):
+        self.assertEqual(
+            classify_market_regime(
+                squeeze=False,
+                supertrend_direction=1,
+                trend_1h="bullish",
+                bar_range=0.5,
+                atr=1.0,
+            ),
+            "trend",
+        )
+        self.assertEqual(
+            classify_market_regime(
+                squeeze=False,
+                supertrend_direction=-1,
+                trend_1h="bearish",
+                bar_range=0.5,
+                atr=1.0,
+            ),
+            "trend",
+        )
+
+    def test_regime_range_when_disagreement(self):
+        self.assertEqual(
+            classify_market_regime(
+                squeeze=False,
+                supertrend_direction=1,
+                trend_1h="bearish",
+                bar_range=0.5,
+                atr=1.0,
+            ),
+            "range",
+        )
 
 
 class TestMACD(unittest.TestCase):

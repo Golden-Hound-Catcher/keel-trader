@@ -60,6 +60,7 @@ class TestPromptCompose(unittest.TestCase):
         self.assertIn("system_role.v1", assembled.modules_used)
         self.assertIn("user_market.v1", assembled.modules_used)
         self.assertIn("BUY_LONG", assembled.system)
+        self.assertIn("手续费", assembled.system)
         self.assertIn("BTC-USDT-SWAP", assembled.user)
         self.assertGreater(assembled.characters, 100)
 
@@ -110,6 +111,22 @@ class TestPromptCompose(unittest.TestCase):
         self.assertEqual(render_variables("hi {{timezone}}", {"timezone": "Asia/Shanghai"}), "hi Asia/Shanghai")
         block = format_market_block({"BTC-USDT-SWAP": {"price": 1.0, "rsi_14": 50, "name": "BTC"}})
         self.assertIn("BTC-USDT-SWAP", block)
+        self.assertIn("trend1h=", block)
+        self.assertIn("trend4h=", block)
+        enriched = format_market_block(
+            {
+                "ETH-USDT-SWAP": {
+                    "price": 2533.0,
+                    "rsi_14": 55,
+                    "name": "ETH",
+                    "trend_15m": "bullish",
+                    "trend_1h": "bullish",
+                    "trend_4h": "bullish",
+                }
+            }
+        )
+        self.assertIn("trend1h=bullish", enriched)
+        self.assertIn("trend4h=bullish", enriched)
 
 
 class TestDecisionSchemaValidation(unittest.TestCase):

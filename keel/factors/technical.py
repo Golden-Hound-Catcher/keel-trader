@@ -239,6 +239,92 @@ def calculate_bollinger(
     return BollingerResult(middle, upper, lower, bandwidth, percent_b)
 
 
+@dataclass
+class KeltnerResult:
+    """Keltner Channel (EMA ± ATR × multiplier)."""
+
+    middle: float
+    upper: float
+    lower: float
+
+
+DEFAULT_KELTNER_PERIOD = 20
+DEFAULT_KELTNER_MULTIPLIER = 1.5
+DEFAULT_SHOCK_ATR_MULT = 2.5
+
+
+def calculate_keltner(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int = DEFAULT_KELTNER_PERIOD,
+    multiplier: float = DEFAULT_KELTNER_MULTIPLIER,
+) -> KeltnerResult:
+    """
+    Keltner Channel from EMA(close, period) ± multiplier × ATR(period).
+
+    Used with Bollinger Bands for TTM-style squeeze detection.
+    """
+    if not closes:
+        return KeltnerResult(0.0, 0.0, 0.0)
+    mid = calculate_ema(closes, max(1, int(period)))
+    atr = calculate_atr(highs, lows, closes, max(1, int(period)))
+    mult = float(multiplier) if float(multiplier) > 0 else DEFAULT_KELTNER_MULTIPLIER
+    return KeltnerResult(
+        middle=float(mid),
+        upper=float(mid + mult * atr),
+        lower=float(mid - mult * atr),
+    )
+
+
+def detect_squeeze(bb: BollingerResult, kc: KeltnerResult) -> bool:
+    """True when Bollinger Bands sit inside the Keltner Channel (TTM squeeze)."""
+    if bb.upper <= bb.lower or kc.upper <= kc.lower:
+        return False
+    return bool(bb.upper < kc.upper and bb.lower > kc.lower)
+
+
+def detect_squeeze_release(*, squeeze_now: bool, squeeze_prev: bool) -> bool:
+    """True on the first expansion bar after a TTM squeeze (prev in, now out)."""
+    return bool(squeeze_prev) and not bool(squeeze_now)
+
+
+def classify_market_regime(
+    *,
+    squeeze: bool,
+    supertrend_direction: int,
+    trend_1h: str,
+    bar_range: float,
+    atr: float,
+    shock_atr_mult: float = DEFAULT_SHOCK_ATR_MULT,
+) -> str:
+    """
+    P1 regime: shock | squeeze | trend | range.
+
+    Shock: last bar range ≥ shock_atr_mult × ATR (spike / news bar).
+    Squeeze: BB inside Keltner — wait for expansion.
+    Trend: Supertrend agrees with 1h EMA-stack trend.
+    Range: residual (chop, disagreement, or no Supertrend).
+    """
+    atr_f = float(atr or 0.0)
+    rng = float(bar_range or 0.0)
+    mult = float(shock_atr_mult) if float(shock_atr_mult) > 0 else DEFAULT_SHOCK_ATR_MULT
+    if atr_f > 0.0 and rng >= mult * atr_f:
+        return "shock"
+    if squeeze:
+        return "squeeze"
+    t1h = str(trend_1h or "neutral").strip().lower()
+    try:
+        st = int(supertrend_direction)
+    except (TypeError, ValueError):
+        st = 0
+    if st > 0 and t1h == "bullish":
+        return "trend"
+    if st < 0 and t1h == "bearish":
+        return "trend"
+    return "range"
+
+
 def calculate_vwap(
     prices: list[float],
     volumes: list[float],
@@ -295,6 +381,189 @@ def calculate_obv(prices: list[float], volumes: list[float]) -> float:
     return obv
 
 
+@dataclass
+class SupertrendPoint:
+    """One Supertrend observation (aligned with a closed bar)."""
+
+    value: float
+    direction: int  # +1 bullish, -1 bearish, 0 warming / invalid
+    atr: float
+    upper: float
+    lower: float
+
+
+@dataclass
+class SupertrendResult:
+    """Latest Supertrend (TradingView-style ATR trailing stop)."""
+
+    value: float
+    direction: int  # +1 bullish, -1 bearish, 0 invalid
+    atr: float
+    upper: float
+    lower: float
+    valid: bool
+
+
+DEFAULT_SUPERTREND_PERIOD = 10
+DEFAULT_SUPERTREND_MULTIPLIER = 3.0
+
+
+def calculate_atr_series(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int = 14,
+) -> list[float]:
+    """
+    Wilder ATR series (oldest → newest), same recursion as ``calculate_atr``.
+
+    Bars before ``period`` use the expanding mean of true range so the
+    series is aligned with the input (no NaN). Prefer ``calculate_atr``
+    when only the latest value is needed.
+    """
+    n = min(len(highs), len(lows), len(closes))
+    if n < 2 or period < 1:
+        return [0.0] * n
+    true_ranges: list[float] = [0.0]
+    for i in range(1, n):
+        true_ranges.append(
+            max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes[i - 1]),
+                abs(lows[i] - closes[i - 1]),
+            )
+        )
+    atrs: list[float] = []
+    running = 0.0
+    for i, tr in enumerate(true_ranges):
+        if i == 0:
+            atrs.append(0.0)
+            continue
+        if i < period:
+            running += tr
+            atrs.append(running / float(i))
+        elif i == period:
+            running += tr
+            atrs.append(running / float(period))
+        else:
+            prev = atrs[-1]
+            atrs.append((prev * (period - 1) + tr) / float(period))
+    return atrs
+
+
+def calculate_supertrend_series(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int = DEFAULT_SUPERTREND_PERIOD,
+    multiplier: float = DEFAULT_SUPERTREND_MULTIPLIER,
+) -> list[SupertrendPoint]:
+    """
+    Supertrend / UT Bot ATR trailing-stop series (oldest → newest).
+
+    Bands: ``hl2 ± multiplier * ATR``. Direction **+1** = bullish (line is
+    the lower band), **-1** = bearish (upper band). Ratchets only in the
+    trade's favor — same geometry as TradingView ``ta.supertrend``.
+    """
+    n = min(len(highs), len(lows), len(closes))
+    if n == 0:
+        return []
+    period = max(1, int(period))
+    mult = float(multiplier)
+    if mult <= 0:
+        mult = DEFAULT_SUPERTREND_MULTIPLIER
+    atrs = calculate_atr_series(highs[:n], lows[:n], closes[:n], period)
+    out: list[SupertrendPoint] = []
+    lower_prev: float | None = None
+    upper_prev: float | None = None
+    direction = 0
+    for i in range(n):
+        hl2 = (float(highs[i]) + float(lows[i])) / 2.0
+        atr = float(atrs[i]) if i < len(atrs) else 0.0
+        basic_lower = hl2 - mult * atr
+        basic_upper = hl2 + mult * atr
+        if lower_prev is None or upper_prev is None or atr <= 0:
+            lower_band = basic_lower
+            upper_band = basic_upper
+            if atr <= 0:
+                direction = 0
+            elif i == 0:
+                direction = 1 if float(closes[i]) >= hl2 else -1
+            value = lower_band if direction >= 0 else upper_band
+            out.append(
+                SupertrendPoint(
+                    value=float(value),
+                    direction=int(direction),
+                    atr=atr,
+                    upper=float(upper_band),
+                    lower=float(lower_band),
+                )
+            )
+            lower_prev, upper_prev = lower_band, upper_band
+            continue
+        # Ratchet: in an uptrend the lower band never falls while close
+        # stays above it; upper band never rises in a downtrend.
+        if float(closes[i - 1]) > lower_prev:
+            lower_band = max(basic_lower, lower_prev)
+        else:
+            lower_band = basic_lower
+        if float(closes[i - 1]) < upper_prev:
+            upper_band = min(basic_upper, upper_prev)
+        else:
+            upper_band = basic_upper
+        prev_dir = direction if direction != 0 else 1
+        if prev_dir >= 0:
+            direction = -1 if float(closes[i]) < lower_band else 1
+        else:
+            direction = 1 if float(closes[i]) > upper_band else -1
+        value = lower_band if direction > 0 else upper_band
+        out.append(
+            SupertrendPoint(
+                value=float(value),
+                direction=int(direction),
+                atr=atr,
+                upper=float(upper_band),
+                lower=float(lower_band),
+            )
+        )
+        lower_prev, upper_prev = lower_band, upper_band
+    return out
+
+
+def calculate_supertrend(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int = DEFAULT_SUPERTREND_PERIOD,
+    multiplier: float = DEFAULT_SUPERTREND_MULTIPLIER,
+) -> SupertrendResult:
+    """Latest Supertrend; ``valid=False`` when the series is too short."""
+    series = calculate_supertrend_series(
+        highs, lows, closes, period=period, multiplier=multiplier
+    )
+    period_i = max(1, int(period))
+    if len(series) < period_i + 1:
+        last = series[-1] if series else SupertrendPoint(0.0, 0, 0.0, 0.0, 0.0)
+        return SupertrendResult(
+            value=float(last.value),
+            direction=0,
+            atr=float(last.atr),
+            upper=float(last.upper),
+            lower=float(last.lower),
+            valid=False,
+        )
+    last = series[-1]
+    ok = last.direction != 0 and last.atr > 0
+    return SupertrendResult(
+        value=float(last.value),
+        direction=int(last.direction) if ok else 0,
+        atr=float(last.atr),
+        upper=float(last.upper),
+        lower=float(last.lower),
+        valid=ok,
+    )
+
+
 def classify_trend(
     ema_short: float,
     ema_medium: float,
@@ -319,3 +588,24 @@ def classify_trend(
         return "bearish"
     else:
         return "neutral"
+
+
+def compute_volume_ratio(
+    volumes: list[float], *, lookback: int = 20
+) -> tuple[float, float]:
+    """
+    Relative volume vs a trailing window (Rule v3 / enrich semantics).
+
+    ``volume_ratio`` = last_bar_volume / mean(last ``lookback`` bars).
+    Also returns ``volume_percentile`` ∈ [0, 100]: empirical rank of the last
+    bar within the same window (fraction of bars with volume ≤ last × 100).
+    """
+    if not volumes:
+        return 1.0, 50.0
+    lb = max(1, int(lookback))
+    window = volumes[-lb:] if len(volumes) >= lb else list(volumes)
+    avg_vol = sum(window) / float(len(window))
+    last = float(volumes[-1])
+    ratio = (last / avg_vol) if avg_vol else 1.0
+    pct = 100.0 * sum(1 for v in window if float(v) <= last) / float(len(window))
+    return float(ratio), float(pct)

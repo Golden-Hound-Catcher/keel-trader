@@ -79,6 +79,13 @@ class TestFullGateDetect(unittest.TestCase):
                 policy_name="llm",
             )
         )
+        self.assertTrue(
+            is_full_gate_fire(
+                "BUY_LONG",
+                {"nearest": "long", "missing": []},
+                policy_name="llm_veto",
+            )
+        )
 
     def test_missing_list_helper(self):
         self.assertEqual(missing_list({"nearest": "long", "missing": []}), [])

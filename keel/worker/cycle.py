@@ -41,6 +41,7 @@ from keel.exchange.paper import PaperAdapter, PaperExchange
 from keel.exchange.protocol import ExchangeProtocol, Ticker
 from keel.execution.orchestrator import ExecutionOrchestrator, ExecutionResult
 from keel.execution.fire_cooldown import apply_rule_fire_cooldown
+from keel.execution.protect import protect_open_positions
 from keel.execution.near_probe import (
     evaluate_near_probe,
     record_near_probe_skip,
@@ -51,17 +52,25 @@ from keel.factors.technical import (
     calculate_atr,
     calculate_bollinger,
     calculate_ema,
+    calculate_keltner,
     calculate_macd,
     calculate_obv,
     calculate_rsi,
+    calculate_supertrend,
     calculate_vwap,
+    classify_market_regime,
     classify_trend,
+    compute_volume_ratio,
+    detect_squeeze,
+    detect_squeeze_release,
 )
 from keel.ledger import DecisionRecord, FactorSnapshot, KeelLedger
 from keel.domain.decision import Decision, DecisionAction, validate_decision
 from keel.policy import (
     DecisionPolicy,
     PolicyContext,
+    apply_llm_book_lock,
+    apply_llm_edge_overlay,
     build_decision_policy,
     describe_policy,
     rule_based_decision,
@@ -213,33 +222,6 @@ def build_synthetic_candles(
 
 
 
-def compute_volume_ratio(
-    volumes: list[float], *, lookback: int = 20
-) -> tuple[float, float]:
-    """
-    Relative volume vs a trailing window (Rule v3 / enrich semantics).
-
-    ``volume_ratio`` = last_bar_volume / mean(last ``lookback`` bars).
-    A value of 1.0 means the latest bar matches the recent average — not a
-    mis-scaled percent. Crypto 15m bars are right-skewed, so most bars sit
-    below 1.0 (live okx_public: p50≈0.36–0.40, p90≈0.86); requiring ≥1.0
-    therefore blocks the large majority of cycles even when other gates align.
-
-    Also returns ``volume_percentile`` ∈ [0, 100]: empirical rank of the last
-    bar within the same window (fraction of bars with volume ≤ last × 100).
-    """
-    if not volumes:
-        return 1.0, 50.0
-    lb = max(1, int(lookback))
-    window = volumes[-lb:] if len(volumes) >= lb else list(volumes)
-    avg_vol = sum(window) / float(len(window))
-    last = float(volumes[-1])
-    ratio = (last / avg_vol) if avg_vol else 1.0
-    pct = 100.0 * sum(1 for v in window if float(v) <= last) / float(len(window))
-    return float(ratio), float(pct)
-
-
-
 def classify_trend_from_candles(candles: list[Candle]) -> str:
     """
     Classify EMA-stack trend on a candle series (oldest → newest).
@@ -315,10 +297,37 @@ def enrich_snapshot(snapshot: MarketSnapshot) -> MarketSnapshot:
     snapshot.trend_15m = trend_15m  # type: ignore[assignment]
     snapshot.trend_1h = trend_1h  # type: ignore[assignment]
     snapshot.trend_4h = trend_4h  # type: ignore[assignment]
+    st = calculate_supertrend(highs, lows, closes)
+    snapshot.supertrend = float(st.value)
+    snapshot.supertrend_direction = int(st.direction) if st.valid else 0
+    snapshot.supertrend_upper = float(st.upper)
+    snapshot.supertrend_lower = float(st.lower)
+    snapshot.bb_percent_b = float(bb.percent_b)
+    snapshot.bb_bandwidth = float(bb.bandwidth)
+    kc = calculate_keltner(highs, lows, closes)
+    snapshot.keltner_upper = float(kc.upper)
+    snapshot.keltner_lower = float(kc.lower)
+    snapshot.squeeze = detect_squeeze(bb, kc)
+    if len(closes) >= 21:
+        bb_prev = calculate_bollinger(closes[:-1])
+        kc_prev = calculate_keltner(highs[:-1], lows[:-1], closes[:-1])
+        snapshot.squeeze_prev = detect_squeeze(bb_prev, kc_prev)
+    else:
+        snapshot.squeeze_prev = False
+    snapshot.squeeze_release = detect_squeeze_release(
+        squeeze_now=bool(snapshot.squeeze),
+        squeeze_prev=bool(snapshot.squeeze_prev),
+    )
+    last = snapshot.candles_15m[-1]
+    snapshot.regime = classify_market_regime(
+        squeeze=bool(snapshot.squeeze),
+        supertrend_direction=int(snapshot.supertrend_direction),
+        trend_1h=str(trend_1h),
+        bar_range=float(last.high) - float(last.low),
+        atr=float(atr),
+    )
     snapshot.data_valid = True
     snapshot.data_quality_reason = "ok"
-    # Silence unused local for lint-friendly completeness
-    _ = bb
     return snapshot
 
 
@@ -599,6 +608,11 @@ def run_paper_cycle(
     if isinstance(modules_used, list):
         audit_modules = [str(m) for m in modules_used]
 
+    try:
+        book_positions = list(exchange.get_positions() or [])
+    except Exception:
+        book_positions = []
+
     for inst_id, snap in snapshots.items():
         ledger.record_factor_snapshot(
             FactorSnapshot(
@@ -622,6 +636,14 @@ def run_paper_cycle(
                     "macd_signal": snap.macd_signal,
                     "trend_1h": snap.trend_1h,
                     "trend_4h": snap.trend_4h,
+                    "volume_percentile": snap.volume_percentile,
+                    "supertrend": snap.supertrend,
+                    "supertrend_direction": snap.supertrend_direction,
+                    "bb_percent_b": snap.bb_percent_b,
+                    "squeeze": snap.squeeze,
+                    "squeeze_prev": snap.squeeze_prev,
+                    "squeeze_release": snap.squeeze_release,
+                    "regime": snap.regime,
                     "data_valid": snap.data_valid,
                     "data_quality_reason": snap.data_quality_reason,
                 },
@@ -670,8 +692,16 @@ def run_paper_cycle(
             elif action == "WAIT":
                 decision = Decision(inst_id=inst_id, action="WAIT", reason="forced wait")
 
-        # E3: per-instrument full-gate fire cooldown (TF + MR) — suppress spray.
-        # WAIT + signal_diag kept for near UX; must not count as full_gate_fire.
+        # LLM-as-trader: HTF + RSI + fee-aware geometry; no scale-in / hedge.
+        if (
+            not (force_action and inst_id == ids[0])
+            and str(audit_policy).strip().lower() == "llm"
+        ):
+            decision = apply_llm_edge_overlay(decision, snap)
+            decision = apply_llm_book_lock(decision, book_positions)
+
+        # E3: per-instrument fire cooldown (rule full-gate + llm fires).
+        # WAIT keeps audit diag; nearest is neutralized so it is not a near-probe.
         decision = apply_rule_fire_cooldown(
             decision,
             ledger=ledger,
@@ -797,6 +827,20 @@ def run_paper_cycle(
         if getattr(decision, "signal_diag", None):
             result_row["signal_diag"] = decision.signal_diag
         results.append(result_row)
+
+    if str(audit_policy).strip().lower() == "llm":
+        atr_by_inst = {
+            iid: float(s.atr_14 or 0.0) for iid, s in snapshots.items()
+        }
+        try:
+            protect_open_positions(
+                exchange,
+                ledger,
+                now=now,
+                atr_by_inst=atr_by_inst,
+            )
+        except Exception:
+            logger.exception("open-trade protect failed")
 
     mode = "paper" if isinstance(exchange, PaperAdapter) else "okx_rest"
     duration_ms = max(0, int(round((time.perf_counter() - cycle_t0) * 1000)))
