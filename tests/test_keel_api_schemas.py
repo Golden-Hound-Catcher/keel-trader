@@ -319,6 +319,15 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("policy_name", di_props)
         self.assertIn("prompt_modules", di_props)
         self.assertIn("signal_diag", di_props)
+        self.assertIn("market_source", di_props)
+        self.assertIn("rule_variant", di_props)
+        self.assertIn("data_quality_reason", di_props)
+        ti_props = comps["TradeItem"]["properties"]
+        self.assertIn("decision_id", ti_props)
+        self.assertIn("market_source", ti_props)
+        self.assertIn("rule_variant", ti_props)
+        self.assertIn("shadow", ti_props)
+        self.assertIn("probe", ti_props)
         self.assertIn("/ready", paths)
         self.assertIn("ReadyResponse", comps)
         ready_props = comps["ReadyResponse"]["properties"]

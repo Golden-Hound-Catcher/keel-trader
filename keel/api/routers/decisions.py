@@ -13,17 +13,41 @@ from keel.api.schemas import (
     TradeItem,
     TradesResponse,
 )
+from keel.execution.provenance import (
+    coerce_optional_bool,
+    coerce_optional_int,
+    meta_get,
+)
+from keel.ledger.decision_export import market_source_of, signal_diag_of
 
 router = APIRouter()
 
 
-def _decision_item(d) -> DecisionItem:
-    calc = d.calculus_data
-    signal_diag = None
+def _rule_variant_of(calc: dict | None, diag: dict | None) -> str | None:
+    if isinstance(diag, dict):
+        raw = diag.get("rule_variant")
+        if raw is not None and raw != "":
+            return str(raw)
     if isinstance(calc, dict):
-        raw = calc.get("signal_diag")
-        if isinstance(raw, dict):
-            signal_diag = raw
+        raw = calc.get("rule_variant")
+        if raw is not None and raw != "":
+            return str(raw)
+    return None
+
+
+def _decision_item(d) -> DecisionItem:
+    calc = d.calculus_data if isinstance(d.calculus_data, dict) else None
+    signal_diag = signal_diag_of(calc)
+    # Prefer top-level signal_diag if ledger/API already promoted it (soft).
+    top_diag = getattr(d, "signal_diag", None)
+    if isinstance(top_diag, dict):
+        signal_diag = top_diag
+    ms = market_source_of(calc)
+    quality = None
+    if isinstance(calc, dict):
+        q = calc.get("data_quality_reason")
+        if q is not None and q != "":
+            quality = str(q)
     return DecisionItem(
         id=d.id,
         timestamp=d.timestamp,
@@ -38,6 +62,44 @@ def _decision_item(d) -> DecisionItem:
         signal_diag=signal_diag,
         policy_name=getattr(d, "policy_name", "") or "",
         prompt_modules=getattr(d, "prompt_modules", None),
+        market_source=ms,
+        rule_variant=_rule_variant_of(calc, signal_diag),
+        data_quality_reason=quality,
+    )
+
+
+def _trade_item(t) -> TradeItem:
+    meta = t.metadata if isinstance(t.metadata, dict) else None
+    return TradeItem(
+        id=t.id,
+        timestamp=t.timestamp,
+        inst_id=t.inst_id,
+        action=t.action,
+        direction=t.direction,
+        size=t.size,
+        price=t.price,
+        pnl=t.pnl,
+        strategy_tag=t.strategy_tag,
+        reason=t.reason,
+        metadata=meta,
+        decision_id=coerce_optional_int(meta_get(meta, "decision_id")),
+        market_source=(
+            str(meta_get(meta, "market_source"))
+            if meta_get(meta, "market_source") is not None
+            else None
+        ),
+        rule_variant=(
+            str(meta_get(meta, "rule_variant"))
+            if meta_get(meta, "rule_variant") is not None
+            else None
+        ),
+        order_id=(
+            str(meta_get(meta, "order_id"))
+            if meta_get(meta, "order_id") is not None
+            else None
+        ),
+        shadow=coerce_optional_bool(meta_get(meta, "shadow")),
+        probe=coerce_optional_bool(meta_get(meta, "probe")),
     )
 
 
@@ -81,22 +143,7 @@ def get_trades(
     trades = ledger.get_trades(inst_id=inst_id, limit=limit)
     return TradesResponse(
         count=len(trades),
-        trades=[
-            TradeItem(
-                id=t.id,
-                timestamp=t.timestamp,
-                inst_id=t.inst_id,
-                action=t.action,
-                direction=t.direction,
-                size=t.size,
-                price=t.price,
-                pnl=t.pnl,
-                strategy_tag=t.strategy_tag,
-                reason=t.reason,
-                metadata=t.metadata,
-            )
-            for t in trades
-        ],
+        trades=[_trade_item(t) for t in trades],
     )
 
 

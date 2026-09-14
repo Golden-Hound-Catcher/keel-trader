@@ -123,6 +123,8 @@ def record_near_probe_skip(
     fee_role: str | None = None,
     edge_mode: str | None = None,
     timestamp: float | None = None,
+    decision_id: int | None = None,
+    market_source: str | None = None,
 ) -> int | None:
     """Write ``shadow_near_probe_skip`` ledger event. Returns event id or None."""
     if ledger is None:
@@ -134,6 +136,10 @@ def record_near_probe_skip(
         fee_role=fee_role,
         edge_mode=edge_mode,
     )
+    if decision_id is not None and int(decision_id) > 0:
+        payload["decision_id"] = int(decision_id)
+    if market_source:
+        payload["market_source"] = str(market_source)
     try:
         return int(
             ledger.record_event(
@@ -444,6 +450,8 @@ def build_near_probe_decision(
             margin_usdt=margin,
             reason=reason,
             signal_diag=audit_diag,
+            ledger_id=getattr(wait_decision, "ledger_id", None),
+            market_source=getattr(wait_decision, "market_source", None),
         )
     )
 

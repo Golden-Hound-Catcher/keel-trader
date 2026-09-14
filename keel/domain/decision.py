@@ -34,6 +34,10 @@ class Decision:
     validation_error: str = ""
     # Q0 near-signal diagnostics (rule policy); persisted under calculus_data.signal_diag
     signal_diag: dict[str, Any] | None = None
+    # Ledger row id after record_decision — links fills/events back to the decision.
+    ledger_id: int | None = None
+    # Candle quality provenance (okx_public|synthetic|…); stamped into calculus + fills.
+    market_source: str | None = None
 
 
 def diag_flag_truthy(diag: dict[str, Any] | None, key: str) -> bool:
@@ -91,7 +95,7 @@ def validate_decision(decision: Decision, *, min_rr: float = 2.0) -> Decision:
 
     Shared by LLM parsing and the paper/demo cycle so schema → risk stays coherent.
     Invalid decisions are rewritten to WAIT with valid=False.
-    Preserves ``signal_diag`` / ``reason`` when rewriting.
+    Preserves ``signal_diag`` / ``reason`` / ledger provenance when rewriting.
     """
     if decision.action == "WAIT":
         return decision
@@ -108,6 +112,8 @@ def validate_decision(decision: Decision, *, min_rr: float = 2.0) -> Decision:
             valid=False,
             validation_error=err,
             signal_diag=decision.signal_diag,
+            ledger_id=decision.ledger_id,
+            market_source=decision.market_source,
         )
 
     if decision.action == "BUY_LONG":

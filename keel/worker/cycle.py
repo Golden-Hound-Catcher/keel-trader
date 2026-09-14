@@ -711,7 +711,10 @@ def run_paper_cycle(
         )
 
         decisions[inst_id] = decision
-        ledger.record_decision(
+        quality_tag = quality_by_inst.get(inst_id, "synthetic")
+        decision_market_source = market_source_from_quality_tag(quality_tag)
+        decision.market_source = decision_market_source
+        decision_id = ledger.record_decision(
             DecisionRecord(
                 timestamp=now,
                 inst_id=inst_id,
@@ -734,9 +737,8 @@ def run_paper_cycle(
                     "trend_4h": snap.trend_4h,
                     "policy_name": audit_policy,
                     "prompt_modules": audit_modules,
-                    "market_source": market_source_from_quality_tag(
-                        quality_by_inst.get(inst_id, "synthetic")
-                    ),
+                    "market_source": decision_market_source,
+                    "data_quality_reason": str(quality_tag or ""),
                     **(
                         {"signal_diag": decision.signal_diag}
                         if getattr(decision, "signal_diag", None)
@@ -745,6 +747,7 @@ def run_paper_cycle(
                 },
             )
         )
+        decision.ledger_id = int(decision_id) if decision_id else None
 
         # Q3: optional near-signal → shadow_fill probe (kill+shadow+probe only).
         # Policy decision stays WAIT in the ledger; execution may rehearse shadow.
@@ -768,6 +771,8 @@ def run_paper_cycle(
         )
         probed = probe_outcome.decision
         if probed is not None:
+            probed.ledger_id = decision.ledger_id
+            probed.market_source = decision.market_source
             exec_decision = probed
         elif (
             probe_outcome.skip_reason
@@ -789,6 +794,8 @@ def run_paper_cycle(
                 fee_role=probe_outcome.fee_role,
                 edge_mode=probe_outcome.edge_mode,
                 timestamp=now,
+                decision_id=decision.ledger_id,
+                market_source=decision.market_source,
             )
 
         exec_result: ExecutionResult = orchestrator.execute_decision(

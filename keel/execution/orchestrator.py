@@ -25,6 +25,7 @@ from keel.execution.near_probe import (
     is_probe_decision,
     probe_audit_fields,
 )
+from keel.execution.provenance import provenance_fields
 from keel.domain.instruments import lookup_instrument, notional_from_size
 from keel.execution.sizing import SizeConstraints, size_order
 
@@ -233,6 +234,7 @@ class ExecutionOrchestrator:
                     "size": sized.size,
                     "leverage": sized.leverage,
                     "clip_notes": list(sized.clip_notes),
+                    **provenance_fields(decision),
                 },
             )
 
@@ -265,7 +267,12 @@ class ExecutionOrchestrator:
             self._ledger.record_event(
                 "risk_gate_blocked",
                 inst_id=decision.inst_id,
-                data={"gate": gate_name, "error": reason, "action": decision.action},
+                data={
+                    "gate": gate_name,
+                    "error": reason,
+                    "action": decision.action,
+                    **provenance_fields(decision),
+                },
             )
             return ExecutionResult(
                 inst_id=decision.inst_id,
@@ -316,6 +323,7 @@ class ExecutionOrchestrator:
         """Ledger a shadow fill without calling exchange place_order."""
         order_id = f"shadow-{int(time.time() * 1000)}"
         probe = is_probe_decision(decision)
+        prov = provenance_fields(decision)
         event_data = {
             "order_id": order_id,
             "action": decision.action,
@@ -328,6 +336,7 @@ class ExecutionOrchestrator:
             "confidence": decision.confidence,
             "reason": decision.reason,
             "shadow": True,
+            **prov,
         }
         if probe:
             event_data["policy"] = PROBE_POLICY
@@ -345,6 +354,7 @@ class ExecutionOrchestrator:
             "take_profit": decision.take_profit,
             "stop_loss": decision.stop_loss,
             "shadow": True,
+            **prov,
         }
         strategy_tag = "keel-shadow"
         if probe:
@@ -432,6 +442,7 @@ class ExecutionOrchestrator:
             )
 
         if is_filled or not is_paper:
+            prov = provenance_fields(decision)
             self._ledger.record_trade(
                 TradeRecord(
                     timestamp=time.time(),
@@ -448,6 +459,7 @@ class ExecutionOrchestrator:
                         "margin_usdt": decision.margin_usdt,
                         "take_profit": decision.take_profit,
                         "stop_loss": decision.stop_loss,
+                        **prov,
                     },
                 )
             )
@@ -459,6 +471,7 @@ class ExecutionOrchestrator:
                     "price": entry_price,
                     "size": size,
                     "action": decision.action,
+                    **prov,
                 },
             )
             return ExecutionResult(
@@ -474,7 +487,11 @@ class ExecutionOrchestrator:
         self._ledger.record_event(
             "order_accepted",
             inst_id=decision.inst_id,
-            data={"order_id": order_result.order_id, "action": decision.action},
+            data={
+                "order_id": order_result.order_id,
+                "action": decision.action,
+                **provenance_fields(decision),
+            },
         )
         return ExecutionResult(
             inst_id=decision.inst_id,

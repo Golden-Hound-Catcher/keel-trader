@@ -37,9 +37,12 @@ import {
   missingGateZh,
   policyZh,
   policyLabel,
+  provenanceMissingZh,
   radarNearestLabel,
   regimeZh,
+  ruleVariantZh,
   sideZh,
+  strategyTagZh,
 } from '../utils/monitorZh'
 
 const store = useMonitorStore()
@@ -83,9 +86,12 @@ function decisionSignalDiag(d: { signal_diag?: Record<string, unknown> | null; c
 }
 
 function decisionRuleVariant(d: {
+  rule_variant?: string | null
   signal_diag?: Record<string, unknown> | null
   calculus_data?: Record<string, unknown>
 }): string | undefined {
+  const top = d.rule_variant
+  if (typeof top === 'string' && top.trim()) return top.trim()
   const diag = decisionSignalDiag(d)
   const v = diag?.rule_variant
   return typeof v === 'string' && v.trim() ? v : undefined
@@ -176,11 +182,61 @@ function factorSourceClass(
 }
 
 
-function decisionMarketSource(d: { calculus_data?: Record<string, unknown> }): string | null {
+function decisionMarketSource(d: {
+  market_source?: string | null
+  calculus_data?: Record<string, unknown>
+}): string | null {
+  const top = d.market_source
+  if (typeof top === 'string' && top.trim()) return top.trim()
   const ms = d.calculus_data?.market_source
   if (typeof ms !== 'string' || !ms.trim()) return null
-  return ms.trim().toLowerCase()
+  return ms.trim()
 }
+
+function tradeDecisionId(t: {
+  decision_id?: number | string | null
+  metadata?: Record<string, unknown> | null
+}): string | null {
+  if (t.decision_id != null && t.decision_id !== '') return String(t.decision_id)
+  const md = t.metadata
+  if (md && md.decision_id != null && md.decision_id !== '') return String(md.decision_id)
+  return null
+}
+
+function tradeMarketSource(t: {
+  market_source?: string | null
+  metadata?: Record<string, unknown> | null
+}): string | null {
+  if (typeof t.market_source === 'string' && t.market_source.trim()) return t.market_source.trim()
+  const md = t.metadata
+  const ms = md?.market_source
+  if (typeof ms === 'string' && ms.trim()) return ms.trim()
+  return null
+}
+
+function tradeIsShadow(t: {
+  shadow?: boolean | null
+  strategy_tag?: string
+  metadata?: Record<string, unknown> | null
+}): boolean {
+  if (t.shadow === true) return true
+  if (t.metadata?.shadow === true) return true
+  const tag = String(t.strategy_tag || '').toLowerCase()
+  return tag.includes('shadow')
+}
+
+function tradeIsProbe(t: {
+  probe?: boolean | null
+  strategy_tag?: string
+  metadata?: Record<string, unknown> | null
+}): boolean {
+  if (t.probe === true) return true
+  if (t.metadata?.probe === true) return true
+  const tag = String(t.strategy_tag || '').toLowerCase()
+  return tag.includes('near-probe') || tag.includes('probe')
+}
+
+
 
 function marketSourceLabel(src: string | null | undefined): string {
   return marketSourceZh(src)
@@ -485,9 +541,20 @@ function eventDetail(e: Record<string, unknown>): string {
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>
     const bits: string[] = []
+    if (d.decision_id != null && d.decision_id !== '') bits.push(`决策#${d.decision_id}`)
+    if (d.action) bits.push(actionZh(String(d.action)))
     if (d.mode) bits.push(exchangeModeZh(d.mode))
     else if (d.adapter) bits.push(exchangeModeZh(d.adapter))
     if (d.policy) bits.push(`策略 ${policyZh(d.policy)}`)
+    if (d.rule_variant) {
+      const rv = ruleVariantZh(d.rule_variant)
+      bits.push(rv ? `变体 ${rv}` : `变体 ${d.rule_variant}`)
+    }
+    if (d.market_source) bits.push(marketSourceZh(d.market_source))
+    if (d.probe === true) bits.push('近探')
+    else if (d.shadow === true) bits.push('影子')
+    if (d.order_id) bits.push(`单 ${d.order_id}`)
+    if (d.gate) bits.push(`门 ${d.gate}`)
     if (d.error) bits.push(humanizeError(d.error))
     if (d.reason) bits.push(humanizeError(d.reason))
     if (d.message) bits.push(humanizeError(d.message))
@@ -506,7 +573,7 @@ function eventDetail(e: Record<string, unknown>): string {
       })
       bits.push(`缩放 ${notes.join('+')}`)
     }
-    if (bits.length) return bits.slice(0, 3).join(' · ')
+    if (bits.length) return bits.slice(0, 5).join(' · ')
     try {
       return JSON.stringify(d)
     } catch {
@@ -1585,6 +1652,18 @@ const configStrip = computed(() => {
                   <span class="font-semibold" :class="actionClass(d.action)">{{ actionZh(d.action) }}</span>
                 </div>
                 <div class="text-[#A8B3C7] mt-0.5 line-clamp-2" :title="d.reason">{{ displayReason(d.reason) }}</div>
+                <div class="mt-1 flex flex-wrap items-center gap-1">
+                  <span class="text-[10px] font-mono text-[#707E94]">#{{ d.id ?? '—' }}</span>
+                  <span
+                    class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                    :class="decisionMarketSource(d) ? marketSourceClass(decisionMarketSource(d)) : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/30'"
+                    :title="decisionMarketSource(d) || provenanceMissingZh('market_source')"
+                  >{{ decisionMarketSource(d) ? marketSourceLabel(decisionMarketSource(d)) : provenanceMissingZh('market_source') }}</span>
+                  <span
+                    v-if="decisionRuleVariant(d)"
+                    class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border bg-indigo-500/10 text-indigo-300 border-indigo-500/30"
+                  >{{ ruleVariantZh(decisionRuleVariant(d)) || decisionRuleVariant(d) }}</span>
+                </div>
                 <div class="text-[#707E94] flex justify-between gap-2 mt-0.5 font-mono">
                   <span>置信 {{ fmtConfidence(d.confidence) }}</span>
                   <span>{{ fmtTs(d.timestamp) }}</span>
@@ -2197,37 +2276,38 @@ const configStrip = computed(() => {
               <thead>
                 <tr class="text-[#707E94] border-b border-[#1A2232]">
                   <th class="pb-2 pr-3">时间</th>
+                  <th class="pb-2 pr-3">ID</th>
                   <th class="pb-2 pr-3">品种</th>
                   <th class="pb-2 pr-3">动作</th>
                   <th class="pb-2 pr-3">策略</th>
+                  <th class="pb-2 pr-3">行情源</th>
                   <th class="pb-2 pr-3">置信</th>
                   <th class="pb-2 pr-3">入场</th>
-                  <th class="pb-2">理由</th>
+                  <th class="pb-2">理由 / 门禁</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-[#1A2232]/50">
                 <tr v-for="d in store.decisionsTabRows" :key="String(d.id)">
                   <td class="py-2 pr-3 text-[#707E94] whitespace-nowrap">{{ fmtTs(d.timestamp) }}</td>
+                  <td class="py-2 pr-3 font-mono text-[#A8B3C7]" :title="`decision_id ${d.id}`">{{ d.id ?? '—' }}</td>
                   <td class="py-2 pr-3 text-white font-semibold" :title="d.inst_id">{{ shortInstLabel(d.inst_id) }}</td>
                   <td class="py-2 pr-3 font-semibold whitespace-nowrap" :class="actionClass(d.action)">{{ actionZh(d.action) }}</td>
                   <td
                     class="py-2 pr-3 text-zinc-300 max-w-[9rem] truncate"
                     :title="[d.policy_name || '', decisionRuleVariant(d) || '', modulesPreview(d.prompt_modules)].filter(Boolean).join(' · ')"
                   >{{ policyLabel(d.policy_name, decisionRuleVariant(d) || store.config?.rule_variant) }}<span v-if="modulesPreview(d.prompt_modules)" class="text-[#707E94]"> · {{ modulesPreview(d.prompt_modules) }}</span></td>
+                  <td class="py-2 pr-3">
+                    <span
+                      class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                      :class="decisionMarketSource(d) ? marketSourceClass(decisionMarketSource(d)) : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/30'"
+                      :title="decisionMarketSource(d) || d.data_quality_reason || provenanceMissingZh('market_source')"
+                    >{{ decisionMarketSource(d) ? marketSourceLabel(decisionMarketSource(d)) : provenanceMissingZh('market_source') }}</span>
+                  </td>
                   <td class="py-2 pr-3">{{ fmtConfidence(d.confidence) }}</td>
                   <td class="py-2 pr-3">{{ fmt(d.entry_price) }}</td>
                   <td class="py-2 text-zinc-400 max-w-lg whitespace-normal break-words" :title="d.reason">
-                    <div class="line-clamp-2">{{ displayReason(d.reason) }}</div>
-                    <div
-                      v-if="decisionMarketSource(d) || nearSignalNearest(d)"
-                      class="mt-1 flex flex-wrap items-center gap-1"
-                    >
-                      <span
-                        v-if="decisionMarketSource(d)"
-                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
-                        :class="marketSourceClass(decisionMarketSource(d))"
-                        :title="`market_source ${decisionMarketSource(d)}`"
-                      >{{ marketSourceLabel(decisionMarketSource(d)) }}</span>
+                    <div class="line-clamp-2">{{ displayReason(d.reason) || '无理由' }}</div>
+                    <div class="mt-1 flex flex-wrap items-center gap-1">
                       <span
                         v-if="nearSignalNearest(d)"
                         class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
@@ -2285,6 +2365,9 @@ const configStrip = computed(() => {
                   <th class="pb-2 pr-3">品种</th>
                   <th class="pb-2 pr-3">动作</th>
                   <th class="pb-2 pr-3">方向</th>
+                  <th class="pb-2 pr-3">标签</th>
+                  <th class="pb-2 pr-3">决策</th>
+                  <th class="pb-2 pr-3">溯源</th>
                   <th class="pb-2 pr-3">数量</th>
                   <th class="pb-2 pr-3">价格</th>
                   <th class="pb-2 text-right">盈亏</th>
@@ -2296,12 +2379,34 @@ const configStrip = computed(() => {
                   <td class="py-2 pr-3 text-white font-semibold" :title="t.inst_id">{{ shortInstLabel(t.inst_id) }}</td>
                   <td class="py-2 pr-3 font-semibold whitespace-nowrap" :class="actionClass(t.action)">{{ actionZh(t.action) }}</td>
                   <td class="py-2 pr-3">{{ sideZh(t.direction) }}</td>
+                  <td class="py-2 pr-3 text-zinc-300 whitespace-nowrap" :title="t.strategy_tag || ''">{{ strategyTagZh(t.strategy_tag) }}</td>
+                  <td class="py-2 pr-3 font-mono text-[#A8B3C7] whitespace-nowrap" :title="tradeDecisionId(t) ? `decision_id ${tradeDecisionId(t)}` : provenanceMissingZh('decision_id')">
+                    {{ tradeDecisionId(t) ? `#${tradeDecisionId(t)}` : provenanceMissingZh('decision_id') }}
+                  </td>
+                  <td class="py-2 pr-3">
+                    <div class="flex flex-wrap items-center gap-1">
+                      <span
+                        v-if="tradeIsProbe(t)"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border bg-fuchsia-500/15 text-fuchsia-300 border-fuchsia-500/40"
+                      >近探</span>
+                      <span
+                        v-else-if="tradeIsShadow(t)"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border bg-violet-500/15 text-violet-300 border-violet-500/40"
+                      >影子</span>
+                      <span
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                        :class="tradeMarketSource(t) ? marketSourceClass(tradeMarketSource(t)) : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/30'"
+                        :title="tradeMarketSource(t) || provenanceMissingZh('market_source')"
+                      >{{ tradeMarketSource(t) ? marketSourceLabel(tradeMarketSource(t)) : provenanceMissingZh('market_source') }}</span>
+                    </div>
+                    <div v-if="t.reason" class="mt-0.5 text-[10px] text-[#707E94] line-clamp-1 max-w-[12rem]" :title="t.reason">{{ displayReason(t.reason) }}</div>
+                  </td>
                   <td class="py-2 pr-3">{{ fmt(t.size, 4) }}</td>
                   <td class="py-2 pr-3">{{ fmt(t.price) }}</td>
                   <td
                     class="py-2 text-right font-bold"
                     :class="Number(t.pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
-                  >{{ fmt(t.pnl) }}</td>
+                  >{{ t.pnl == null ? '无盈亏' : fmt(t.pnl) }}</td>
                 </tr>
               </tbody>
             </table>

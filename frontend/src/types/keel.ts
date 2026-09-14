@@ -269,6 +269,10 @@ export interface KeelDecision {
   signal_diag?: Record<string, unknown> | null
   policy_name?: string
   prompt_modules?: string[] | null
+  /** Promoted candle provenance (okx_public | synthetic | …). */
+  market_source?: string | null
+  rule_variant?: string | null
+  data_quality_reason?: string | null
 }
 
 
@@ -528,6 +532,13 @@ export interface KeelTrade {
   strategy_tag?: string
   reason?: string
   metadata?: Record<string, unknown>
+  /** Parent decision ledger id when stamped at fill time. */
+  decision_id?: number | string | null
+  market_source?: string | null
+  rule_variant?: string | null
+  order_id?: string | null
+  shadow?: boolean | null
+  probe?: boolean | null
 }
 
 export interface KeelTradesResponse {
