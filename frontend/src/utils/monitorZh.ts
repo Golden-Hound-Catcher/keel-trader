@@ -370,3 +370,28 @@ export const HERO_HEADLINE_CLASS: Record<StatusHeroTone, string> = {
   sky: 'text-sky-300',
   zinc: 'text-white',
 }
+
+/** Trade strategy_tag → 中文短标签. */
+export function strategyTagZh(raw: unknown): string {
+  const t = String(raw || '').trim().toLowerCase()
+  if (!t) return '无标签'
+  if (t === 'keel-shadow-near-probe' || t.includes('near-probe')) return '近探影子'
+  if (t === 'keel-shadow' || t.includes('shadow')) return '影子'
+  if (t === 'keel-llm' || t.includes('llm')) return '实盘/LLM'
+  if (t.includes('paper')) return '本地模拟'
+  return String(raw)
+}
+
+/** Explicit missing provenance (vs silent dash). */
+export function provenanceMissingZh(kind: 'market_source' | 'decision_id' | 'rule_variant'): string {
+  switch (kind) {
+    case 'market_source':
+      return '无行情源'
+    case 'decision_id':
+      return '无决策关联'
+    case 'rule_variant':
+      return '无规则变体'
+    default:
+      return '溯源缺失'
+  }
+}

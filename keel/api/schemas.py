@@ -231,6 +231,10 @@ class DecisionItem(BaseModel):
     signal_diag: dict[str, Any] | None = None
     policy_name: str = ""
     prompt_modules: list[str] | None = None
+    # Promoted provenance (also under calculus_data / signal_diag).
+    market_source: str | None = None
+    rule_variant: str | None = None
+    data_quality_reason: str | None = None
 
 
 class DecisionsResponse(BaseModel):
@@ -521,6 +525,13 @@ class TradeItem(BaseModel):
     strategy_tag: str = ""
     reason: str = ""
     metadata: dict[str, Any] | None = None
+    # Promoted from metadata for Monitor history provenance.
+    decision_id: int | None = None
+    market_source: str | None = None
+    rule_variant: str | None = None
+    order_id: str | None = None
+    shadow: bool | None = None
+    probe: bool | None = None
 
 
 class TradesResponse(BaseModel):
