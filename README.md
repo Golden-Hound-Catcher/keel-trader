@@ -64,6 +64,15 @@ Paper / 规则决策循环（`python -m keel.worker --once`）不强制需要 LL
 
 ### 3. 启动（推荐）
 
+Windows 一键（API + worker + 监控 UI）：
+
+```bat
+.\scripts\keel-up.cmd
+.\scripts\keel-down.cmd
+```
+
+仅 API + worker（不启 Vite）：`.\scripts\keel-up.cmd -SkipUi`
+
 ```bash
 # 终端 1：唯一调度器
 python -m keel.worker

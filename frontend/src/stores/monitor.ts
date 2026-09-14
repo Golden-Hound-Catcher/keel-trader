@@ -21,6 +21,7 @@ import {
   type KeelShadowStats,
   type KeelQualityStats,
   type KeelNearestSignals,
+  type KeelEvent,
 } from '../types/keel'
 
 export const useMonitorStore = defineStore('monitor', () => {
@@ -47,9 +48,9 @@ export const useMonitorStore = defineStore('monitor', () => {
   const trades = ref<KeelTrade[]>([])
   /** Trades tab rows when inst filter is set; Overview stays on unfiltered `trades` if shown. */
   const tradesFiltered = ref<KeelTrade[]>([])
-  const events = ref<Array<Record<string, unknown>>>([])
+  const events = ref<KeelEvent[]>([])
   /** Events tab rows when filters are set; Overview «Recent events» uses unfiltered `events`. */
-  const eventsFiltered = ref<Array<Record<string, unknown>>>([])
+  const eventsFiltered = ref<KeelEvent[]>([])
   const factors = ref<Record<string, KeelFactors>>({})
   /** When true, factors fetch uses ?live=1 (OKX public candles); else ledger snapshots. */
   const factorsLive = ref(false)
@@ -135,7 +136,7 @@ export const useMonitorStore = defineStore('monitor', () => {
         keelFetch<{ count: number; positions: KeelPosition[]; source: string }>('/api/v1/positions'),
         keelFetch<{ count: number; decisions: KeelDecision[] }>('/api/v1/decisions?limit=50'),
         keelFetch<{ count: number; trades: KeelTrade[] }>('/api/v1/trades?limit=50'),
-        keelFetch<{ count: number; events: Array<Record<string, unknown>> }>(
+        keelFetch<{ count: number; events: KeelEvent[] }>(
           '/api/v1/events?limit=50',
         ),
       ])
@@ -296,7 +297,7 @@ export const useMonitorStore = defineStore('monitor', () => {
   }
 
   async function refreshEventsFiltered() {
-    const ev = await keelFetch<{ count: number; events: Array<Record<string, unknown>> }>(
+    const ev = await keelFetch<{ count: number; events: KeelEvent[] }>(
       buildEventsUrl(true),
     )
     eventsFiltered.value = ev.events || []

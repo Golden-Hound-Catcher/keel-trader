@@ -27,6 +27,14 @@ _FACTOR_KEYS = (
     "trend_4h",
     "volume_ratio",
     "volume_percentile",
+    "vwap",
+    "vwap_bias_pct",
+    "supertrend_direction",
+    "bb_percent_b",
+    "squeeze",
+    "squeeze_prev",
+    "squeeze_release",
+    "regime",
 )
 
 # Minimum numeric factors for gate replay (price/atr may be filled from fallbacks).
@@ -75,6 +83,17 @@ def factor_dict_from_snapshot(snap: Any) -> dict[str, Any]:
         vol_pct_out: float | None = float(vol_pct) if vol_pct is not None else None
     except (TypeError, ValueError):
         vol_pct_out = None
+
+    def _num(key: str, default: float = 0.0) -> float:
+        raw = payload.get(key)
+        try:
+            return float(raw) if raw is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def _flag(key: str) -> bool:
+        return bool(payload.get(key, False))
+
     return {
         "price": float(getattr(snap, "price", 0) or 0),
         "rsi_14": float(getattr(snap, "rsi_14", 0) or 0),
@@ -87,6 +106,14 @@ def factor_dict_from_snapshot(snap: Any) -> dict[str, Any]:
         "trend_4h": str(trend_4h),
         "volume_ratio": float(getattr(snap, "volume_ratio", 1) or 1),
         "volume_percentile": vol_pct_out,
+        "vwap": _num("vwap"),
+        "vwap_bias_pct": _num("vwap_bias_pct"),
+        "supertrend_direction": int(_num("supertrend_direction")),
+        "bb_percent_b": _num("bb_percent_b", 0.5),
+        "squeeze": _flag("squeeze"),
+        "squeeze_prev": _flag("squeeze_prev"),
+        "squeeze_release": _flag("squeeze_release"),
+        "regime": str(payload.get("regime") or "range"),
         "data_valid": bool(data_valid),
         "data_quality_reason": str(payload.get("data_quality_reason") or ""),
     }
@@ -238,6 +265,26 @@ def snapshot_from_export_row(row: dict[str, Any]) -> MarketSnapshot | None:
 
     inst = str(row.get("inst_id") or row.get("instrument") or "")
     ts = float(row.get("timestamp") or 0)
+    squeeze = bool(factors.get("squeeze", False))
+    squeeze_prev = bool(factors.get("squeeze_prev", False))
+    squeeze_release = bool(factors.get("squeeze_release", False))
+    try:
+        st_dir = int(float(factors.get("supertrend_direction") or 0))
+    except (TypeError, ValueError):
+        st_dir = 0
+    try:
+        vwap = float(factors.get("vwap") or 0)
+    except (TypeError, ValueError):
+        vwap = 0.0
+    try:
+        vwap_bias = float(factors.get("vwap_bias_pct") or 0)
+    except (TypeError, ValueError):
+        vwap_bias = 0.0
+    try:
+        percent_b = float(factors.get("bb_percent_b") if factors.get("bb_percent_b") is not None else 0.5)
+    except (TypeError, ValueError):
+        percent_b = 0.5
+    regime = str(factors.get("regime") or "range").strip().lower() or "range"
     return MarketSnapshot(
         inst_id=inst,
         name=inst,
@@ -253,6 +300,14 @@ def snapshot_from_export_row(row: dict[str, Any]) -> MarketSnapshot | None:
         trend_15m=trend,  # type: ignore[arg-type]
         trend_1h=trend_1h,  # type: ignore[assignment]
         trend_4h=trend_4h,  # type: ignore[assignment]
+        vwap=vwap,
+        vwap_bias_pct=vwap_bias,
+        supertrend_direction=st_dir,
+        bb_percent_b=percent_b,
+        squeeze=squeeze,
+        squeeze_prev=squeeze_prev,
+        squeeze_release=squeeze_release,
+        regime=regime,
         data_valid=data_valid,
         data_quality_reason=str(factors.get("data_quality_reason") or "ledger_replay"),
     )

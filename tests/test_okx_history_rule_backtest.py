@@ -7,10 +7,14 @@ from unittest.mock import patch
 
 from keel.backtest.okx_history_rule import (
     barrier_exit_markout,
+    excursion_markout,
+    scale_exit_markout,
+    trailing_supertrend_exit_markout,
     build_snapshot_at,
     fee_aware_markouts,
     forced_e31_rule_env,
     price_at_horizon,
+    reprice_exit_rows,
     rows_to_series,
     walk_forward_backtest,
 )
@@ -76,6 +80,36 @@ class TestFeeMarkout(unittest.TestCase):
         self.assertAlmostEqual(row["gross_bps"], 20.0, places=4)
         self.assertAlmostEqual(row["net_rt_bps"], 10.0, places=4)
         self.assertTrue(row["clears_hurdle"])
+
+
+class TestRepriceExit(unittest.TestCase):
+    def test_maker_rt_is_six_bps_better_than_taker_on_same_gross(self):
+        rows = [
+            {
+                "available": True,
+                "gross_bps": 0.0,
+                "exit_reason": "timeout",
+                "hold_seconds": 14400.0,
+            },
+            {
+                "available": True,
+                "gross_bps": 8.0,
+                "exit_reason": "tp",
+                "hold_seconds": 1800.0,
+            },
+        ]
+        taker = reprice_exit_rows(rows, open_fee_bps=5.0, clear_hurdle_bps=10.0)
+        maker = reprice_exit_rows(rows, open_fee_bps=2.0, clear_hurdle_bps=10.0)
+        self.assertEqual(taker["n_available"], 2)
+        self.assertEqual(maker["fee_role"], "maker")
+        self.assertAlmostEqual(taker["round_trip_fee_bps"], 10.0, places=6)
+        self.assertAlmostEqual(maker["round_trip_fee_bps"], 4.0, places=6)
+        assert taker["avg_net_rt_bps"] is not None
+        assert maker["avg_net_rt_bps"] is not None
+        self.assertAlmostEqual(
+            maker["avg_net_rt_bps"] - taker["avg_net_rt_bps"], 6.0, places=6
+        )
+        self.assertEqual(maker["by_exit_reason"], {"timeout": 1, "tp": 1})
 
 
 class TestRequire4hPath(unittest.TestCase):
@@ -259,6 +293,11 @@ class TestScriptSmoke(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("cooldown-seconds", proc.stdout)
+        self.assertIn("skip-trail", proc.stdout)
+        self.assertIn("skip-regime", proc.stdout)
+        self.assertIn("skip-score", proc.stdout)
+        self.assertIn("skip-mfe", proc.stdout)
+        self.assertIn("skip-early-tp", proc.stdout)
 
 
 class TestBarrierExitMarkout(unittest.TestCase):
@@ -353,7 +392,119 @@ class TestBarrierExitMarkout(unittest.TestCase):
         self.assertAlmostEqual(row["exit_price"], tp, places=5)
 
 
-class TestWalkForwardBarrierFlag(unittest.TestCase):
+class TestExcursionAndEarlyTp(unittest.TestCase):
+    """MFE/MAE path + 1R early TP / scale-out (measurement only)."""
+
+    def test_long_mfe_touches_1r_then_sl(self):
+        atr = 1.0
+        entry = 100.0
+        candles = [
+            Candle(0.0, 100, 100.2, 99.8, 100.0, 1.0),
+            # subsequent: high +1.2R then later bar dumps to SL
+            Candle(900.0, 100.0, 101.2, 99.6, 101.0, 1.0),
+            Candle(1800.0, 101.0, 101.1, 98.9, 99.0, 1.0),
+        ]
+        row = excursion_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=900.0,
+            atr_14=atr,
+            candles_15m=candles,
+            timeout_seconds=14_400,
+        )
+        self.assertTrue(row["available"])
+        self.assertGreaterEqual(row["mfe_r"], 1.0)
+        self.assertTrue(row["touch"]["1"])
+        self.assertEqual(row["after_1r"], "sl")
+        self.assertEqual(row["path_end"], "sl")
+
+    def test_long_mfe_15m_does_not_see_later_1r(self):
+        atr = 1.0
+        entry = 100.0
+        candles = [
+            Candle(0.0, 100, 100.2, 99.8, 100.0, 1.0),
+            Candle(900.0, 100.0, 100.4, 99.7, 100.2, 1.0),  # 15m: 0.4R
+            Candle(1800.0, 100.2, 101.2, 100.0, 101.0, 1.0),  # later 1.2R
+        ]
+        row = excursion_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=900.0,
+            atr_14=atr,
+            timeout_seconds=14_400,
+            snapshot_seconds=900,
+            candles_15m=candles,
+        )
+        self.assertTrue(row["available"])
+        self.assertFalse(row["touch_15m"]["1"])
+        self.assertTrue(row["touch"]["1"])
+
+    def test_early_tp_1r_hits(self):
+        atr = 1.0
+        entry = 100.0
+        tp = entry + 1.0 * atr
+        candles = [
+            Candle(0.0, 100, 100.2, 99.8, 100.0, 1.0),
+            Candle(900.0, 100, 101.5, 99.8, 101.2, 1.0),
+        ]
+        row = barrier_exit_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=900.0,
+            atr_14=atr,
+            candles_15m=candles,
+            tp_atr=1.0,
+            open_fee_bps=5.0,
+        )
+        self.assertEqual(row["exit_reason"], "tp")
+        self.assertAlmostEqual(row["exit_price"], tp, places=5)
+        # 100 bps gross - 10 RT = 90
+        self.assertAlmostEqual(row["gross_bps"], 100.0, places=4)
+        self.assertAlmostEqual(row["net_rt_bps"], 90.0, places=4)
+
+    def test_scale_half_then_distant_tp(self):
+        atr = 1.0
+        entry = 100.0
+        candles = [
+            Candle(0.0, 100, 100.2, 99.8, 100.0, 1.0),
+            Candle(900.0, 100, 101.2, 99.8, 101.1, 1.0),  # hits 1R
+            Candle(1800.0, 101.1, 102.5, 101.0, 102.3, 1.0),  # hits 2.2
+        ]
+        row = scale_exit_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=900.0,
+            atr_14=atr,
+            candles_15m=candles,
+            timeout_seconds=2700,
+            open_fee_bps=5.0,
+        )
+        self.assertTrue(row["available"])
+        self.assertTrue(row["scaled"])
+        self.assertEqual(row["exit_reason"], "scale_then_tp")
+        # 0.5*100 + 0.5*220 = 160 gross; net 150
+        self.assertAlmostEqual(row["gross_bps"], 160.0, places=3)
+        self.assertAlmostEqual(row["net_rt_bps"], 150.0, places=3)
+
+    def test_scale_sl_before_1r_not_scaled(self):
+        atr = 1.0
+        entry = 100.0
+        candles = [
+            Candle(0.0, 100, 100.2, 99.8, 100.0, 1.0),
+            Candle(900.0, 100, 100.4, 98.5, 99.0, 1.0),
+        ]
+        row = scale_exit_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=900.0,
+            atr_14=atr,
+            candles_15m=candles,
+            open_fee_bps=5.0,
+        )
+        self.assertTrue(row["available"])
+        self.assertFalse(row["scaled"])
+        self.assertEqual(row["exit_reason"], "sl")
+
     def tearDown(self) -> None:
         for k in (
             "KEEL_RULE_VARIANT",
@@ -396,6 +547,86 @@ class TestWalkForwardBarrierFlag(unittest.TestCase):
         b = summary["markout"]["barrier"]
         self.assertIsNotNone(b)
         self.assertEqual(b["n_available"], 0)
+
+
+class TestTrailingSupertrendExit(unittest.TestCase):
+    """P0: Supertrend trail SL / flip / timeout on subsequent 15m OHLC."""
+
+    def _flat(self, n: int, *, px: float = 100.0, start: float = 0.0) -> list[Candle]:
+        out: list[Candle] = []
+        for i in range(n):
+            out.append(
+                Candle(start + i * 900.0, px, px + 0.5, px - 0.5, px, 1.0)
+            )
+        return out
+
+    def test_long_hits_initial_atr_sl(self):
+        atr = 1.0
+        entry = 100.0
+        sl = entry - 1.0 * atr  # 99
+        candles = self._flat(20)
+        # Subsequent bar dumps through SL.
+        candles.append(Candle(20 * 900.0, 100.0, 100.2, 98.0, 99.0, 1.0))
+        row = trailing_supertrend_exit_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=20 * 900.0,  # close of last flat bar (index 19)
+            atr_14=atr,
+            candles_15m=candles,
+            timeout_seconds=14_400,
+            open_fee_bps=5.0,
+            clear_hurdle_bps=10.0,
+        )
+        self.assertTrue(row["available"])
+        self.assertEqual(row["exit_reason"], "sl")
+        self.assertAlmostEqual(row["exit_price"], sl, places=5)
+        self.assertLess(row["net_rt_bps"], 0.0)
+
+    def test_timeout_when_path_never_hits(self):
+        atr = 1.0
+        entry = 100.0
+        candles = self._flat(22)
+        row = trailing_supertrend_exit_markout(
+            action="BUY_LONG",
+            entry_price=entry,
+            entry_ts=20 * 900.0,
+            atr_14=atr,
+            candles_15m=candles,
+            timeout_seconds=900,
+            open_fee_bps=5.0,
+        )
+        self.assertTrue(row["available"])
+        self.assertEqual(row["exit_reason"], "timeout")
+
+    def test_include_trail_key_present(self):
+        start = 1_700_000_000_000.0
+        rows_15 = _rising_rows(80, start_ms=start, step_ms=900_000.0)
+        rows_1h = _rising_rows(40, start_ms=start, step_ms=3_600_000.0)
+        rows_4h = _rising_rows(30, start_ms=start, step_ms=14_400_000.0)
+        series = rows_to_series("BTC-USDT-SWAP", rows_15, rows_1h, rows_4h)
+        with patch(
+            "keel.backtest.okx_history_rule.rule_based_decision",
+            return_value=Decision(
+                inst_id="BTC-USDT-SWAP",
+                action="WAIT",
+                confidence=0.0,
+                reason="test",
+                entry_price=0.0,
+                take_profit=0.0,
+                stop_loss=0.0,
+                signal_diag={"missing": ["rsi_ok"]},
+            ),
+        ):
+            summary = walk_forward_backtest(
+                [series],
+                variant="trend_follow",
+                cooldown_seconds=900,
+                include_trail=True,
+            )
+        self.assertIn("trail", summary["markout"])
+        t = summary["markout"]["trail"]
+        self.assertIsNotNone(t)
+        self.assertEqual(t["n_available"], 0)
 
 
 if __name__ == "__main__":

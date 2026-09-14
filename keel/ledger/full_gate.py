@@ -34,7 +34,9 @@ from keel.ledger.shadow_markout import (
 )
 
 FULL_GATE_ACTIONS = frozenset({"BUY_LONG", "SELL_SHORT"})
-RULE_POLICY_NAMES = frozenset({"rule", ""})
+# ``llm_veto`` is a rule overlay: confirmed fires still count as full-gate.
+# Pure ``llm`` (model as trader) does not.
+RULE_POLICY_NAMES = frozenset({"rule", "llm_veto", ""})
 
 # F1 cohort tags: post-E3.1 (strict TF with 4h) vs pre-E3.1 spray.
 COHORT_POST_E31 = "post_e31"
@@ -172,7 +174,8 @@ def is_full_gate_fire(
 ) -> bool:
     """
     True when action ∈ {BUY_LONG,SELL_SHORT}, diagnose missing==[], and policy
-    is rule (or legacy empty policy_name).
+    is rule / llm_veto overlay (or legacy empty policy_name). Pure ``llm``
+    is excluded.
     """
     act = str(action or "").upper().strip()
     if act not in FULL_GATE_ACTIONS:

@@ -30,6 +30,16 @@ DEFAULT_USER_PIPELINE: tuple[str, ...] = (
     "user_market.v1",
     "user_task.v1",
 )
+VETO_SYSTEM_PIPELINE: tuple[str, ...] = (
+    "system_role.v1",
+    "system_veto.v1",
+    "system_output.v1",
+)
+VETO_USER_PIPELINE: tuple[str, ...] = (
+    "user_header.v1",
+    "user_market.v1",
+    "user_veto.v1",
+)
 
 _PACKAGE_MODULES = "keel.llm.prompts.modules"
 
@@ -60,6 +70,7 @@ ALLOWED_VARIABLES = {
     "timestamp",
     "market_block",
     "profile_name",
+    "rule_block",
 }
 
 
@@ -297,6 +308,8 @@ def format_market_block(snapshots: Mapping[str, Any]) -> str:
             rsi = float(snap.get("rsi_14") or 0)
             atr = float(snap.get("atr_14") or 0)
             trend = str(snap.get("trend_15m") or "")
+            trend_1h = str(snap.get("trend_1h") or "")
+            trend_4h = str(snap.get("trend_4h") or "")
             macd_h = float(snap.get("macd_histogram") or 0)
             name = str(snap.get("name") or inst_id)
         else:
@@ -304,13 +317,52 @@ def format_market_block(snapshots: Mapping[str, Any]) -> str:
             rsi = float(getattr(snap, "rsi_14", 0) or 0)
             atr = float(getattr(snap, "atr_14", 0) or 0)
             trend = str(getattr(snap, "trend_15m", "") or "")
+            trend_1h = str(getattr(snap, "trend_1h", "") or "")
+            trend_4h = str(getattr(snap, "trend_4h", "") or "")
             macd_h = float(getattr(snap, "macd_histogram", 0) or 0)
             name = str(getattr(snap, "name", inst_id) or inst_id)
         lines.append(
             f"- {inst_id} ({name}): price={price:.6g} rsi14={rsi:.2f} "
-            f"atr14={atr:.6g} trend15m={trend} macd_hist={macd_h:.6g}"
+            f"atr14={atr:.6g} trend15m={trend} trend1h={trend_1h} "
+            f"trend4h={trend_4h} macd_hist={macd_h:.6g}"
         )
     return "\n".join(lines) if lines else "(no market data)"
+
+
+def format_rule_block(decisions: Mapping[str, Any]) -> str:
+    """Render rule proposals the LLM may only veto or confirm."""
+    lines: list[str] = []
+    for inst_id, dec in decisions.items():
+        action = str(getattr(dec, "action", "") or "")
+        diag = getattr(dec, "signal_diag", None) or {}
+        if not isinstance(diag, Mapping):
+            diag = {}
+        score = diag.get("score")
+        score_min = diag.get("score_min")
+        regime = diag.get("regime") or diag.get("regime_path") or ""
+        breakdown = diag.get("score_breakdown") or {}
+        bits = ""
+        if isinstance(breakdown, Mapping) and breakdown:
+            bits = " " + ",".join(
+                f"{k}={1 if v else 0}" for k, v in breakdown.items()
+            )
+        score_s = ""
+        if score is not None:
+            score_s = f" score={score}/{score_min if score_min is not None else '?'}"
+        reason = str(getattr(dec, "reason", "") or "")[:180]
+        margin = getattr(dec, "margin_usdt", 0.0)
+        entry = getattr(dec, "entry_price", None)
+        sl = getattr(dec, "stop_loss", None)
+        tp = getattr(dec, "take_profit", None)
+        lines.append(
+            f"- {inst_id}: RULE {action}{score_s} regime={regime or 'n/a'}{bits}"
+        )
+        lines.append(
+            f"  geometry entry={entry} sl={sl} tp={tp} margin_usdt={margin}"
+        )
+        if reason:
+            lines.append(f"  reason: {reason}")
+    return "\n".join(lines) if lines else "(no rule proposals — do not open any position)"
 
 
 def _normalize_id(module_id: str) -> str:

@@ -1,11 +1,20 @@
 """
-E3 per-instrument full-gate rule fire cooldown (TF + MR).
+E3 per-instrument fire cooldown (rule full-gate + pure LLM fires).
 
-After a full-gate BUY_LONG / SELL_SHORT is recorded, suppress another
-same-instrument full-gate entry for ``KEEL_RULE_FIRE_COOLDOWN_SECONDS``
-(default 900). During cooldown the decision becomes WAIT with signal_diag
-still attached (near UX) but must NOT count as a full_gate_fire and must
-NOT produce a shadow fill for the suppressed entry.
+After a cooldown-eligible BUY_LONG / SELL_SHORT is recorded, suppress
+another same-instrument entry for ``KEEL_RULE_FIRE_COOLDOWN_SECONDS``
+(default 900). Eligible rows:
+
+- ``rule`` / ``llm_veto`` / unlabeled: full-gate only (``missing==[]``)
+- ``llm``: any BUY_LONG / SELL_SHORT (model-as-trader has no missing=[])
+
+Do not fold ``llm`` into ``RULE_POLICY_NAMES`` — that would pollute E1
+full-gate stats.
+
+During cooldown the decision becomes WAIT: signal_diag is kept for audit,
+but ``nearest`` is neutralized and ``fire_cooldown_ok`` is appended to
+``missing`` so it must NOT count as a full_gate_fire and must NOT produce
+a near-probe shadow fill.
 
 Uses ledger recent decisions — same pattern as near_probe cooldown.
 """
@@ -14,13 +23,22 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from keel.domain.decision import Decision
+from keel.domain.decision import (
+    SUPPRESS_COOLDOWN_GATE,
+    Decision,
+    neutralize_suppressed_fire_diag,
+)
+from keel.config.settings import _env_int
 from keel.ledger.full_gate import is_full_gate_fire
 from keel.ledger.near_entry_markout import signal_diag_from_calculus
 
 RULE_FIRE_COOLDOWN_DEFAULT = 900
 RULE_FIRE_COOLDOWN_MIN = 0
 RULE_FIRE_COOLDOWN_MAX = 7200
+LLM_REENTRY_DEFAULT = 3600
+_FIRE_ACTIONS = frozenset({"BUY_LONG", "SELL_SHORT"})
+# Pure LLM has no signal_diag.missing=[]; still spray-guard like a full-gate.
+LLM_COOLDOWN_POLICIES = frozenset({"llm"})
 
 
 def clamp_rule_fire_cooldown_seconds(raw: int | float | None) -> int:
@@ -34,6 +52,33 @@ def clamp_rule_fire_cooldown_seconds(raw: int | float | None) -> int:
     if v > RULE_FIRE_COOLDOWN_MAX:
         return RULE_FIRE_COOLDOWN_MAX
     return v
+
+
+def llm_reentry_seconds() -> int:
+    """
+    Extra quiet window after a pure-LLM fire (covers SL-then-reenter spray).
+
+    Default 3600s. Clamp 0–7200; 0 disables the extra (rule 900s still applies).
+    """
+    return clamp_rule_fire_cooldown_seconds(
+        _env_int("KEEL_LLM_REENTRY_SECONDS", LLM_REENTRY_DEFAULT)
+    )
+
+
+def is_cooldown_fire(
+    action: Any,
+    diag: dict[str, Any] | None,
+    *,
+    policy_name: str | None = None,
+) -> bool:
+    """True when this row should start / consume the per-instrument fire cooldown."""
+    act = str(action or "").upper().strip()
+    if act not in _FIRE_ACTIONS:
+        return False
+    pol = str(policy_name or "").strip().lower()
+    if pol in LLM_COOLDOWN_POLICIES:
+        return True
+    return is_full_gate_fire(action, diag, policy_name=policy_name)
 
 
 def full_gate_fire_recent(
@@ -78,7 +123,7 @@ def full_gate_fire_recent(
             pol = getattr(row, "policy_name", None) or ""
             calc = getattr(row, "calculus_data", None)
         diag = signal_diag_from_calculus(calc)
-        if is_full_gate_fire(action, diag, policy_name=str(pol)):
+        if is_cooldown_fire(action, diag, policy_name=str(pol)):
             return True
     return False
 
@@ -98,9 +143,13 @@ def apply_rule_fire_cooldown(
     Otherwise return ``decision`` unchanged (optionally annotated inactive).
     """
     cd = clamp_rule_fire_cooldown_seconds(cooldown_seconds)
+    if str(policy_name or "").strip().lower() in LLM_COOLDOWN_POLICIES:
+        extra = llm_reentry_seconds()
+        if extra > 0:
+            cd = max(cd, extra)
     if cd <= 0:
         return decision
-    if not is_full_gate_fire(
+    if not is_cooldown_fire(
         decision.action,
         decision.signal_diag,
         policy_name=policy_name,
@@ -115,14 +164,19 @@ def apply_rule_fire_cooldown(
     ):
         return decision
 
-    diag = dict(decision.signal_diag or {})
-    diag["fire_cooldown_active"] = True
-    diag["fire_cooldown_seconds"] = int(cd)
+    diag = neutralize_suppressed_fire_diag(
+        decision.signal_diag,
+        gate=SUPPRESS_COOLDOWN_GATE,
+        extra={
+            "fire_cooldown_active": True,
+            "fire_cooldown_seconds": int(cd),
+        },
+    )
     return Decision(
         inst_id=decision.inst_id,
         action="WAIT",
         confidence=decision.confidence,
-        reason=f"rule fire cooldown ({int(cd)}s) — suppress spray",
+        reason=f"fire cooldown ({int(cd)}s) — suppress spray",
         signal_diag=diag,
     )
 
@@ -134,4 +188,8 @@ __all__ = [
     "apply_rule_fire_cooldown",
     "clamp_rule_fire_cooldown_seconds",
     "full_gate_fire_recent",
+    "is_cooldown_fire",
+    "llm_reentry_seconds",
+    "LLM_COOLDOWN_POLICIES",
+    "LLM_REENTRY_DEFAULT",
 ]

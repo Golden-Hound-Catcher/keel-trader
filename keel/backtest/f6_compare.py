@@ -195,6 +195,7 @@ def run_f6_config_on_window(
         horizons=horizons,
         include_barrier=True,
         include_trail=True,
+        trail_kind="atr",
         trail_atr=float(config.trail_atr),
         trail_time_stop_bars=config.trail_time_stop_bars,
         max_extension_atr=float(config.max_extension_atr),

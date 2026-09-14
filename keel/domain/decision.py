@@ -12,6 +12,10 @@ from typing import Any, Literal
 
 DecisionAction = Literal["BUY_LONG", "SELL_SHORT", "WAIT"]
 
+# WAIT rewrite gates: a suppressed full-gate must not look like a near-signal.
+SUPPRESS_VETO_GATE = "llm_veto_ok"
+SUPPRESS_COOLDOWN_GATE = "fire_cooldown_ok"
+
 
 @dataclass
 class Decision:
@@ -30,6 +34,55 @@ class Decision:
     validation_error: str = ""
     # Q0 near-signal diagnostics (rule policy); persisted under calculus_data.signal_diag
     signal_diag: dict[str, Any] | None = None
+
+
+def diag_flag_truthy(diag: dict[str, Any] | None, key: str) -> bool:
+    """True when a signal_diag flag is set (bool/int/str)."""
+    if not isinstance(diag, dict):
+        return False
+    value = diag.get(key)
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def is_suppressed_fire_diag(diag: dict[str, Any] | None) -> bool:
+    """True when a WAIT was rewritten from a full-gate fire (veto or cooldown)."""
+    return diag_flag_truthy(diag, "llm_veto") or diag_flag_truthy(
+        diag, "fire_cooldown_active"
+    )
+
+
+def neutralize_suppressed_fire_diag(
+    diag: dict[str, Any] | None,
+    *,
+    gate: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Rewrite a full-gate fire's signal_diag so a WAIT is not a near-signal.
+
+    Keeps the original nearest under ``nearest_before_suppress`` for audit,
+    sets ``nearest`` to ``none``, and appends ``gate`` to ``missing`` so radar /
+    near-probe / quality near-rate see a blocked wait — not a 0-missing fire.
+    """
+    out = dict(diag or {})
+    prev = str(out.get("nearest") or "").strip().lower()
+    if prev in ("long", "short"):
+        out.setdefault("nearest_before_suppress", prev)
+    out["nearest"] = "none"
+    missing_raw = out.get("missing")
+    missing = [str(x) for x in missing_raw] if isinstance(missing_raw, list) else []
+    if gate and gate not in missing:
+        missing.append(gate)
+    out["missing"] = missing
+    if extra:
+        out.update(extra)
+    return out
 
 
 def validate_decision(decision: Decision, *, min_rr: float = 2.0) -> Decision:

@@ -16,7 +16,12 @@ from __future__ import annotations
 import time
 from typing import Any, Literal
 
-from keel.domain.decision import Decision, DecisionAction, validate_decision
+from keel.domain.decision import (
+    Decision,
+    DecisionAction,
+    is_suppressed_fire_diag,
+    validate_decision,
+)
 from keel.factors.market_data import MarketSnapshot
 
 # Ledger / audit tag — distinguish probe fills from forced/manual shadow fills.
@@ -151,6 +156,8 @@ def near_signal_meets_gates(
 ) -> bool:
     """True when signal_diag is a strong near-signal under configured gates."""
     if not isinstance(diag, dict):
+        return False
+    if is_suppressed_fire_diag(diag):
         return False
     nearest = diag.get("nearest")
     if nearest not in ("long", "short"):
@@ -476,6 +483,8 @@ def evaluate_near_probe(
 
     diag = decision.signal_diag if isinstance(decision.signal_diag, dict) else None
     if not isinstance(diag, dict):
+        return NearProbeOutcome(skip_reason="not_near")
+    if is_suppressed_fire_diag(diag):
         return NearProbeOutcome(skip_reason="not_near")
     nearest = diag.get("nearest")
     if nearest not in ("long", "short"):

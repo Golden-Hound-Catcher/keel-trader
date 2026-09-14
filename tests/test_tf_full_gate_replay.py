@@ -77,6 +77,11 @@ class TestTfFireReplayHelpers(unittest.TestCase):
     def test_normalize_variant(self):
         self.assertEqual(normalize_variant("tf"), "trend_follow")
         self.assertEqual(normalize_variant("mean_revert"), "mean_revert")
+        self.assertEqual(normalize_variant("regime"), "regime")
+        self.assertEqual(normalize_variant("score"), "score")
+        self.assertEqual(normalize_variant("regime_score"), "score")
+        self.assertEqual(normalize_variant("sqz"), "squeeze_release")
+        self.assertEqual(normalize_variant("squeeze_release"), "squeeze_release")
         self.assertEqual(normalize_variant(None), "trend_follow")
 
     def test_forced_variant_restores(self):

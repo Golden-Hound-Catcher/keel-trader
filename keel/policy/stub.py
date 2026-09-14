@@ -40,6 +40,18 @@ spent — ``KEEL_RULE_TF_PULLBACK`` master (default **0** off (F2b backtest over
 F5 (opt-in): ``supertrend`` / ``donchian`` — public TradingView-style concepts
 (ATR-band flip / prior-bar Donchian + EMA + volume SMA×k). Not Pine source.
 Defaults leave live observe on ``.env`` variant (trend_follow). E0 freeze.
+P1: ``KEEL_RULE_VARIANT=regime`` routes per bar: squeeze/shock → WAIT;
+trend → TF-like gates (15m+1h, 4h default off); range → VWAP/%B fade.
+P2: ``KEEL_RULE_VARIANT=score`` (aliases ``regime_score``) keeps P1 routing
+but replaces AND with a 0–5 score (fire ≥4). Trend: HTF 1h, Supertrend,
+EMA21/VWAP pullback on the discount side, MACD, volume (volume is a point,
+not a hard veto). RSI only vetoes chase (long>70 / short<30). Range: must
+have extreme %B + VWAP adverse, then ≥4 of five tighter points. P1
+``regime`` stays bit-for-bit. mean_revert / trend_follow unchanged.
+P5: ``KEEL_RULE_VARIANT=squeeze_release`` (aliases ``sqz`` / ``squeeze``)
+fires only on the first expansion bar after a TTM squeeze, with Supertrend
++ 1h agreement and RSI chase veto. Not a per-bar AND router. Measurement
+only — live default stays ``mean_revert``.
 """
 from __future__ import annotations
 
@@ -47,6 +59,7 @@ import os
 from typing import Any
 
 from keel.factors.market_data import MarketSnapshot
+from keel.factors.technical import classify_market_regime, detect_squeeze_release
 from keel.domain.decision import Decision, validate_decision
 from keel.policy.protocol import DecisionPolicy, PolicyContext, PolicyResult
 from keel.policy.tv_rules import (
@@ -79,6 +92,23 @@ _TF_RSI_PULLBACK_LONG_MAX_DEFAULT = 52.0
 _TF_RSI_PULLBACK_SHORT_MIN_DEFAULT = 48.0
 _TF_RSI_PULLBACK_MIN = 20.0
 _TF_RSI_PULLBACK_MAX = 80.0
+# P1 range fade (percent_b / VWAP / RSI).
+_RANGE_PB_LONG_MAX_DEFAULT = 0.20
+_RANGE_PB_SHORT_MIN_DEFAULT = 0.80
+_RANGE_RSI_LONG_MAX_DEFAULT = 50.0
+_RANGE_RSI_SHORT_MIN_DEFAULT = 50.0
+_SHOCK_ATR_MULT_DEFAULT = 2.5
+# P2 score variant (pre-declared; not fit on the P1 700-bar window).
+_SCORE_MIN_DEFAULT = 4
+_SCORE_MIN_LO = 3
+_SCORE_MIN_HI = 5
+_SCORE_PULLBACK_ATR_DEFAULT = 0.75
+_SCORE_RSI_VETO_LONG_MAX_DEFAULT = 70.0
+_SCORE_RSI_VETO_SHORT_MIN_DEFAULT = 30.0
+_SCORE_RANGE_PB_LONG_MAX_DEFAULT = 0.15
+_SCORE_RANGE_PB_SHORT_MIN_DEFAULT = 0.85
+_SCORE_RANGE_RSI_LONG_MAX_DEFAULT = 40.0
+_SCORE_RANGE_RSI_SHORT_MIN_DEFAULT = 60.0
 # R7/R8: near-signal edge_hint geometry (distance-to-threshold + ATR).
 # R8 defaults: slightly higher near p + softer penalty fracs so low-ATR
 # (≈18–40 bps) can still clear the 10 bps probe hurdle when residuals are modest.
@@ -101,6 +131,21 @@ _BINARY_MISSING_GATES = frozenset(
         "ema_short_ok",
         "extension_ok",
         "pullback_ok",
+        "range_pb_ok",
+        "range_vwap_ok",
+        "range_rsi_ok",
+        "regime_ok",
+        "htf",
+        "st",
+        "pullback",
+        "momentum",
+        "volume",
+        "st_not_against",
+        "rsi_veto",
+        "score_ok",
+        "squeeze_release",
+        "st_ok",
+        "htf_ok",
     }
 )
 
@@ -179,6 +224,10 @@ def _rule_variant() -> str:
     - ``trend_follow``: hard 15m+1h (+4h when TF_REQUIRE_4H); RSI = not OB/OS.
     - ``supertrend`` (F5): ATR-band direction flip + HTF filter (opt-in).
     - ``donchian`` (F5): prior-bar Donchian breakout + EMA + volume SMA×k.
+    - ``regime``: P1 router (squeeze/shock WAIT; trend=TF-like 15m+1h;
+      range=VWAP/%B fade).
+    - ``score``: P2 scored router (P1 regimes; fire when score ≥4).
+    - ``squeeze_release``: P5 event entry (prev squeeze, now expand + ST+1h).
     Unknown values fall back to ``mean_revert``. Live default remains whatever
     ``.env`` sets (observe keeps ``trend_follow``); code default for unset
     stays ``mean_revert``.
@@ -190,6 +239,12 @@ def _rule_variant() -> str:
         return "supertrend"
     if raw in ("donchian", "donchian_breakout", "donchian-breakout", "dc"):
         return "donchian"
+    if raw in ("regime", "router", "regime_router"):
+        return "regime"
+    if raw in ("score", "regime_score", "scored"):
+        return "score"
+    if raw in ("squeeze_release", "sqz", "squeeze"):
+        return "squeeze_release"
     return "mean_revert"
 
 
@@ -251,6 +306,26 @@ def _clamp_tf_rsi_pullback(raw: float, default: float) -> float:
     if v != v:  # NaN
         return default
     return max(_TF_RSI_PULLBACK_MIN, min(_TF_RSI_PULLBACK_MAX, v))
+
+
+def _clamp_score_min(raw: float) -> int:
+    """P2: fire threshold in {3,4,5}; default 4."""
+    try:
+        v = int(round(float(raw)))
+    except (TypeError, ValueError):
+        v = _SCORE_MIN_DEFAULT
+    return max(_SCORE_MIN_LO, min(_SCORE_MIN_HI, v))
+
+
+def _clamp_score_pullback_atr(raw: float) -> float:
+    """P2: max ATR distance to EMA21/VWAP for the pullback point."""
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        v = _SCORE_PULLBACK_ATR_DEFAULT
+    if v != v or v <= 0.0:
+        return _SCORE_PULLBACK_ATR_DEFAULT
+    return max(0.25, min(2.0, v))
 
 
 def resolve_tf_pullback_enabled() -> bool:
@@ -431,7 +506,128 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
             ),
             _TF_RSI_PULLBACK_SHORT_MIN_DEFAULT,
         )
+    elif variant == "regime":
+        # P1: TF-like directional gates for TREND path; 4h default off.
+        th["rsi_long_max"] = _env_float("KEEL_RULE_TF_RSI_LONG_MAX", 68.0)
+        th["rsi_short_min"] = _env_float("KEEL_RULE_TF_RSI_SHORT_MIN", 32.0)
+        th["require_1h_trend"] = True
+        th["rsi_relax_enable"] = False
+        th["tf_macd_lag_bps"] = _clamp_tf_macd_lag_bps(
+            _env_float("KEEL_RULE_TF_MACD_LAG_BPS", _TF_MACD_LAG_BPS_DEFAULT)
+        )
+        th["require_4h_trend"] = _env_bool("KEEL_RULE_TF_REQUIRE_4H", False)
+        th["range_pb_long_max"] = _env_float(
+            "KEEL_RULE_RANGE_PB_LONG_MAX", _RANGE_PB_LONG_MAX_DEFAULT
+        )
+        th["range_pb_short_min"] = _env_float(
+            "KEEL_RULE_RANGE_PB_SHORT_MIN", _RANGE_PB_SHORT_MIN_DEFAULT
+        )
+        th["range_rsi_long_max"] = _env_float(
+            "KEEL_RULE_RANGE_RSI_LONG_MAX", _RANGE_RSI_LONG_MAX_DEFAULT
+        )
+        th["range_rsi_short_min"] = _env_float(
+            "KEEL_RULE_RANGE_RSI_SHORT_MIN", _RANGE_RSI_SHORT_MIN_DEFAULT
+        )
+        th["shock_atr_mult"] = _env_float(
+            "KEEL_RULE_SHOCK_ATR_MULT", _SHOCK_ATR_MULT_DEFAULT
+        )
+        th["range_volume_soft"] = True
+    elif variant == "score":
+        # P2: same router as P1; 4h still a bonus (default off), not an AND.
+        th["rsi_long_max"] = _env_float("KEEL_RULE_TF_RSI_LONG_MAX", 68.0)
+        th["rsi_short_min"] = _env_float("KEEL_RULE_TF_RSI_SHORT_MIN", 32.0)
+        th["require_1h_trend"] = True
+        th["rsi_relax_enable"] = False
+        th["tf_macd_lag_bps"] = _clamp_tf_macd_lag_bps(
+            _env_float("KEEL_RULE_TF_MACD_LAG_BPS", _TF_MACD_LAG_BPS_DEFAULT)
+        )
+        th["require_4h_trend"] = _env_bool("KEEL_RULE_TF_REQUIRE_4H", False)
+        th["score_min"] = _clamp_score_min(
+            _env_float("KEEL_RULE_SCORE_MIN", float(_SCORE_MIN_DEFAULT))
+        )
+        th["score_pullback_atr"] = _clamp_score_pullback_atr(
+            _env_float("KEEL_RULE_SCORE_PULLBACK_ATR", _SCORE_PULLBACK_ATR_DEFAULT)
+        )
+        th["score_rsi_veto_long_max"] = _clamp_tf_rsi_pullback(
+            _env_float(
+                "KEEL_RULE_SCORE_RSI_VETO_LONG_MAX",
+                _SCORE_RSI_VETO_LONG_MAX_DEFAULT,
+            ),
+            _SCORE_RSI_VETO_LONG_MAX_DEFAULT,
+        )
+        th["score_rsi_veto_short_min"] = _clamp_tf_rsi_pullback(
+            _env_float(
+                "KEEL_RULE_SCORE_RSI_VETO_SHORT_MIN",
+                _SCORE_RSI_VETO_SHORT_MIN_DEFAULT,
+            ),
+            _SCORE_RSI_VETO_SHORT_MIN_DEFAULT,
+        )
+        th["range_pb_long_max"] = _env_float(
+            "KEEL_RULE_RANGE_PB_LONG_MAX", _SCORE_RANGE_PB_LONG_MAX_DEFAULT
+        )
+        th["range_pb_short_min"] = _env_float(
+            "KEEL_RULE_RANGE_PB_SHORT_MIN", _SCORE_RANGE_PB_SHORT_MIN_DEFAULT
+        )
+        th["range_rsi_long_max"] = _env_float(
+            "KEEL_RULE_RANGE_RSI_LONG_MAX", _SCORE_RANGE_RSI_LONG_MAX_DEFAULT
+        )
+        th["range_rsi_short_min"] = _env_float(
+            "KEEL_RULE_RANGE_RSI_SHORT_MIN", _SCORE_RANGE_RSI_SHORT_MIN_DEFAULT
+        )
+        th["shock_atr_mult"] = _env_float(
+            "KEEL_RULE_SHOCK_ATR_MULT", _SHOCK_ATR_MULT_DEFAULT
+        )
+        # Range volume is a score point; no soft_range auto-pass (discipline).
+        th["range_volume_soft"] = _env_bool("KEEL_RULE_RANGE_VOLUME_SOFT", False)
+    elif variant == "squeeze_release":
+        # P5: event entry; 4h is not an AND. RSI chase veto reuses score knobs.
+        th["rsi_long_max"] = _env_float("KEEL_RULE_TF_RSI_LONG_MAX", 68.0)
+        th["rsi_short_min"] = _env_float("KEEL_RULE_TF_RSI_SHORT_MIN", 32.0)
+        th["require_1h_trend"] = True
+        th["rsi_relax_enable"] = False
+        th["require_4h_trend"] = False
+        th["score_rsi_veto_long_max"] = _clamp_tf_rsi_pullback(
+            _env_float(
+                "KEEL_RULE_SCORE_RSI_VETO_LONG_MAX",
+                _SCORE_RSI_VETO_LONG_MAX_DEFAULT,
+            ),
+            _SCORE_RSI_VETO_LONG_MAX_DEFAULT,
+        )
+        th["score_rsi_veto_short_min"] = _clamp_tf_rsi_pullback(
+            _env_float(
+                "KEEL_RULE_SCORE_RSI_VETO_SHORT_MIN",
+                _SCORE_RSI_VETO_SHORT_MIN_DEFAULT,
+            ),
+            _SCORE_RSI_VETO_SHORT_MIN_DEFAULT,
+        )
+        th["shock_atr_mult"] = _env_float(
+            "KEEL_RULE_SHOCK_ATR_MULT", _SHOCK_ATR_MULT_DEFAULT
+        )
     return th
+
+
+def _rule_reason_prefix(diag: dict[str, Any], *, fired: bool, side: str) -> str:
+    variant = str(diag.get("rule_variant") or "")
+    if variant == "squeeze_release":
+        if fired:
+            return f"rule {side} squeeze_release"
+        return "no rule signal squeeze_release"
+    if variant in ("regime", "score"):
+        path = str(diag.get("regime") or diag.get("regime_path") or "")
+        score = diag.get("score")
+        score_bit = ""
+        if score is not None:
+            score_bit = f" score={int(score)}/{int(diag.get('score_min') or 0)}"
+        if fired:
+            return f"rule {side} {variant} {path}{score_bit}".strip()
+        return f"no rule signal {variant} {path}{score_bit}".strip()
+    if variant == "trend_follow":
+        if fired:
+            return f"rule {side} trend_follow"
+        return "no rule signal trend_follow"
+    if fired:
+        return f"rule {side}"
+    return "no rule signal"
 
 
 def _factor_reason(snapshot: MarketSnapshot, prefix: str) -> str:
@@ -460,6 +656,692 @@ _SHORT_GATES = (
     "ema_short_ok",
     "volume_ok",
 )
+_RANGE_LONG_GATES = (
+    "range_pb_ok",
+    "range_vwap_ok",
+    "range_rsi_ok",
+    "volume_ok",
+)
+_RANGE_SHORT_GATES = (
+    "range_pb_ok",
+    "range_vwap_ok",
+    "range_rsi_ok",
+    "volume_ok",
+)
+
+
+def _snapshot_regime(
+    snapshot: MarketSnapshot,
+    th: dict[str, float | bool | str],
+) -> str:
+    """Prefer enrich-time ``snapshot.regime``; else classify from fields."""
+    raw = str(getattr(snapshot, "regime", "") or "").strip().lower()
+    if raw in ("squeeze", "trend", "range", "shock"):
+        return raw
+    bar_range = 0.0
+    candles = getattr(snapshot, "candles_15m", None) or []
+    if candles:
+        last = candles[-1]
+        try:
+            bar_range = float(last.high) - float(last.low)
+        except (TypeError, ValueError, AttributeError):
+            bar_range = 0.0
+    shock_mult = float(th.get("shock_atr_mult") or _SHOCK_ATR_MULT_DEFAULT)
+    return classify_market_regime(
+        squeeze=bool(getattr(snapshot, "squeeze", False)),
+        supertrend_direction=int(getattr(snapshot, "supertrend_direction", 0) or 0),
+        trend_1h=str(getattr(snapshot, "trend_1h", "neutral") or "neutral"),
+        bar_range=bar_range,
+        atr=float(getattr(snapshot, "atr_14", 0.0) or 0.0),
+        shock_atr_mult=shock_mult,
+    )
+
+
+def _range_volume_ok(
+    snapshot: MarketSnapshot,
+    th: dict[str, float | bool | str],
+) -> tuple[bool, float, str]:
+    """Volume for range fades: hard / percentile / soft floor (no directional AND)."""
+    min_vol = float(th["min_vol"])
+    min_pct = float(th["min_vol_percentile"])
+    soft_enable = bool(th["vol_soft_enable"])
+    soft_floor = float(th["vol_soft_floor"])
+    ratio = float(snapshot.volume_ratio or 0.0)
+    pct = getattr(snapshot, "volume_percentile", None)
+    try:
+        pct_f = float(pct) if pct is not None else None
+    except (TypeError, ValueError):
+        pct_f = None
+    if ratio >= min_vol:
+        return True, float(min_vol), "hard"
+    if min_pct > 0 and pct_f is not None and pct_f >= min_pct:
+        return True, float(min_pct), "percentile"
+    range_soft = bool(th.get("range_volume_soft", True))
+    if soft_enable and range_soft and ratio >= soft_floor:
+        return True, float(soft_floor), "soft_range"
+    return False, float(min_vol), "fail"
+
+
+def _diagnose_regime_block(
+    snapshot: MarketSnapshot,
+    th: dict[str, float | bool | str],
+    regime: str,
+) -> dict[str, Any]:
+    """Squeeze / shock: fail-closed WAIT with ``missing=['regime_ok']``."""
+    data_ok = bool(snapshot.data_valid) and snapshot.price > 0 and snapshot.atr_14 > 0
+    gates: dict[str, Any] = {
+        "data_valid": data_ok,
+        "regime": regime,
+        "regime_ok": False,
+        "regime_path": regime,
+        "rule_variant": str(th.get("rule_variant") or "regime"),
+        "nearest": "none",
+        "missing": ["data_valid"] if not data_ok else ["regime_ok"],
+        "near_ready": False,
+        "rsi_14": snapshot.rsi_14,
+        "volume_ok": False,
+        "volume_ratio": snapshot.volume_ratio,
+        "bb_percent_b": float(getattr(snapshot, "bb_percent_b", 0.5) or 0.5),
+        "squeeze": bool(getattr(snapshot, "squeeze", False)),
+        "supertrend_direction": int(getattr(snapshot, "supertrend_direction", 0) or 0),
+        "trend_15m": str(snapshot.trend_15m or "neutral"),
+        "trend_1h": str(getattr(snapshot, "trend_1h", "neutral") or "neutral"),
+        "trend_4h": str(getattr(snapshot, "trend_4h", "neutral") or "neutral"),
+        "require_1h_trend": bool(th.get("require_1h_trend", False)),
+        "require_4h_trend": bool(th.get("require_4h_trend", False)),
+    }
+    gates.update(
+        apply_1h_edge_boost(
+            _edge_hints(
+                snapshot,
+                list(gates["missing"]),
+                nearest="none",
+                th=th,
+            ),
+            trend_1h_confirm=False,
+            nearest="none",
+            trend_15m=str(snapshot.trend_15m or "neutral"),
+            boost_mult=float(th["edge_1h_boost"]),
+        )
+    )
+    return gates
+
+
+def _diagnose_squeeze_release(
+    snapshot: MarketSnapshot,
+    th: dict[str, float | bool | str],
+) -> dict[str, Any]:
+    """
+    P5 event entry: first expansion bar after TTM squeeze + Supertrend + 1h.
+
+    Must: squeeze_prev and not squeeze_now; Supertrend ±1; 1h same side.
+    RSI only vetoes chase (long>70 / short<30). Volume is not a gate.
+    Expansion bar is the event — shock WAIT is not applied (P1 shock would
+    drop the release bar). Fail-closed if Supertrend or 1h is missing.
+    """
+    data_ok = bool(snapshot.data_valid) and snapshot.price > 0 and snapshot.atr_14 > 0
+    squeeze_now = bool(getattr(snapshot, "squeeze", False))
+    squeeze_prev = bool(getattr(snapshot, "squeeze_prev", False))
+    release_attr = getattr(snapshot, "squeeze_release", None)
+    if release_attr is None:
+        released = detect_squeeze_release(
+            squeeze_now=squeeze_now, squeeze_prev=squeeze_prev
+        )
+    else:
+        released = bool(release_attr)
+    try:
+        st = int(getattr(snapshot, "supertrend_direction", 0) or 0)
+    except (TypeError, ValueError):
+        st = 0
+    trend_1h = str(getattr(snapshot, "trend_1h", "neutral") or "neutral")
+    rsi = float(snapshot.rsi_14)
+    veto_long_max = float(
+        th.get("score_rsi_veto_long_max") or _SCORE_RSI_VETO_LONG_MAX_DEFAULT
+    )
+    veto_short_min = float(
+        th.get("score_rsi_veto_short_min") or _SCORE_RSI_VETO_SHORT_MIN_DEFAULT
+    )
+    st_ok = st != 0
+    htf_long = trend_1h == "bullish"
+    htf_short = trend_1h == "bearish"
+    htf_ok = (st > 0 and htf_long) or (st < 0 and htf_short)
+    rsi_long_ok = rsi <= veto_long_max
+    rsi_short_ok = rsi >= veto_short_min
+    if st > 0:
+        rsi_veto_ok = rsi_long_ok
+    elif st < 0:
+        rsi_veto_ok = rsi_short_ok
+    else:
+        rsi_veto_ok = True
+
+    missing: list[str] = []
+    nearest = "none"
+    if not data_ok:
+        missing = ["data_valid"]
+    elif not released:
+        missing = ["squeeze_release"]
+    else:
+        if not st_ok:
+            missing.append("st_ok")
+        if not htf_ok:
+            missing.append("htf_ok")
+        if not rsi_veto_ok:
+            missing.append("rsi_veto")
+        if not missing:
+            nearest = "long" if st > 0 else "short"
+
+    if released and not missing:
+        regime_label = "squeeze_release"
+    elif squeeze_now:
+        regime_label = "squeeze"
+    else:
+        regime_label = "wait"
+
+    gates: dict[str, Any] = {
+        "data_valid": data_ok,
+        "regime": regime_label,
+        "regime_ok": bool(released),
+        "regime_path": "squeeze_release",
+        "rule_variant": "squeeze_release",
+        "nearest": nearest,
+        "missing": missing,
+        "near_ready": False,
+        "squeeze": squeeze_now,
+        "squeeze_prev": squeeze_prev,
+        "squeeze_release": released,
+        "supertrend_direction": st,
+        "st_ok": st_ok,
+        "htf_ok": htf_ok,
+        "rsi_14": rsi,
+        "rsi_veto_ok": rsi_veto_ok,
+        "rsi_long_ok": rsi_long_ok,
+        "rsi_short_ok": rsi_short_ok,
+        "volume_ok": True,
+        "volume_ratio": snapshot.volume_ratio,
+        "trend_15m": str(snapshot.trend_15m or "neutral"),
+        "trend_1h": trend_1h,
+        "trend_4h": str(getattr(snapshot, "trend_4h", "neutral") or "neutral"),
+        "require_1h_trend": True,
+        "require_4h_trend": False,
+        "trend_bullish": st > 0 and htf_long,
+        "trend_bearish": st < 0 and htf_short,
+        "macd_long_ok": False,
+        "macd_short_ok": False,
+        "ema_long_ok": False,
+        "ema_short_ok": False,
+    }
+    gates.update(
+        apply_1h_edge_boost(
+            _edge_hints(
+                snapshot,
+                list(missing),
+                nearest=nearest,
+                th=th,
+            ),
+            trend_1h_confirm=bool(htf_ok),
+            nearest=nearest,
+            trend_15m=str(snapshot.trend_15m or "neutral"),
+            boost_mult=float(th["edge_1h_boost"]),
+        )
+    )
+    return gates
+
+
+def _diagnose_range_signal(
+    snapshot: MarketSnapshot,
+    th: dict[str, float | bool | str],
+    regime: str,
+) -> dict[str, Any]:
+    """P1 RANGE path: fade %B extremes toward VWAP (no EMA/MACD/4h AND)."""
+    data_ok = bool(snapshot.data_valid) and snapshot.price > 0 and snapshot.atr_14 > 0
+    pb_long_max = float(th.get("range_pb_long_max") or _RANGE_PB_LONG_MAX_DEFAULT)
+    pb_short_min = float(th.get("range_pb_short_min") or _RANGE_PB_SHORT_MIN_DEFAULT)
+    rsi_long_max = float(th.get("range_rsi_long_max") or _RANGE_RSI_LONG_MAX_DEFAULT)
+    rsi_short_min = float(th.get("range_rsi_short_min") or _RANGE_RSI_SHORT_MIN_DEFAULT)
+    try:
+        pb = float(getattr(snapshot, "bb_percent_b", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        pb = 0.5
+    try:
+        bias = float(getattr(snapshot, "vwap_bias_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        bias = 0.0
+    rsi = float(snapshot.rsi_14)
+    volume_ok, vol_th, vol_path = _range_volume_ok(snapshot, th)
+
+    long_pb = pb <= pb_long_max
+    short_pb = pb >= pb_short_min
+    long_vwap = bias <= 0.0
+    short_vwap = bias >= 0.0
+    long_rsi = rsi <= rsi_long_max
+    short_rsi = rsi >= rsi_short_min
+
+    gates: dict[str, Any] = {
+        "data_valid": data_ok,
+        "regime": regime,
+        "regime_ok": True,
+        "regime_path": "range",
+        "rule_variant": str(th.get("rule_variant") or "regime"),
+        "bb_percent_b": pb,
+        "vwap_bias_pct": bias,
+        "squeeze": bool(getattr(snapshot, "squeeze", False)),
+        "rsi_14": rsi,
+        "volume_ok": volume_ok,
+        "volume_ratio": snapshot.volume_ratio,
+        "volume_threshold": vol_th,
+        "volume_path": vol_path,
+        "volume_soft_pass": vol_path == "soft_range",
+        "range_pb_long_max": pb_long_max,
+        "range_pb_short_min": pb_short_min,
+        "trend_15m": str(snapshot.trend_15m or "neutral"),
+        "trend_1h": str(getattr(snapshot, "trend_1h", "neutral") or "neutral"),
+        "trend_4h": str(getattr(snapshot, "trend_4h", "neutral") or "neutral"),
+        "require_1h_trend": False,
+        "require_4h_trend": False,
+        "rsi_long_ok": long_rsi,
+        "rsi_short_ok": short_rsi,
+        "trend_bullish": False,
+        "trend_bearish": False,
+        "macd_long_ok": False,
+        "macd_short_ok": False,
+        "ema_long_ok": False,
+        "ema_short_ok": False,
+    }
+
+    if not data_ok:
+        gates["nearest"] = "none"
+        gates["missing"] = ["data_valid"]
+        gates["near_ready"] = False
+        gates["range_pb_ok"] = False
+        gates["range_vwap_ok"] = False
+        gates["range_rsi_ok"] = False
+        gates.update(
+            apply_1h_edge_boost(
+                _edge_hints(snapshot, ["data_valid"], nearest="none", th=th),
+                trend_1h_confirm=False,
+                nearest="none",
+                trend_15m=str(snapshot.trend_15m or "neutral"),
+                boost_mult=float(th["edge_1h_boost"]),
+            )
+        )
+        return gates
+
+    long_flags = {
+        "range_pb_ok": long_pb,
+        "range_vwap_ok": long_vwap,
+        "range_rsi_ok": long_rsi,
+        "volume_ok": volume_ok,
+    }
+    short_flags = {
+        "range_pb_ok": short_pb,
+        "range_vwap_ok": short_vwap,
+        "range_rsi_ok": short_rsi,
+        "volume_ok": volume_ok,
+    }
+    long_missing = [g for g in _RANGE_LONG_GATES if not long_flags[g]]
+    short_missing = [g for g in _RANGE_SHORT_GATES if not short_flags[g]]
+    n_long, n_short = len(long_missing), len(short_missing)
+    if n_long == 0:
+        nearest, missing, side_flags = "long", [], long_flags
+    elif n_short == 0:
+        nearest, missing, side_flags = "short", [], short_flags
+    elif n_long <= n_short:
+        nearest, missing, side_flags = "long", long_missing, long_flags
+    else:
+        nearest, missing, side_flags = "short", short_missing, short_flags
+
+    gates["range_pb_ok"] = bool(side_flags["range_pb_ok"])
+    gates["range_vwap_ok"] = bool(side_flags["range_vwap_ok"])
+    gates["range_rsi_ok"] = bool(side_flags["range_rsi_ok"])
+    gates["nearest"] = nearest
+    gates["missing"] = missing
+    gates["near_ready"] = len(missing) == 1
+    gates.update(
+        apply_1h_edge_boost(
+            _edge_hints(snapshot, list(missing), nearest=str(nearest), th=th),
+            trend_1h_confirm=False,
+            nearest=str(nearest),
+            trend_15m=str(snapshot.trend_15m or "neutral"),
+            boost_mult=float(th["edge_1h_boost"]),
+        )
+    )
+    return gates
+
+
+def _atr_dist_ema21(snapshot: MarketSnapshot) -> float:
+    atr = float(getattr(snapshot, "atr_14", 0.0) or 0.0)
+    if atr <= 0.0:
+        return float("inf")
+    return abs(float(snapshot.price) - float(snapshot.ema_21)) / atr
+
+
+def _atr_dist_vwap(snapshot: MarketSnapshot) -> float:
+    atr = float(getattr(snapshot, "atr_14", 0.0) or 0.0)
+    price = float(getattr(snapshot, "price", 0.0) or 0.0)
+    if atr <= 0.0 or price <= 0.0:
+        return float("inf")
+    try:
+        bias = float(getattr(snapshot, "vwap_bias_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        bias = 0.0
+    return abs(bias) / 100.0 * price / atr
+
+
+def _score_macd_ok(snapshot: MarketSnapshot, th: dict[str, float | bool | str], *, side: str) -> bool:
+    """MACD histogram same-side, with TF lag tolerance."""
+    hist = float(snapshot.macd_histogram)
+    price = float(snapshot.price or 0.0)
+    hist_bps = (hist / price) * 1e4 if price > 0 else 0.0
+    lag = float(th.get("tf_macd_lag_bps") or 0.0)
+    if side == "long":
+        return hist >= 0.0 or (lag > 0.0 and hist_bps >= -lag)
+    return hist <= 0.0 or (lag > 0.0 and hist_bps <= lag)
+
+
+def _score_volume_ok(
+    snapshot: MarketSnapshot,
+    th: dict[str, float | bool | str],
+    *,
+    allow_soft: bool,
+) -> tuple[bool, float, str]:
+    th_vol = dict(th)
+    th_vol["range_volume_soft"] = bool(allow_soft)
+    return _range_volume_ok(snapshot, th_vol)
+
+
+def _pick_scored_side(
+    long_pack: dict[str, Any],
+    short_pack: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Prefer the side that fires; else higher score; long wins ties."""
+    lf = bool(long_pack.get("fires"))
+    sf = bool(short_pack.get("fires"))
+    if lf and not sf:
+        return "long", long_pack
+    if sf and not lf:
+        return "short", short_pack
+    if lf and sf:
+        if int(short_pack.get("score") or 0) > int(long_pack.get("score") or 0):
+            return "short", short_pack
+        return "long", long_pack
+    if int(short_pack.get("score") or 0) > int(long_pack.get("score") or 0):
+        return "short", short_pack
+    return "long", long_pack
+
+
+def _score_attach_edge(
+    snapshot: MarketSnapshot,
+    gates: dict[str, Any],
+    th: dict[str, float | bool | str],
+) -> dict[str, Any]:
+    missing = list(gates.get("missing") or [])
+    nearest = str(gates.get("nearest") or "none")
+    trend_1h = str(getattr(snapshot, "trend_1h", "neutral") or "neutral")
+    confirm = (nearest == "long" and trend_1h == "bullish") or (
+        nearest == "short" and trend_1h == "bearish"
+    )
+    gates.update(
+        apply_1h_edge_boost(
+            _edge_hints(snapshot, missing, nearest=nearest, th=th),
+            trend_1h_confirm=confirm,
+            nearest=nearest,
+            trend_15m=str(snapshot.trend_15m or "neutral"),
+            boost_mult=float(th["edge_1h_boost"]),
+        )
+    )
+    return gates
+
+
+def _diagnose_score_trend(
+    snapshot: MarketSnapshot,
+    th: dict[str, float | bool | str],
+    regime: str,
+) -> dict[str, Any]:
+    """
+    P2 TREND path: 0–5 score, fire when ≥ score_min and RSI does not chase.
+
+    Points: 1h align, Supertrend, EMA21/VWAP pullback on VWAP discount/premium,
+    MACD, volume (volume is a point, not a hard AND). Must have HTF + Supertrend
+    (a trend trade without both is not a trend trade).
+    """
+    data_ok = bool(snapshot.data_valid) and snapshot.price > 0 and snapshot.atr_14 > 0
+    score_min = int(th.get("score_min") or _SCORE_MIN_DEFAULT)
+    pullback_atr = float(th.get("score_pullback_atr") or _SCORE_PULLBACK_ATR_DEFAULT)
+    rsi_veto_long = float(
+        th.get("score_rsi_veto_long_max") or _SCORE_RSI_VETO_LONG_MAX_DEFAULT
+    )
+    rsi_veto_short = float(
+        th.get("score_rsi_veto_short_min") or _SCORE_RSI_VETO_SHORT_MIN_DEFAULT
+    )
+    rsi = float(snapshot.rsi_14)
+    try:
+        bias = float(getattr(snapshot, "vwap_bias_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        bias = 0.0
+    st = int(getattr(snapshot, "supertrend_direction", 0) or 0)
+    trend_1h = str(getattr(snapshot, "trend_1h", "neutral") or "neutral")
+    near_struct = min(_atr_dist_ema21(snapshot), _atr_dist_vwap(snapshot)) <= pullback_atr
+    vol_ok, vol_th, vol_path = _score_volume_ok(snapshot, th, allow_soft=True)
+
+    def _pack(side: str) -> dict[str, Any]:
+        if side == "long":
+            bits = {
+                "htf": trend_1h == "bullish",
+                "st": st == 1,
+                "pullback": near_struct and bias <= 0.0,
+                "momentum": _score_macd_ok(snapshot, th, side="long"),
+                "volume": vol_ok,
+            }
+            rsi_veto_ok = rsi <= rsi_veto_long
+        else:
+            bits = {
+                "htf": trend_1h == "bearish",
+                "st": st == -1,
+                "pullback": near_struct and bias >= 0.0,
+                "momentum": _score_macd_ok(snapshot, th, side="short"),
+                "volume": vol_ok,
+            }
+            rsi_veto_ok = rsi >= rsi_veto_short
+        score = int(sum(1 for v in bits.values() if v))
+        must = bool(bits["htf"] and bits["st"])
+        missing = [k for k, v in bits.items() if not v]
+        if not rsi_veto_ok:
+            missing = list(missing) + ["rsi_veto"]
+        fires = data_ok and rsi_veto_ok and must and score >= score_min
+        if not fires and (not must or score < score_min) and "score_ok" not in missing:
+            missing = list(missing) + ["score_ok"]
+        return {
+            "bits": bits,
+            "score": score,
+            "rsi_veto_ok": rsi_veto_ok,
+            "must": must,
+            "missing": missing,
+            "fires": fires,
+        }
+
+    long_pack = _pack("long")
+    short_pack = _pack("short")
+    nearest, chosen = _pick_scored_side(long_pack, short_pack)
+    missing = [] if chosen["fires"] else list(chosen["missing"])
+    gates: dict[str, Any] = {
+        "data_valid": data_ok,
+        "regime": regime,
+        "regime_ok": True,
+        "regime_path": "trend",
+        "rule_variant": "score",
+        "score": int(chosen["score"]),
+        "score_min": score_min,
+        "score_breakdown": dict(chosen["bits"]),
+        "rsi_veto_ok": bool(chosen["rsi_veto_ok"]),
+        "bb_percent_b": float(getattr(snapshot, "bb_percent_b", 0.5) or 0.5),
+        "vwap_bias_pct": bias,
+        "squeeze": bool(getattr(snapshot, "squeeze", False)),
+        "supertrend_direction": st,
+        "rsi_14": rsi,
+        "volume_ok": vol_ok,
+        "volume_ratio": snapshot.volume_ratio,
+        "volume_threshold": vol_th,
+        "volume_path": vol_path,
+        "trend_15m": str(snapshot.trend_15m or "neutral"),
+        "trend_1h": trend_1h,
+        "trend_4h": str(getattr(snapshot, "trend_4h", "neutral") or "neutral"),
+        "require_1h_trend": True,
+        "require_4h_trend": bool(th.get("require_4h_trend", False)),
+        "trend_gate": "score",
+        "rsi_long_ok": bool(long_pack["rsi_veto_ok"]),
+        "rsi_short_ok": bool(short_pack["rsi_veto_ok"]),
+        "trend_bullish": bool(long_pack["bits"]["htf"] and long_pack["bits"]["st"]),
+        "trend_bearish": bool(short_pack["bits"]["htf"] and short_pack["bits"]["st"]),
+        "macd_long_ok": bool(long_pack["bits"]["momentum"]),
+        "macd_short_ok": bool(short_pack["bits"]["momentum"]),
+        "ema_long_ok": bool(long_pack["bits"]["pullback"]),
+        "ema_short_ok": bool(short_pack["bits"]["pullback"]),
+        "nearest": nearest if data_ok else "none",
+        "missing": ["data_valid"] if not data_ok else missing,
+        "near_ready": (
+            data_ok
+            and not chosen["fires"]
+            and bool(chosen.get("must"))
+            and int(chosen["score"]) == score_min - 1
+            and bool(chosen["rsi_veto_ok"])
+        ),
+    }
+    if not data_ok:
+        gates["nearest"] = "none"
+        gates["missing"] = ["data_valid"]
+        gates["near_ready"] = False
+    return _score_attach_edge(snapshot, gates, th)
+
+
+def _diagnose_score_range(
+    snapshot: MarketSnapshot,
+    th: dict[str, float | bool | str],
+    regime: str,
+) -> dict[str, Any]:
+    """
+    P2 RANGE path: tighter fade. Must have extreme %B + VWAP adverse;
+    fire when those two pass and total score ≥ min (of 5).
+    """
+    data_ok = bool(snapshot.data_valid) and snapshot.price > 0 and snapshot.atr_14 > 0
+    score_min = int(th.get("score_min") or _SCORE_MIN_DEFAULT)
+    pb_long_max = float(th.get("range_pb_long_max") or _SCORE_RANGE_PB_LONG_MAX_DEFAULT)
+    pb_short_min = float(th.get("range_pb_short_min") or _SCORE_RANGE_PB_SHORT_MIN_DEFAULT)
+    rsi_long_max = float(th.get("range_rsi_long_max") or _SCORE_RANGE_RSI_LONG_MAX_DEFAULT)
+    rsi_short_min = float(
+        th.get("range_rsi_short_min") or _SCORE_RANGE_RSI_SHORT_MIN_DEFAULT
+    )
+    rsi_veto_long = float(
+        th.get("score_rsi_veto_long_max") or _SCORE_RSI_VETO_LONG_MAX_DEFAULT
+    )
+    rsi_veto_short = float(
+        th.get("score_rsi_veto_short_min") or _SCORE_RSI_VETO_SHORT_MIN_DEFAULT
+    )
+    try:
+        pb = float(getattr(snapshot, "bb_percent_b", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        pb = 0.5
+    try:
+        bias = float(getattr(snapshot, "vwap_bias_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        bias = 0.0
+    rsi = float(snapshot.rsi_14)
+    st = int(getattr(snapshot, "supertrend_direction", 0) or 0)
+    vol_ok, vol_th, vol_path = _score_volume_ok(snapshot, th, allow_soft=False)
+
+    def _pack(side: str) -> dict[str, Any]:
+        if side == "long":
+            bits = {
+                "range_pb_ok": pb <= pb_long_max,
+                "range_vwap_ok": bias <= 0.0,
+                "range_rsi_ok": rsi <= rsi_long_max,
+                "volume": vol_ok,
+                "st_not_against": st != -1,
+            }
+            rsi_veto_ok = rsi <= rsi_veto_long
+        else:
+            bits = {
+                "range_pb_ok": pb >= pb_short_min,
+                "range_vwap_ok": bias >= 0.0,
+                "range_rsi_ok": rsi >= rsi_short_min,
+                "volume": vol_ok,
+                "st_not_against": st != 1,
+            }
+            rsi_veto_ok = rsi >= rsi_veto_short
+        score = int(sum(1 for v in bits.values() if v))
+        must = bool(bits["range_pb_ok"] and bits["range_vwap_ok"])
+        missing = [k for k, v in bits.items() if not v]
+        if not rsi_veto_ok:
+            missing = list(missing) + ["rsi_veto"]
+        fires = data_ok and rsi_veto_ok and must and score >= score_min
+        if not fires and (not must or score < score_min) and "score_ok" not in missing:
+            missing = list(missing) + ["score_ok"]
+        return {
+            "bits": bits,
+            "score": score,
+            "rsi_veto_ok": rsi_veto_ok,
+            "must": must,
+            "missing": missing,
+            "fires": fires,
+        }
+
+    long_pack = _pack("long")
+    short_pack = _pack("short")
+    nearest, chosen = _pick_scored_side(long_pack, short_pack)
+    missing = [] if chosen["fires"] else list(chosen["missing"])
+    bits = dict(chosen["bits"])
+    gates: dict[str, Any] = {
+        "data_valid": data_ok,
+        "regime": regime,
+        "regime_ok": True,
+        "regime_path": "range",
+        "rule_variant": "score",
+        "score": int(chosen["score"]),
+        "score_min": score_min,
+        "score_breakdown": bits,
+        "rsi_veto_ok": bool(chosen["rsi_veto_ok"]),
+        "bb_percent_b": pb,
+        "vwap_bias_pct": bias,
+        "squeeze": bool(getattr(snapshot, "squeeze", False)),
+        "supertrend_direction": st,
+        "rsi_14": rsi,
+        "volume_ok": vol_ok,
+        "volume_ratio": snapshot.volume_ratio,
+        "volume_threshold": vol_th,
+        "volume_path": vol_path,
+        "range_pb_long_max": pb_long_max,
+        "range_pb_short_min": pb_short_min,
+        "range_pb_ok": bool(bits["range_pb_ok"]),
+        "range_vwap_ok": bool(bits["range_vwap_ok"]),
+        "range_rsi_ok": bool(bits["range_rsi_ok"]),
+        "trend_15m": str(snapshot.trend_15m or "neutral"),
+        "trend_1h": str(getattr(snapshot, "trend_1h", "neutral") or "neutral"),
+        "trend_4h": str(getattr(snapshot, "trend_4h", "neutral") or "neutral"),
+        "require_1h_trend": False,
+        "require_4h_trend": False,
+        "trend_gate": "score-range",
+        "rsi_long_ok": bool(long_pack["bits"]["range_rsi_ok"]),
+        "rsi_short_ok": bool(short_pack["bits"]["range_rsi_ok"]),
+        "trend_bullish": False,
+        "trend_bearish": False,
+        "macd_long_ok": False,
+        "macd_short_ok": False,
+        "ema_long_ok": False,
+        "ema_short_ok": False,
+        "nearest": nearest if data_ok else "none",
+        "missing": ["data_valid"] if not data_ok else missing,
+        "near_ready": (
+            data_ok
+            and not chosen["fires"]
+            and bool(chosen.get("must"))
+            and int(chosen["score"]) == score_min - 1
+            and bool(chosen["rsi_veto_ok"])
+        ),
+    }
+    if not data_ok:
+        gates["nearest"] = "none"
+        gates["missing"] = ["data_valid"]
+        gates["near_ready"] = False
+    return _score_attach_edge(snapshot, gates, th)
 
 
 def _distance_penalty_bps(
@@ -865,6 +1747,20 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
 
     data_ok = bool(snapshot.data_valid) and snapshot.price > 0 and snapshot.atr_14 > 0
 
+    variant_now = str(th.get("rule_variant") or "mean_revert")
+    if variant_now == "squeeze_release" and data_ok:
+        return _diagnose_squeeze_release(snapshot, th)
+    if variant_now in ("regime", "score") and data_ok:
+        regime_now = _snapshot_regime(snapshot, th)
+        if regime_now in ("squeeze", "shock"):
+            return _diagnose_regime_block(snapshot, th, regime_now)
+        if regime_now == "range":
+            if variant_now == "score":
+                return _diagnose_score_range(snapshot, th, regime_now)
+            return _diagnose_range_signal(snapshot, th, regime_now)
+        if variant_now == "score":
+            return _diagnose_score_trend(snapshot, th, regime_now)
+
     rsi_long_hard = snapshot.rsi_14 <= rsi_long_max
     rsi_short_hard = snapshot.rsi_14 >= rsi_short_min
     require_1h = bool(th["require_1h_trend"])
@@ -908,7 +1804,7 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         trend_4h_confirm = False
     # E2B: TF MACD lag — allow small adverse hist (bps of price); MR strict.
     variant = str(th.get("rule_variant") or "mean_revert")
-    is_tf = variant == "trend_follow"
+    is_tf = variant in ("trend_follow", "regime", "score")
     macd_lag_bps = float(th.get("tf_macd_lag_bps") or 0.0)
     hist = float(snapshot.macd_histogram)
     price = float(snapshot.price or 0.0)
@@ -1061,6 +1957,13 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         "require_1h_trend": require_1h,
         "require_4h_trend": require_4h,
         "rule_variant": str(th.get("rule_variant") or "mean_revert"),
+        "regime": (
+            "trend" if variant == "regime" else str(getattr(snapshot, "regime", "") or "")
+        ),
+        "regime_ok": True,
+        "regime_path": "trend" if variant == "regime" else "",
+        "bb_percent_b": float(getattr(snapshot, "bb_percent_b", 0.5) or 0.5),
+        "squeeze": bool(getattr(snapshot, "squeeze", False)),
         "max_extension_atr": max_extension_atr,
         # Side-agnostic placeholders; refined after nearest is known.
         "extension_atr": extension_atr_long,
@@ -1290,6 +2193,10 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
     blocks entries already extended vs ``ema_21`` (gate ``extension_ok``).
     F2b (TF only): RSI pullback gate (``KEEL_RULE_TF_PULLBACK`` default 0;
     long ``rsi<=52``, short ``rsi>=48``; gate ``pullback_ok``).
+    P2: ``KEEL_RULE_VARIANT=score`` uses diagnose ``missing==[]`` (score ≥ min
+    after RSI veto / range must-haves); P1 ``regime`` range still ANDs %B gates.
+    P5: ``KEEL_RULE_VARIANT=squeeze_release`` fires on squeeze expansion + ST+1h
+    (same ``missing==[]`` / nearest path as score).
     """
     diag = diagnose_rule_signal(snapshot)
 
@@ -1298,6 +2205,20 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
             inst_id=snapshot.inst_id,
             action="WAIT",
             reason="invalid market data",
+            signal_diag=diag,
+        )
+
+    if str(diag.get("rule_variant") or "") in ("regime", "score") and str(
+        diag.get("regime") or ""
+    ) in (
+        "squeeze",
+        "shock",
+    ):
+        return Decision(
+            inst_id=snapshot.inst_id,
+            action="WAIT",
+            confidence=40.0,
+            reason=_factor_reason(snapshot, f"no rule signal regime {diag.get('regime')}"),
             signal_diag=diag,
         )
 
@@ -1372,16 +2293,39 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         short_min=pb_short_min,
     )
     adx_ok_tf = bool(diag.get("adx_ok", True))
-    long_ok = (
-        diag["rsi_long_ok"]
-        and diag["trend_bullish"]
-        and diag["macd_long_ok"]
-        and diag["ema_long_ok"]
-        and diag["volume_ok"]
-        and ext_long_ok
-        and pb_long_ok
-        and adx_ok_tf
-    )
+    if str(diag.get("rule_variant") or "") in ("score", "squeeze_release"):
+        missing = diag.get("missing") or []
+        full = isinstance(missing, list) and len(missing) == 0
+        nearest = str(diag.get("nearest") or "")
+        long_ok = full and nearest == "long"
+        short_ok = full and nearest == "short"
+    elif diag.get("rule_variant") == "regime" and str(diag.get("regime") or "") == "range":
+        missing = diag.get("missing") or []
+        full = isinstance(missing, list) and len(missing) == 0
+        nearest = str(diag.get("nearest") or "")
+        long_ok = full and nearest == "long"
+        short_ok = full and nearest == "short"
+    else:
+        long_ok = (
+            diag["rsi_long_ok"]
+            and diag["trend_bullish"]
+            and diag["macd_long_ok"]
+            and diag["ema_long_ok"]
+            and diag["volume_ok"]
+            and ext_long_ok
+            and pb_long_ok
+            and adx_ok_tf
+        )
+        short_ok = (
+            diag["rsi_short_ok"]
+            and diag["trend_bearish"]
+            and diag["macd_short_ok"]
+            and diag["ema_short_ok"]
+            and diag["volume_ok"]
+            and ext_short_ok
+            and pb_short_ok
+            and adx_ok_tf
+        )
     if long_ok:
         entry = price
         sl = entry - 1.0 * atr
@@ -1397,23 +2341,11 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
             margin_usdt=margin,
             reason=_factor_reason(
                 snapshot,
-                "rule long trend_follow"
-                if diag.get("rule_variant") == "trend_follow"
-                else "rule long",
+                _rule_reason_prefix(diag, fired=True, side="long"),
             ),
             signal_diag=diag,
         )
 
-    short_ok = (
-        diag["rsi_short_ok"]
-        and diag["trend_bearish"]
-        and diag["macd_short_ok"]
-        and diag["ema_short_ok"]
-        and diag["volume_ok"]
-        and ext_short_ok
-        and pb_short_ok
-        and adx_ok_tf
-    )
     if short_ok:
         entry = price
         sl = entry + 1.0 * atr
@@ -1429,9 +2361,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
             margin_usdt=margin,
             reason=_factor_reason(
                 snapshot,
-                "rule short trend_follow"
-                if diag.get("rule_variant") == "trend_follow"
-                else "rule short",
+                _rule_reason_prefix(diag, fired=True, side="short"),
             ),
             signal_diag=diag,
         )
@@ -1442,9 +2372,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         confidence=40.0,
         reason=_factor_reason(
             snapshot,
-            "no rule signal trend_follow"
-            if diag.get("rule_variant") == "trend_follow"
-            else "no rule signal",
+            _rule_reason_prefix(diag, fired=False, side="long"),
         ),
         signal_diag=diag,
     )

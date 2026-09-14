@@ -44,6 +44,13 @@ def get_nearest_signals(
             ema_9=s.get("ema_9"),
             ema_21=s.get("ema_21"),
             macd_histogram=s.get("macd_histogram"),
+            llm_veto=bool(s.get("llm_veto")),
+            fire_cooldown_active=bool(s.get("fire_cooldown_active")),
+            rule_variant=(
+                str(s["rule_variant"])
+                if s.get("rule_variant") not in (None, "")
+                else None
+            ),
         )
         for s in (raw.get("signals") or [])
     ]

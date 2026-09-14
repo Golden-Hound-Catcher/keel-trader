@@ -18,6 +18,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
+from keel.domain.decision import is_suppressed_fire_diag
 from keel.domain.records import (
     BJ_TZ,
     DecisionRecord,
@@ -625,13 +626,16 @@ class KeelLedger:
             else:
                 market_source["unknown"] += int(row["n"])
 
-        # near_signal_rate among WAIT: signal_diag.nearest in {long, short}.
+        # near_signal_rate among WAIT: genuine near (not veto/cooldown WAIT).
         near_row = conn.execute(
             "SELECT COUNT(*) AS n FROM decisions "
             "WHERE timestamp >= ? AND UPPER(action) = 'WAIT' "
             "AND LOWER(COALESCE("
             "json_extract(calculus_data, '$.signal_diag.nearest'), '')) "
-            "IN ('long', 'short')",
+            "IN ('long', 'short') "
+            "AND NOT COALESCE(json_extract(calculus_data, '$.signal_diag.llm_veto'), 0) "
+            "AND NOT COALESCE(json_extract(calculus_data, "
+            "'$.signal_diag.fire_cooldown_active'), 0)",
             (since,),
         ).fetchone()
         near_n = int(near_row["n"]) if near_row else 0
@@ -743,7 +747,11 @@ class KeelLedger:
             "WHERE timestamp >= ? AND UPPER(action) = 'WAIT' "
             "AND LOWER(COALESCE("
             "json_extract(calculus_data, '$.signal_diag.nearest'), '')) "
-            "IN ('long', 'short') GROUP BY inst_id",
+            "IN ('long', 'short') "
+            "AND NOT COALESCE(json_extract(calculus_data, '$.signal_diag.llm_veto'), 0) "
+            "AND NOT COALESCE(json_extract(calculus_data, "
+            "'$.signal_diag.fire_cooldown_active'), 0) "
+            "GROUP BY inst_id",
             (since,),
         ):
             ik = str(row["inst_id"] or "").strip() or "UNKNOWN"
@@ -930,6 +938,15 @@ class KeelLedger:
             missing: list[str] = []
             if isinstance(missing_raw, list):
                 missing = [str(x) for x in missing_raw if x is not None and str(x)]
+            llm_veto = bool(diag.get("llm_veto"))
+            fire_cooldown = bool(diag.get("fire_cooldown_active"))
+            # Historical / in-memory suppressed fires must not look like near-signals.
+            if is_suppressed_fire_diag(diag):
+                nearest = None
+                if llm_veto and "llm_veto_ok" not in missing:
+                    missing = [*missing, "llm_veto_ok"]
+                if fire_cooldown and "fire_cooldown_ok" not in missing:
+                    missing = [*missing, "fire_cooldown_ok"]
 
             item: dict[str, Any] = {
                 "inst_id": rec.inst_id,
@@ -937,6 +954,13 @@ class KeelLedger:
                 "timestamp": float(rec.timestamp),
                 "nearest": nearest,
                 "missing": missing,
+                "llm_veto": llm_veto,
+                "fire_cooldown_active": fire_cooldown,
+                "rule_variant": (
+                    str(diag["rule_variant"])
+                    if diag.get("rule_variant") not in (None, "")
+                    else None
+                ),
             }
             for k in metric_keys:
                 val = diag.get(k)

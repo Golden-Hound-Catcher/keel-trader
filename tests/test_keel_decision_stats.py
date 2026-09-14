@@ -412,6 +412,75 @@ class TestNearestSignalsRadar(unittest.TestCase):
         self.assertEqual(raw["summary"]["fired_short"], 1)
         self.assertEqual(raw["signals"][0]["nearest"], "short")
 
+    def test_suppressed_wait_is_not_near(self):
+        now = time.time()
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now,
+                inst_id="BTC-USDT-SWAP",
+                action="WAIT",
+                calculus_data={
+                    "signal_diag": {
+                        "nearest": "long",
+                        "missing": [],
+                        "llm_veto": True,
+                        "rule_variant": "score",
+                    }
+                },
+            )
+        )
+        raw = self.ledger.get_nearest_signals(
+            hours=24.0, instrument_ids=["BTC-USDT-SWAP"]
+        )
+        self.assertEqual(raw["summary"]["waiting"], 1)
+        self.assertEqual(raw["summary"]["long_nearest"], 0)
+        sig = raw["signals"][0]
+        self.assertTrue(sig["llm_veto"])
+        self.assertIsNone(sig["nearest"])
+        self.assertIn("llm_veto_ok", sig["missing"])
+        self.assertEqual(sig["rule_variant"], "score")
+
+
+class TestNearestSignalsLedgerOnly(unittest.TestCase):
+    """Radar summary without FastAPI TestClient (ledger helper only)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "radar_ledger.db"
+        self.ledger = KeelLedger(self.db)
+
+    def tearDown(self):
+        self.ledger.close()
+        self.temp.cleanup()
+
+    def test_suppressed_wait_is_not_near(self):
+        now = time.time()
+        self.ledger.record_decision(
+            DecisionRecord(
+                timestamp=now,
+                inst_id="BTC-USDT-SWAP",
+                action="WAIT",
+                calculus_data={
+                    "signal_diag": {
+                        "nearest": "long",
+                        "missing": [],
+                        "llm_veto": True,
+                        "rule_variant": "score",
+                    }
+                },
+            )
+        )
+        raw = self.ledger.get_nearest_signals(
+            hours=24.0, instrument_ids=["BTC-USDT-SWAP"]
+        )
+        self.assertEqual(raw["summary"]["waiting"], 1)
+        self.assertEqual(raw["summary"]["long_nearest"], 0)
+        sig = raw["signals"][0]
+        self.assertTrue(sig["llm_veto"])
+        self.assertIsNone(sig["nearest"])
+        self.assertIn("llm_veto_ok", sig["missing"])
+        self.assertEqual(sig["rule_variant"], "score")
+
 
 class TestMarketSourceStampAndFilter(unittest.TestCase):
     """Q2: cycle stamps calculus_data.market_source; stats filter by it."""

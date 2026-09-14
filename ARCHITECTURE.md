@@ -185,7 +185,7 @@ class MyPolicy:
         ...
 ```
 
-或设置 `KEEL_DECISION_POLICY=rule|stub|llm`。Worker 默认 `rule`（无需 LLM）。
+或设置 `KEEL_DECISION_POLICY=rule|stub|llm|llm_veto`。Worker 默认 `rule`（无需 LLM）。`llm_veto`：规则先提案，模型只许否决或同向确认。
 提示词模块见 `keel/llm/prompts/modules/*.v1.txt`，可用 `KEEL_PROMPT_MODULES_DIR` 覆盖。
 
 ### 6. 可选通知端口（Notifier）
@@ -283,6 +283,7 @@ python -m pytest tests/ -v
 - `keel.policy.DecisionPolicy`：可替换决策端口（`StubDecisionPolicy` / `RuleDecisionPolicy` / `LLMDecisionPolicy`）
 - `keel.llm.prompts.PromptComposer`：从包内或目录加载版本化 `*.v1.txt` 模块，组装 system/user，并做长度与安全基础校验
 - Worker cycle 经 `build_decision_policy()` 注入策略；离线测试默认 Rule/Stub，不强制 LLM
+- 规则变体（测量 only）：`mean_revert`（live 默认）/ `trend_follow` / `regime` / `score` / `squeeze_release`；`llm_veto` 只能否决或缩仓
 - `keel.llm.schema.validate_decision_payload`：决策 JSON 结构校验（与 `DECISION_SCHEMA` 对齐）
 - **不做** Vue Prompt Studio UI / QQ / council（R20 Prompt Studio 的有价值部分已收敛为上述端口）
 
