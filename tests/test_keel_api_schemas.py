@@ -321,6 +321,7 @@ class TestApiSchemas(unittest.TestCase):
         self.assertIn("signal_diag", di_props)
         self.assertIn("market_source", di_props)
         self.assertIn("rule_variant", di_props)
+        self.assertIn("rule_shadow", di_props)
         self.assertIn("data_quality_reason", di_props)
         ti_props = comps["TradeItem"]["properties"]
         self.assertIn("decision_id", ti_props)

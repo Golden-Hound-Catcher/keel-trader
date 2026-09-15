@@ -235,6 +235,8 @@ class DecisionItem(BaseModel):
     market_source: str | None = None
     rule_variant: str | None = None
     data_quality_reason: str | None = None
+    # Parallel rule shadow when primary is llm (Monitor: 规则影子).
+    rule_shadow: dict[str, Any] | None = None
 
 
 class DecisionsResponse(BaseModel):
