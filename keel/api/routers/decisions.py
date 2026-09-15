@@ -48,6 +48,11 @@ def _decision_item(d) -> DecisionItem:
         q = calc.get("data_quality_reason")
         if q is not None and q != "":
             quality = str(q)
+    rule_shadow = None
+    if isinstance(calc, dict):
+        rs = calc.get("rule_shadow")
+        if isinstance(rs, dict):
+            rule_shadow = rs
     return DecisionItem(
         id=d.id,
         timestamp=d.timestamp,
@@ -65,6 +70,7 @@ def _decision_item(d) -> DecisionItem:
         market_source=ms,
         rule_variant=_rule_variant_of(calc, signal_diag),
         data_quality_reason=quality,
+        rule_shadow=rule_shadow,
     )
 
 

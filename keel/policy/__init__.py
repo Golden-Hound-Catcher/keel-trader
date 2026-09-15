@@ -19,6 +19,12 @@ from keel.policy.edge_overlay import (
     plan_llm_geometry,
 )
 from keel.policy.factory import build_decision_policy, describe_policy
+from keel.policy.rule_shadow import (
+    actions_agree,
+    build_rule_shadow,
+    collect_rule_shadows,
+    rule_shadow_enabled,
+)
 
 __all__ = [
     "DecisionPolicy",
@@ -42,4 +48,8 @@ __all__ = [
     "rule_based_decision",
     "build_decision_policy",
     "describe_policy",
+    "actions_agree",
+    "build_rule_shadow",
+    "collect_rule_shadows",
+    "rule_shadow_enabled",
 ]

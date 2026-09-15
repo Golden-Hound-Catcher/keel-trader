@@ -69,11 +69,14 @@ from keel.domain.decision import Decision, DecisionAction, validate_decision
 from keel.policy import (
     DecisionPolicy,
     PolicyContext,
+    RuleDecisionPolicy,
     apply_llm_book_lock,
     apply_llm_edge_overlay,
     build_decision_policy,
+    build_rule_shadow,
     describe_policy,
     rule_based_decision,
+    rule_shadow_enabled,
 )
 from keel.notify import (
     Notifier,
@@ -608,6 +611,36 @@ def run_paper_cycle(
     if isinstance(modules_used, list):
         audit_modules = [str(m) for m in modules_used]
 
+    # Parallel rule shadow (record-only): same snapshots; never executed.
+    rule_shadow_by_inst: dict[str, dict[str, Any]] = {}
+    if rule_shadow_enabled(audit_policy):
+        try:
+            shadow_ctx = PolicyContext(
+                snapshots=snapshots,
+                instrument_ids=ids,
+                timestamp=now,
+            )
+            shadow_result = RuleDecisionPolicy().decide(shadow_ctx)
+            for inst_id in ids:
+                rule_d = shadow_result.decisions.get(inst_id)
+                if rule_d is None:
+                    continue
+                # agree uses primary action *before* edge overlay; final agree
+                # is recomputed when attaching calculus_data after overlays.
+                primary_d = decisions.get(inst_id)
+                primary_action = str(primary_d.action) if primary_d else ""
+                rule_shadow_by_inst[inst_id] = {
+                    "_rule_decision": rule_d,
+                    "_primary_pre_overlay": primary_action,
+                }
+            logger.info(
+                "rule_shadow recorded instruments=%s policy=%s",
+                len(rule_shadow_by_inst),
+                audit_policy,
+            )
+        except Exception:  # noqa: BLE001 — shadow must not break the cycle
+            logger.exception("rule_shadow decide failed; continuing without shadow")
+
     try:
         book_positions = list(exchange.get_positions() or [])
     except Exception:
@@ -744,10 +777,50 @@ def run_paper_cycle(
                         if getattr(decision, "signal_diag", None)
                         else {}
                     ),
+                    **(
+                        {
+                            "rule_shadow": build_rule_shadow(
+                                rule_shadow_by_inst[inst_id]["_rule_decision"],
+                                primary_action=str(decision.action),
+                                executed_policy=(
+                                    "llm"
+                                    if str(audit_policy).strip().lower() == "llm"
+                                    else str(audit_policy)
+                                ),
+                            )
+                        }
+                        if inst_id in rule_shadow_by_inst
+                        else {}
+                    ),
                 },
             )
         )
         decision.ledger_id = int(decision_id) if decision_id else None
+
+        if inst_id in rule_shadow_by_inst:
+            try:
+                shadow_payload = build_rule_shadow(
+                    rule_shadow_by_inst[inst_id]["_rule_decision"],
+                    primary_action=str(decision.action),
+                    executed_policy=(
+                        "llm"
+                        if str(audit_policy).strip().lower() == "llm"
+                        else str(audit_policy)
+                    ),
+                )
+                ledger.record_event(
+                    "rule_shadow",
+                    inst_id=inst_id,
+                    data={
+                        "decision_id": decision.ledger_id,
+                        "primary_action": str(decision.action),
+                        "policy_name": audit_policy,
+                        **shadow_payload,
+                    },
+                    timestamp=now,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("rule_shadow event failed inst=%s", inst_id)
 
         # Q3: optional near-signal → shadow_fill probe (kill+shadow+probe only).
         # Policy decision stays WAIT in the ledger; execution may rehearse shadow.

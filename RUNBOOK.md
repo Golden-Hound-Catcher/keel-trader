@@ -742,6 +742,14 @@ PYTHONPATH=. python scripts/okx_history_strategy_compare.py \
 
 **P4 LLM veto (`KEEL_DECISION_POLICY=llm_veto`, default off):** rule proposes first; LLM is only called on fires; may WAIT (veto) or confirm the same side (shrink margin only). Cannot upgrade WAIT, cannot flip side. LLM down → WAIT (`KEEL_LLM_VETO_FAIL_OPEN=1` to keep the rule). Not a substitute for a fee-positive rule.
 
+**LLM-as-trader + rule shadow (`KEEL_DECISION_POLICY=llm`):** LLM is the primary trader (execution path unchanged). Each cycle also runs `RuleDecisionPolicy` on the **same** snapshots and attaches `calculus_data.rule_shadow` (action/reason/geometry/`agree`/`executed_policy=llm`) plus optional ledger event `rule_shadow` — never executed. Default `KEEL_RULE_SHADOW=1` when policy is llm; set `0` to disable. Decisions API promotes `rule_shadow` for Monitor「规则影子」. Daily compare:
+
+```bash
+PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hours 24
+```
+
+Do **not** flip to `llm_veto` for this demo; keep kill=0 / shadow=0.
+
 **P5 squeeze-release + cost (`KEEL_RULE_VARIANT=squeeze_release`, default off):** fire only on the first expansion bar after a TTM squeeze, with Supertrend and 1h agreement (RSI chase veto 70/30). Compare CLI leg **H** holds with a **4h hard time-stop** (not Supertrend trail). Legs **C2/H2** reprice the same barrier path at Regular maker 2bps/leg (RT 4 vs taker 10). Fill is assumed 100% at the limit — not a live post-only guarantee. Still **E0 freeze**. Do not flip live variant, exits, or decision policy from F2c/P0–P5/MFE alone.
 
 ### Phase F0b — historical OKX candle backtest (offline)
