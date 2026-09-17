@@ -22,13 +22,13 @@ MAX_MODULES = 40
 
 DEFAULT_SYSTEM_PIPELINE: tuple[str, ...] = (
     "system_role.v1",
-    "system_rules.v1",
+    "system_rules.v2",
     "system_output.v1",
 )
 DEFAULT_USER_PIPELINE: tuple[str, ...] = (
     "user_header.v1",
     "user_market.v1",
-    "user_task.v1",
+    "user_task.v2",
 )
 VETO_SYSTEM_PIPELINE: tuple[str, ...] = (
     "system_role.v1",

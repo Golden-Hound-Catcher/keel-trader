@@ -750,6 +750,46 @@ PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hour
 
 Do **not** flip to `llm_veto` for this demo; keep kill=0 / shadow=0.
 
+### Phase F7 — LLM overlay retrospective harden (demo ~3d)
+
+Jo: 根据这几天的数据进行复盘优化. Keep **LLM primary** (do not switch back to rule). Rule stays shadow-only (`KEEL_RULE_SHADOW=1`); do **not** require rule agree to fire (`both_fire_same=0` historically — would zero trades).
+
+**Evidence (fee markout, RT≈10 bps):**
+
+| Window | Path | avg_net | win | n | Notes |
+|--------|------|---------|-----|---|-------|
+| ~72h | LLM fire | ≈ **+7.5 bps** | 43% | 21 | All fires were SELL_SHORT |
+| ~72h | rule-only CF | ≈ **−61 bps** | 12% | 137 | Rule overfires (spray) |
+| ~24h | LLM | ≈ −74 bps | — | — | Regime fragile; LLM less awful |
+| ~24h | rule CF | ≈ −93 bps | — | — | |
+| — | both_fire_same | **0** always | — | — | Rule WAIT on every LLM fire |
+
+Open demo positions were underwater ETH/BTC shorts. Geometry uses ~2×ATR SL / 2.2R TP (hours of risk) but we previously scored **5m** markout — horizon mismatch. Many shorts had RSI 45–51 and 15m neutral — chase-ish / mid-range.
+
+**F7 live LLM overlay (opt-in env; defaults on carefully):**
+
+| Gate | Env | Default | Behavior |
+|------|-----|---------|----------|
+| 15m not-opposing | `KEEL_LLM_REQUIRE_15M_ALIGN` | **1** | short → 15m≠bullish; long → 15m≠bearish |
+| ADX floor | `KEEL_LLM_ADX_MIN` | **18** (0=off) | snapshot ADX if present else compute; **fail-open** if unavailable |
+| RSI mid veto | `KEEL_LLM_SHORT_RSI_MAX` / `KEEL_LLM_LONG_RSI_MIN` | **48** / **52** | tighter than chase 70/30 |
+| Min confidence | `KEEL_LLM_MIN_CONFIDENCE` | **70** | WAIT below |
+| Audit | — | — | gates stamped into `signal_diag` → calculus |
+
+Prompt modules: `system_rules.v2` + `user_task.v2` — prefer WAIT when HTF aligned but 15m opposing or RSI mid-range; never invent Pine.
+
+Daily compare (geometry-aware horizons):
+
+```bash
+PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hours 24
+# markouts @ 300 / 900 / 3600s (override: --markout-horizons 300,900,3600)
+```
+
+**Routine note (parent syncs):** when reviewing LLM vs rule, report 300/900/3600s markout — not 5m alone.
+
+**Honesty:** economic edge still **unproven**; F7 only reduces mid-range / opposing-TF spray on the LLM path. Kill stays 0, shadow stays 0, rule is not primary.
+
+
 **P5 squeeze-release + cost (`KEEL_RULE_VARIANT=squeeze_release`, default off):** fire only on the first expansion bar after a TTM squeeze, with Supertrend and 1h agreement (RSI chase veto 70/30). Compare CLI leg **H** holds with a **4h hard time-stop** (not Supertrend trail). Legs **C2/H2** reprice the same barrier path at Regular maker 2bps/leg (RT 4 vs taker 10). Fill is assumed 100% at the limit — not a live post-only guarantee. Still **E0 freeze**. Do not flip live variant, exits, or decision policy from F2c/P0–P5/MFE alone.
 
 ### Phase F0b — historical OKX candle backtest (offline)
