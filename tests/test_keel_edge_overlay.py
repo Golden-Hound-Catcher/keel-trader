@@ -24,6 +24,7 @@ _ENV_KEYS = (
     "KEEL_LLM_EDGE_OVERLAY",
     "KEEL_LLM_REQUIRE_1H",
     "KEEL_LLM_REQUIRE_4H",
+    "KEEL_LLM_4H_MODE",
     "KEEL_LLM_REQUIRE_15M_ALIGN",
     "KEEL_LLM_ADX_MIN",
     "KEEL_LLM_ADX_PERIOD",
@@ -263,7 +264,8 @@ class TestLlmEdgeOverlay(unittest.TestCase):
         self.assertEqual(out.action, "SELL_SHORT")
 
     def test_f7_rsi_mid_blocks_short(self) -> None:
-        # RSI 50 is mid-range for shorts (default max 48).
+        # Pin pre-F8 band: RSI 50 is mid-range for shorts when max=48.
+        os.environ["KEEL_LLM_SHORT_RSI_MAX"] = "48"
         snap = _aligned_short_snap(rsi_14=50.0)
         out = apply_llm_edge_overlay(_sell(), snap)
         self.assertEqual(out.action, "WAIT")
@@ -271,12 +273,14 @@ class TestLlmEdgeOverlay(unittest.TestCase):
         self.assertFalse((out.signal_diag or {}).get(RSI_MID_GATE))
 
     def test_f7_rsi_mid_blocks_long(self) -> None:
+        os.environ["KEEL_LLM_LONG_RSI_MIN"] = "52"
         snap = _aligned_long_snap(rsi_14=50.0)
         out = apply_llm_edge_overlay(_buy(), snap)
         self.assertEqual(out.action, "WAIT")
         self.assertIn(RSI_MID_GATE, (out.signal_diag or {}).get("missing") or [])
 
     def test_f7_min_confidence_blocks(self) -> None:
+        os.environ["KEEL_LLM_MIN_CONFIDENCE"] = "70"
         snap = _aligned_long_snap(rsi_14=55.0)
         out = apply_llm_edge_overlay(_buy(confidence=65.0), snap)
         self.assertEqual(out.action, "WAIT")
@@ -313,6 +317,70 @@ class TestLlmEdgeOverlay(unittest.TestCase):
         self.assertTrue(diag.get(ADX_GATE))
         self.assertFalse(diag.get("adx_fail_open"))
         self.assertEqual(diag.get("adx"), 22.0)
+
+    # --- F8 soft-4h + relaxed defaults ---
+
+    def test_f8_soft_4h_neutral_allows_1h_align_long(self) -> None:
+        """Market-like: 4h neutral, 1h bullish → fire under soft (default)."""
+        snap = _aligned_long_snap(trend_4h="neutral", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(confidence=65.0), snap)
+        self.assertEqual(out.action, "BUY_LONG")
+        diag = out.signal_diag or {}
+        self.assertTrue(diag.get(HTF_GATE))
+        self.assertEqual(diag.get("llm_4h_mode"), "soft")
+        self.assertEqual(diag.get("trend_4h"), "neutral")
+
+    def test_f8_soft_4h_neutral_allows_1h_align_short(self) -> None:
+        snap = _aligned_short_snap(trend_4h="neutral", rsi_14=40.0)
+        out = apply_llm_edge_overlay(_sell(confidence=65.0), snap)
+        self.assertEqual(out.action, "SELL_SHORT")
+        self.assertTrue((out.signal_diag or {}).get(HTF_GATE))
+        self.assertEqual((out.signal_diag or {}).get("llm_4h_mode"), "soft")
+
+    def test_f8_soft_4h_opposing_still_blocks(self) -> None:
+        snap = _aligned_long_snap(trend_4h="bearish", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(), snap)
+        self.assertEqual(out.action, "WAIT")
+        self.assertIn(HTF_GATE, (out.signal_diag or {}).get("missing") or [])
+        self.assertEqual((out.signal_diag or {}).get("llm_4h_mode"), "soft")
+
+    def test_f8_hard_4h_neutral_blocks(self) -> None:
+        os.environ["KEEL_LLM_4H_MODE"] = "hard"
+        snap = _aligned_long_snap(trend_4h="neutral", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(), snap)
+        self.assertEqual(out.action, "WAIT")
+        self.assertIn(HTF_GATE, (out.signal_diag or {}).get("missing") or [])
+        self.assertEqual((out.signal_diag or {}).get("llm_4h_mode"), "hard")
+
+    def test_f8_relaxed_rsi_mid_allows_50(self) -> None:
+        """F8 defaults: short_max=52 / long_min=48 → RSI 50 clears mid veto."""
+        long_out = apply_llm_edge_overlay(_buy(confidence=65.0), _aligned_long_snap(rsi_14=50.0))
+        self.assertEqual(long_out.action, "BUY_LONG")
+        short_out = apply_llm_edge_overlay(
+            _sell(confidence=65.0), _aligned_short_snap(rsi_14=50.0)
+        )
+        self.assertEqual(short_out.action, "SELL_SHORT")
+
+    def test_f8_relaxed_confidence_allows_65(self) -> None:
+        snap = _aligned_long_snap(rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(confidence=65.0), snap)
+        self.assertEqual(out.action, "BUY_LONG")
+        self.assertTrue((out.signal_diag or {}).get(CONFIDENCE_GATE))
+
+    def test_f8_relaxed_adx_floor_15(self) -> None:
+        # Leave ADX_MIN unset → F8 default 15; 16 passes, 12 blocks.
+        os.environ.pop("KEEL_LLM_ADX_MIN", None)
+        snap = _aligned_long_snap(rsi_14=55.0)
+        snap.adx_14 = 16.0  # type: ignore[attr-defined]
+        out = apply_llm_edge_overlay(_buy(confidence=65.0), snap)
+        self.assertEqual(out.action, "BUY_LONG")
+        snap2 = _aligned_long_snap(rsi_14=55.0)
+        snap2.adx_14 = 12.0  # type: ignore[attr-defined]
+        out2 = apply_llm_edge_overlay(_buy(confidence=65.0), snap2)
+        self.assertEqual(out2.action, "WAIT")
+        self.assertIn(ADX_GATE, (out2.signal_diag or {}).get("missing") or [])
+
+
 
 
 if __name__ == "__main__":

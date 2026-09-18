@@ -2,12 +2,14 @@
 Hard edge overlay for ``KEEL_DECISION_POLICY=llm``.
 
 Kernel (not the model):
-- WAIT unless 1h (and by default 4h) agree with the side
+- WAIT unless 1h agrees with the side; 4h is soft by default (F8):
+  neutral OK if 1h aligned; still block if 4h opposes. Hard mode =
+  same-direction only (``KEEL_LLM_4H_MODE=hard``).
 - Optional 15m not-opposing (F7): short → 15m≠bullish; long → 15m≠bearish
-- Optional ADX floor (F7, default 18; 0=off; fail-open if ADX unavailable)
+- Optional ADX floor (F7/F8, default 15; 0=off; fail-open if ADX unavailable)
 - RSI chase veto (long>70 / short<30)
-- RSI mid-range veto (F7): short if RSI≥48; long if RSI≤52
-- Min confidence (F7, default 70)
+- RSI mid-range veto (F7/F8): short if RSI≥52; long if RSI≤48
+- Min confidence (F7/F8, default 60)
 - Fee-aware TP/SL: stop must be several times round-trip fees; take-profit
   must be a multiple of that — never a "cover the fee" scalp
 - Optional book lock: no scale-in, no hedge
@@ -40,11 +42,11 @@ DEFAULT_TP_RR = 2.2
 DEFAULT_RT_FEE_BPS = 10.0
 DEFAULT_FEE_SL_MULT = 6.0
 DEFAULT_FEE_TP_MULT = 12.0
-DEFAULT_ADX_MIN = 18.0
+DEFAULT_ADX_MIN = 15.0
 DEFAULT_ADX_PERIOD = 14
-DEFAULT_SHORT_RSI_MAX = 48.0
-DEFAULT_LONG_RSI_MIN = 52.0
-DEFAULT_MIN_CONFIDENCE = 70.0
+DEFAULT_SHORT_RSI_MAX = 52.0
+DEFAULT_LONG_RSI_MIN = 48.0
+DEFAULT_MIN_CONFIDENCE = 60.0
 
 
 def _flag(key: str, default: bool) -> bool:
@@ -86,13 +88,28 @@ def _require_4h() -> bool:
     return _flag("KEEL_LLM_REQUIRE_4H", True)
 
 
+def _4h_mode() -> str:
+    """
+    F8: how to interpret 4h when ``KEEL_LLM_REQUIRE_4H=1``.
+
+    - ``soft`` (default): 4h neutral OK if 1h aligns; block only if 4h opposes.
+    - ``hard``: 4h must match side (pre-F8 / F7 behavior).
+    """
+    raw = (_env("KEEL_LLM_4H_MODE", "") or "").strip().lower()
+    if raw in ("hard", "strict", "same"):
+        return "hard"
+    if raw in ("soft", "not_oppose", "not-opposing", "neutral_ok"):
+        return "soft"
+    return "soft"
+
+
 def _require_15m_align() -> bool:
     """F7: entry TF must not oppose the side. Default on."""
     return _flag("KEEL_LLM_REQUIRE_15M_ALIGN", True)
 
 
 def _adx_min() -> float:
-    """F7: ADX floor; 0 disables. Default 18."""
+    """F7/F8: ADX floor; 0 disables. Default 15."""
     return max(0.0, _num("KEEL_LLM_ADX_MIN", DEFAULT_ADX_MIN))
 
 
@@ -140,21 +157,41 @@ def _wait(decision: Decision, reason: str, *, gate: str, extra: dict[str, Any] |
 
 
 def _htf_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str, Any]]:
+    """
+    1h must align with side (when required).
+
+    4h (when ``KEEL_LLM_REQUIRE_4H=1``):
+    - soft (default, F8): allow neutral; block only when 4h opposes the side.
+    - hard: 4h must match side (bullish for long / bearish for short).
+    """
     t1h = _trend(snapshot, "trend_1h")
     t4h = _trend(snapshot, "trend_4h")
     need_1h = _require_1h()
     need_4h = _require_4h()
+    mode = _4h_mode() if need_4h else "off"
     if side == "long":
         ok_1h = (not need_1h) or t1h == "bullish"
-        ok_4h = (not need_4h) or t4h == "bullish"
+        if not need_4h:
+            ok_4h = True
+        elif mode == "hard":
+            ok_4h = t4h == "bullish"
+        else:
+            # soft: not-opposing (neutral OK; bearish blocks long)
+            ok_4h = t4h != "bearish"
     else:
         ok_1h = (not need_1h) or t1h == "bearish"
-        ok_4h = (not need_4h) or t4h == "bearish"
+        if not need_4h:
+            ok_4h = True
+        elif mode == "hard":
+            ok_4h = t4h == "bearish"
+        else:
+            ok_4h = t4h != "bullish"
     audit = {
         "trend_1h": t1h,
         "trend_4h": t4h,
         "require_1h_trend": need_1h,
         "require_4h_trend": need_4h,
+        "llm_4h_mode": mode,
         "htf_ok": bool(ok_1h and ok_4h),
     }
     return bool(ok_1h and ok_4h), audit
@@ -271,8 +308,8 @@ def _rsi_mid_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str, An
     """
     F7 mid-range veto (tighter than chase 70/30).
 
-    Short blocked if RSI ≥ ``KEEL_LLM_SHORT_RSI_MAX`` (default 48).
-    Long blocked if RSI ≤ ``KEEL_LLM_LONG_RSI_MIN`` (default 52).
+    Short blocked if RSI ≥ ``KEEL_LLM_SHORT_RSI_MAX`` (default 52).
+    Long blocked if RSI ≤ ``KEEL_LLM_LONG_RSI_MIN`` (default 48).
     """
     rsi = float(getattr(snapshot, "rsi_14", 50.0) or 50.0)
     short_max = _short_rsi_max()
@@ -291,7 +328,7 @@ def _rsi_mid_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str, An
 
 
 def _confidence_ok(decision: Decision) -> tuple[bool, dict[str, Any]]:
-    """F7: WAIT when model confidence < ``KEEL_LLM_MIN_CONFIDENCE`` (default 70)."""
+    """F7/F8: WAIT when model confidence < ``KEEL_LLM_MIN_CONFIDENCE`` (default 60)."""
     conf = float(decision.confidence or 0.0)
     floor = _min_confidence()
     ok = conf >= floor
@@ -398,7 +435,11 @@ def apply_llm_edge_overlay(decision: Decision, snapshot: MarketSnapshot) -> Deci
     if not htf_ok:
         return _wait(
             decision,
-            f"htf {side} needs 1h/4h agreement (t1h={htf_audit['trend_1h']} t4h={htf_audit['trend_4h']})",
+            (
+                f"htf {side} needs 1h align + 4h "
+                f"{htf_audit.get('llm_4h_mode', 'soft')} "
+                f"(t1h={htf_audit['trend_1h']} t4h={htf_audit['trend_4h']})"
+            ),
             gate=HTF_GATE,
             extra=audit,
         )

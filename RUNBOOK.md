@@ -776,6 +776,8 @@ Open demo positions were underwater ETH/BTC shorts. Geometry uses ~2×ATR SL / 2
 | Min confidence | `KEEL_LLM_MIN_CONFIDENCE` | **70** | WAIT below |
 | Audit | — | — | gates stamped into `signal_diag` → calculus |
 
+> **F8 supersedes** ADX/RSI/conf defaults and hard-4h interpretation — see Phase F8 below.
+
 Prompt modules: `system_rules.v2` + `user_task.v2` — prefer WAIT when HTF aligned but 15m opposing or RSI mid-range; never invent Pine.
 
 Daily compare (geometry-aware horizons):
@@ -788,6 +790,24 @@ PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hour
 **Routine note (parent syncs):** when reviewing LLM vs rule, report 300/900/3600s markout — not 5m alone.
 
 **Honesty:** economic edge still **unproven**; F7 only reduces mid-range / opposing-TF spray on the LLM path. Kill stays 0, shadow stays 0, rule is not primary.
+
+### Phase F8 — soft-4h + relax after post-F7 zero-fire
+
+Jo: 0开火这对吗？优化策略 — **no**, F7 was over-tight. Post-F7 last ~24h: **0 LLM fires, 0 rule fires**, 100% WAIT. Ledger WAIT reasons dominated by **HTF misalignment**: `trend4h=neutral` while 1h bullish/bearish under hard `KEEL_LLM_REQUIRE_4H=1`. Market was 4h-neutral across BTC/ETH/SOL; F7 RSI/ADX/conf compounded when the model would fire.
+
+**F8 fix (keep LLM primary; kill=0; shadow=0; rule_shadow=1):**
+
+| Gate | Env | F8 default | Behavior |
+|------|-----|------------|----------|
+| 4h mode | `KEEL_LLM_4H_MODE` | **soft** | 4h **neutral OK** if 1h aligns; still block if 4h **opposes**. `hard` = pre-F8 same-direction |
+| Require 4h | `KEEL_LLM_REQUIRE_4H` | **1** | When on, apply soft/hard mode above; `0` skips 4h entirely |
+| ADX floor | `KEEL_LLM_ADX_MIN` | **15** (was 18) | fail-open if unavailable |
+| RSI mid | `SHORT_RSI_MAX` / `LONG_RSI_MIN` | **52** / **48** (was 48/52) | slightly wider mid band |
+| Min confidence | `KEEL_LLM_MIN_CONFIDENCE` | **60** (was 70) | WAIT below |
+| 15m not-opposing | `KEEL_LLM_REQUIRE_15M_ALIGN` | **1** | unchanged |
+
+Prompt: `system_rules.v2` documents soft-4h (neutral OK if 1h aligned). Soft-4h restores selectivity without flipping to rule primary or spraying like rule CF.
+
 
 
 **P5 squeeze-release + cost (`KEEL_RULE_VARIANT=squeeze_release`, default off):** fire only on the first expansion bar after a TTM squeeze, with Supertrend and 1h agreement (RSI chase veto 70/30). Compare CLI leg **H** holds with a **4h hard time-stop** (not Supertrend trail). Legs **C2/H2** reprice the same barrier path at Regular maker 2bps/leg (RT 4 vs taker 10). Fill is assumed 100% at the limit — not a live post-only guarantee. Still **E0 freeze**. Do not flip live variant, exits, or decision policy from F2c/P0–P5/MFE alone.
