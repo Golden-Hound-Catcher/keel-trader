@@ -16,6 +16,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    allowedHosts: true,
     proxy: {
       // Phase U1: proxy Keel API (keel.api.app on 8080)
       '/api': {
