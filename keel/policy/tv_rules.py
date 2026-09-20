@@ -14,7 +14,7 @@ Cool-down is enforced by the walk / live fire_cooldown path, not here.
 """
 from __future__ import annotations
 
-import os
+from keel.config.settings import _env
 from typing import Any
 
 from keel.factors.market_data import MarketSnapshot
@@ -37,7 +37,7 @@ _ST_ENTRY_MODE_DEFAULT = "flip"  # flip | soft
 
 
 def _env_float(key: str, default: float) -> float:
-    raw = (os.environ.get(key) or "").strip()
+    raw = (_env(key, "") or "").strip()
     if not raw:
         return float(default)
     try:
@@ -47,7 +47,7 @@ def _env_float(key: str, default: float) -> float:
 
 
 def _env_int(key: str, default: int) -> int:
-    raw = (os.environ.get(key) or "").strip()
+    raw = (_env(key, "") or "").strip()
     if not raw:
         return int(default)
     try:
@@ -57,7 +57,7 @@ def _env_int(key: str, default: int) -> int:
 
 
 def _env_bool(key: str, default: bool) -> bool:
-    raw = (os.environ.get(key) or "").strip().lower()
+    raw = (_env(key, "") or "").strip().lower()
     if not raw:
         return bool(default)
     if raw in ("1", "true", "yes", "on"):
@@ -111,7 +111,7 @@ def adx_period() -> int:
 
 def st_entry_mode() -> str:
     """F6: ``flip`` (default) or ``soft`` (enter while on ST side)."""
-    raw = (os.environ.get("KEEL_RULE_ST_ENTRY_MODE") or _ST_ENTRY_MODE_DEFAULT).strip().lower()
+    raw = (_env("KEEL_RULE_ST_ENTRY_MODE") or _ST_ENTRY_MODE_DEFAULT).strip().lower()
     if raw in ("soft", "side", "hold"):
         return "soft"
     return "flip"
@@ -209,7 +209,7 @@ def adx_regime_ok(snapshot: MarketSnapshot) -> dict[str, Any]:
 
 def _rule_4h_mode_raw() -> str:
     """F9: soft (default) | hard for KEEL_RULE_4H_MODE when TF_REQUIRE_4H=1."""
-    raw = (os.environ.get("KEEL_RULE_4H_MODE") or "soft").strip().lower()
+    raw = (_env("KEEL_RULE_4H_MODE") or "soft").strip().lower()
     if raw in ("hard", "strict", "same"):
         return "hard"
     if raw in ("soft", "not_oppose", "not-opposing", "neutral_ok"):

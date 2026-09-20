@@ -60,7 +60,7 @@ only — live default stays ``mean_revert``.
 """
 from __future__ import annotations
 
-import os
+from keel.config.settings import _env
 from typing import Any
 
 from keel.factors.market_data import MarketSnapshot
@@ -164,7 +164,7 @@ _BINARY_MISSING_GATES = frozenset(
 
 
 def _env_float(key: str, default: float) -> float:
-    raw = (os.environ.get(key) or "").strip()
+    raw = (_env(key, "") or "").strip()
     if not raw:
         return default
     try:
@@ -174,7 +174,7 @@ def _env_float(key: str, default: float) -> float:
 
 
 def _env_bool(key: str, default: bool) -> bool:
-    raw = (os.environ.get(key) or "").strip().lower()
+    raw = (_env(key, "") or "").strip().lower()
     if not raw:
         return default
     if raw in ("1", "true", "yes", "on"):
@@ -245,7 +245,7 @@ def _rule_variant() -> str:
     ``.env`` sets (observe keeps ``trend_follow``); code default for unset
     stays ``mean_revert``.
     """
-    raw = (os.environ.get("KEEL_RULE_VARIANT") or "mean_revert").strip().lower()
+    raw = (_env("KEEL_RULE_VARIANT") or "mean_revert").strip().lower()
     if raw in ("trend_follow", "trend-follow", "tf"):
         return "trend_follow"
     if raw in ("supertrend", "super_trend", "super-trend", "st"):
@@ -290,7 +290,7 @@ def resolve_rule_4h_mode() -> str:
     """
     if not resolve_tf_require_4h():
         return "off"
-    raw = (os.environ.get("KEEL_RULE_4H_MODE") or _RULE_4H_MODE_DEFAULT).strip().lower()
+    raw = (_env("KEEL_RULE_4H_MODE") or _RULE_4H_MODE_DEFAULT).strip().lower()
     if raw in ("hard", "strict", "same"):
         return "hard"
     if raw in ("soft", "not_oppose", "not-opposing", "neutral_ok"):
@@ -561,7 +561,7 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         # E3.1/F9: 4h leg enabled (default on; 0 = E2A 15m+1h only).
         th["require_4h_trend"] = _env_bool("KEEL_RULE_TF_REQUIRE_4H", True)
         # F9 soft/hard 4h interpretation (soft = not-opposing; hard = E3.1 same-dir).
-        _m = (os.environ.get("KEEL_RULE_4H_MODE") or _RULE_4H_MODE_DEFAULT).strip().lower()
+        _m = (_env("KEEL_RULE_4H_MODE") or _RULE_4H_MODE_DEFAULT).strip().lower()
         if _m in ("hard", "strict", "same"):
             th["rule_4h_mode"] = "hard"
         else:

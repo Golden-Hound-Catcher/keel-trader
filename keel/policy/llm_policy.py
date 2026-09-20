@@ -7,7 +7,7 @@ confirm the same side (optional shrink). Never upgrades WAIT, never flips.
 """
 from __future__ import annotations
 
-import os
+from keel.config.settings import _env
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -34,7 +34,7 @@ _FIRE_ACTIONS = frozenset({"BUY_LONG", "SELL_SHORT"})
 
 
 def _env_bool(key: str, default: bool) -> bool:
-    raw = (os.environ.get(key) or "").strip().lower()
+    raw = (_env(key, "") or "").strip().lower()
     if not raw:
         return default
     if raw in ("1", "true", "yes", "on"):
