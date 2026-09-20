@@ -911,6 +911,29 @@ Monitor/API show candle quality for live observation: Factors responses include 
 Kill-switch (`KEEL_KILL_SWITCH=1`) still blocks order placement; **read-only API keys are enough** for this observation path (candles + factors + decisions). Orders still need trade-enabled keys and kill-switch off.
 
 
+## 其他机器部署 LLM（`KEEL_PROFILE=llm_demo`）
+
+新机器只需最小 `.env`（密钥 + profile）；F8/F9 默认由代码 profile 注入，**显式 env 仍可覆盖**。
+
+```bash
+cp env.example .env
+# 编辑 .env — 取消注释并填写 Minimal llm_demo 段：
+#   KEEL_PROFILE=llm_demo
+#   KEEL_OKX_ENV=demo + OKX demo 三件套
+#   KEEL_LLM_API_KEY=...   # OpenRouter；base/model 可由 profile 默认
+chmod 600 .env
+
+./scripts/observe_up.sh
+./scripts/observe_status.sh
+# 可选：python scripts/print_effective_config.py   # 无密钥摘要
+curl -s localhost:8080/api/v1/status | jq '{decision_policy,kill_switch,shadow_mode,llm_configured:.credentials.llm_configured}'
+```
+
+期望：`decision_policy=llm`，`kill_switch=false`，`shadow_mode=false`，`llm_configured=true`。  
+Profile 内容见 `keel/config/profiles.py` / `env.example` 顶部。不要把 API key 贴进聊天或 PR。
+
+---
+
 ## 观测模式（Q0 live read-only）
 
 Kill-switch on, no orders — continuous iteration on live observation.

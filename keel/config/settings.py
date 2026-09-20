@@ -114,6 +114,8 @@ class Settings:
 
     # Active OKX swap instruments (KEEL_INSTRUMENTS); empty env → DEFAULT_CRYPTO_INSTRUMENTS
     instruments: tuple[str, ...] = ()
+    # Named profile (KEEL_PROFILE); None when unset/unknown. Explicit env still wins.
+    profile: str | None = None
 
     @property
     def is_demo(self) -> bool:
@@ -170,7 +172,8 @@ class Settings:
 
 
 def _env(key: str, default: str = "") -> str:
-    """Read process env first, then repo ``.env`` map, then default."""
+    """Read process env first, then repo ``.env`` map (incl. profile), then default."""
+    _load_dotenv_files()
     if key in os.environ:
         return os.environ[key]
     if key in _DOTENV_VALUES:
@@ -364,14 +367,18 @@ def _load_dotenv_files() -> None:
     _DOTENV_VALUES.clear()
     skip = (os.environ.get("KEEL_SKIP_DOTENV", "") or "").lower()
     if skip in ("1", "true", "yes"):
+        # Still apply KEEL_PROFILE from process env (no .env file).
+        _apply_profile_defaults()
         return
     root = Path(__file__).resolve().parents[2]
     env_path = root / ".env"
     if not env_path.is_file():
+        _apply_profile_defaults()
         return
     try:
         raw = env_path.read_text(encoding="utf-8")
     except OSError:
+        _apply_profile_defaults()
         return
     for line in raw.splitlines():
         line = line.strip()
@@ -382,6 +389,37 @@ def _load_dotenv_files() -> None:
         if not key:
             continue
         _DOTENV_VALUES[key] = value.strip().strip('"').strip("'")
+    _apply_profile_defaults()
+
+
+def _resolve_profile_name() -> str | None:
+    """Read KEEL_PROFILE from process env or loaded .env map (no recursion via _env)."""
+    raw = ""
+    if "KEEL_PROFILE" in os.environ:
+        raw = os.environ["KEEL_PROFILE"]
+    elif "KEEL_PROFILE" in _DOTENV_VALUES:
+        raw = _DOTENV_VALUES["KEEL_PROFILE"]
+    from keel.config.profiles import normalize_profile_name
+
+    return normalize_profile_name(raw)
+
+
+def _apply_profile_defaults() -> None:
+    """
+    Fill ``_DOTENV_VALUES`` with profile defaults for keys not already set.
+
+    Process env and explicit ``.env`` entries always win. Idempotent within a
+    loaded dotenv session (re-run after refresh clears the map).
+    """
+    from keel.config.profiles import profile_defaults
+
+    name = _resolve_profile_name()
+    if name is None:
+        return
+    for key, value in profile_defaults(name).items():
+        if key in os.environ or key in _DOTENV_VALUES:
+            continue
+        _DOTENV_VALUES[key] = value
 
 
 @lru_cache(maxsize=1)
@@ -464,6 +502,7 @@ def get_settings() -> Settings:
         cycle_interval_seconds=cycle_interval_seconds,
         observe_preset=observe_preset,
         instruments=_env_instruments(),
+        profile=_resolve_profile_name(),
     )
 
 

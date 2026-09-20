@@ -8,7 +8,7 @@ The shadow is never executed.
 """
 from __future__ import annotations
 
-import os
+from keel.config.settings import _env
 from typing import Any
 
 from keel.domain.decision import Decision
@@ -19,7 +19,7 @@ _KNOWN_ACTIONS = _FIRE_ACTIONS | {"WAIT"}
 
 
 def _env_bool(key: str, default: bool) -> bool:
-    raw = (os.environ.get(key) or "").strip().lower()
+    raw = (_env(key, "") or "").strip().lower()
     if not raw:
         return default
     if raw in ("1", "true", "yes", "on"):
