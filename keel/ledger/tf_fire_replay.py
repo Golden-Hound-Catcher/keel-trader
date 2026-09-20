@@ -67,6 +67,61 @@ def forced_rule_variant(variant: str) -> Iterator[str]:
             os.environ[_VARIANT_ENV] = prev
 
 
+# F9: pre-F9 legacy vs F9 selectivity env packs (in-process only).
+_F9_LEGACY_ENV = {
+    "KEEL_RULE_4H_MODE": "hard",
+    "KEEL_RULE_TF_REQUIRE_4H": "1",
+    "KEEL_RULE_REQUIRE_15M_ALIGN": "1",
+    "KEEL_RULE_ADX_MIN": "0",
+    "KEEL_RULE_RSI_MID": "0",
+    "KEEL_RULE_SHORT_RSI_MAX": "100",
+    "KEEL_RULE_LONG_RSI_MIN": "0",
+}
+_F9_NEW_ENV = {
+    "KEEL_RULE_4H_MODE": "soft",
+    "KEEL_RULE_TF_REQUIRE_4H": "1",
+    "KEEL_RULE_REQUIRE_15M_ALIGN": "1",
+    "KEEL_RULE_ADX_MIN": "15",
+    "KEEL_RULE_RSI_MID": "1",
+    "KEEL_RULE_SHORT_RSI_MAX": "52",
+    "KEEL_RULE_LONG_RSI_MIN": "48",
+}
+
+
+@contextmanager
+def forced_env_pack(pack: dict[str, str]) -> Iterator[dict[str, str]]:
+    """Temporarily set env keys; restore previous values on exit."""
+    prev: dict[str, str | None] = {k: os.environ.get(k) for k in pack}
+    try:
+        for k, v in pack.items():
+            os.environ[k] = str(v)
+        yield dict(pack)
+    finally:
+        for k, old in prev.items():
+            if old is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old
+
+
+def replay_under_variant_env(
+    rows: list[dict[str, Any]],
+    variant: str,
+    env_pack: dict[str, str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Force variant (+ optional env pack), replay, return (results, summary)."""
+    with forced_rule_variant(variant) as v:
+        if env_pack:
+            with forced_env_pack(env_pack):
+                results, _replayed, _skipped = replay_rule_on_rows(rows)
+                summary = summarize_replay(results, variant=v)
+                summary["env_pack"] = dict(env_pack)
+        else:
+            results, _replayed, _skipped = replay_rule_on_rows(rows)
+            summary = summarize_replay(results, variant=v)
+    return results, summary
+
+
 def _is_full_gate(action: str | None, diag: dict[str, Any] | None) -> bool:
     if str(action or "").upper() not in _FIRE_ACTIONS:
         return False
@@ -281,11 +336,15 @@ def load_replay_rows(
 # Re-export for callers/tests
 __all__ = [
     "diagnose_crafted",
+    "forced_env_pack",
     "forced_rule_variant",
     "load_replay_rows",
     "normalize_variant",
     "replay_under_variant",
+    "replay_under_variant_env",
     "rows_from_factor_snapshots",
     "snapshot_from_export_row",
     "summarize_replay",
+    "_F9_LEGACY_ENV",
+    "_F9_NEW_ENV",
 ]

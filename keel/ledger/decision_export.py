@@ -30,6 +30,7 @@ _FACTOR_KEYS = (
     "vwap",
     "vwap_bias_pct",
     "supertrend_direction",
+    "adx_14",
     "bb_percent_b",
     "squeeze",
     "squeeze_prev",
@@ -109,6 +110,7 @@ def factor_dict_from_snapshot(snap: Any) -> dict[str, Any]:
         "vwap": _num("vwap"),
         "vwap_bias_pct": _num("vwap_bias_pct"),
         "supertrend_direction": int(_num("supertrend_direction")),
+        "adx_14": _num("adx_14"),
         "bb_percent_b": _num("bb_percent_b", 0.5),
         "squeeze": _flag("squeeze"),
         "squeeze_prev": _flag("squeeze_prev"),
@@ -273,6 +275,10 @@ def snapshot_from_export_row(row: dict[str, Any]) -> MarketSnapshot | None:
     except (TypeError, ValueError):
         st_dir = 0
     try:
+        adx_14 = float(factors.get("adx_14") or 0)
+    except (TypeError, ValueError):
+        adx_14 = 0.0
+    try:
         vwap = float(factors.get("vwap") or 0)
     except (TypeError, ValueError):
         vwap = 0.0
@@ -303,6 +309,7 @@ def snapshot_from_export_row(row: dict[str, Any]) -> MarketSnapshot | None:
         vwap=vwap,
         vwap_bias_pct=vwap_bias,
         supertrend_direction=st_dir,
+        adx_14=adx_14,
         bb_percent_b=percent_b,
         squeeze=squeeze,
         squeeze_prev=squeeze_prev,

@@ -95,6 +95,11 @@ class MarketSnapshot:
     supertrend_upper: float = 0.0
     supertrend_lower: float = 0.0
 
+    # F9: ADX regime (enriched from 15m candles; 0 = unknown).
+    adx_14: float = 0.0
+    adx_plus_di: float = 0.0
+    adx_minus_di: float = 0.0
+
     # P1 regime: Bollinger / Keltner squeeze + router label.
     bb_percent_b: float = 0.5
     bb_bandwidth: float = 0.0

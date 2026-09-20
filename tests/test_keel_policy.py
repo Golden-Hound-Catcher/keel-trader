@@ -1510,7 +1510,7 @@ class TestE2ATrendFollowVariant(unittest.TestCase):
             self.assertEqual(d.signal_diag["missing"], [])
             self.assertEqual(d.signal_diag["rule_variant"], "trend_follow")
             self.assertTrue(d.signal_diag["require_1h_trend"])
-            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m_align+1h")
             self.assertTrue(d.signal_diag["rsi_long_ok"])
             self.assertIn("trend_follow", d.reason)
             self.assertEqual(d.signal_diag["nearest"], "long")
@@ -1575,7 +1575,7 @@ class TestE2ATrendFollowVariant(unittest.TestCase):
             d = rule_based_decision(self._snap(trend_1h="bearish", rsi_14=50.0))
             self.assertEqual(d.action, "WAIT")
             self.assertTrue(d.signal_diag["require_1h_trend"])
-            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m_align+1h")
             self.assertIn("trend_bullish", d.signal_diag["missing"])
         finally:
             self._restore_env(prev)
@@ -1853,11 +1853,16 @@ class TestE2BTrendFollowVolumeMacdLag(unittest.TestCase):
             self._restore(prev)
 
 class TestE31TfRequire4h(unittest.TestCase):
-    """E3.1: KEEL_RULE_TF_REQUIRE_4H (default on) under trend_follow only."""
+    """E3.1/F9: KEEL_RULE_TF_REQUIRE_4H + KEEL_RULE_4H_MODE under trend_follow."""
 
     _KEYS = (
         "KEEL_RULE_VARIANT",
         "KEEL_RULE_TF_REQUIRE_4H",
+        "KEEL_RULE_4H_MODE",
+        "KEEL_RULE_REQUIRE_15M_ALIGN",
+        "KEEL_RULE_ADX_MIN",
+        "KEEL_RULE_SHORT_RSI_MAX",
+        "KEEL_RULE_LONG_RSI_MIN",
         "KEEL_RULE_TF_MAX_EXTENSION_ATR",
         "KEEL_RULE_TF_PULLBACK",
         "KEEL_RULE_TF_RSI_LONG_MAX",
@@ -1904,7 +1909,7 @@ class TestE31TfRequire4h(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def _enable_tf(self, *, require_4h: str | None = None):
+    def _enable_tf(self, *, require_4h: str | None = None, mode_4h: str | None = "hard"):
         import os
 
         os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
@@ -1914,30 +1919,53 @@ class TestE31TfRequire4h(unittest.TestCase):
         os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "0"
         # Isolate E3.1 from F2b RSI pullback (explicit off).
         os.environ["KEEL_RULE_TF_PULLBACK"] = "0"
+        # Isolate F9 ADX/RSI-mid so E3.1 HTF semantics stay focused.
+        os.environ["KEEL_RULE_ADX_MIN"] = "0"
+        os.environ["KEEL_RULE_SHORT_RSI_MAX"] = "100"
+        os.environ["KEEL_RULE_LONG_RSI_MIN"] = "0"
         if require_4h is None:
             os.environ.pop("KEEL_RULE_TF_REQUIRE_4H", None)  # default on
         else:
             os.environ["KEEL_RULE_TF_REQUIRE_4H"] = require_4h
+        if mode_4h is None:
+            os.environ.pop("KEEL_RULE_4H_MODE", None)
+        else:
+            os.environ["KEEL_RULE_4H_MODE"] = mode_4h
 
-    def test_default_require4h_blocks_neutral_4h(self):
-        """TF default: 15m+1h bullish but 4h neutral → trend_bullish missing."""
+    def test_hard_require4h_blocks_neutral_4h(self):
+        """TF hard mode: 15m+1h bullish but 4h neutral → trend_bullish missing."""
         prev = self._save()
         try:
-            self._enable_tf()
+            self._enable_tf(mode_4h="hard")
             d = rule_based_decision(self._snap(trend_4h="neutral"))
             self.assertEqual(d.action, "WAIT")
             self.assertTrue(d.signal_diag["require_4h_trend"])
-            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h+4h")
+            self.assertEqual(d.signal_diag["rule_4h_mode"], "hard")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m_align+1h+4h")
             self.assertFalse(d.signal_diag["trend_4h_confirm"])
             self.assertFalse(d.signal_diag["trend_bullish"])
             self.assertIn("trend_bullish", d.signal_diag["missing"])
         finally:
             self._restore(prev)
 
+    def test_soft_require4h_allows_neutral_4h(self):
+        """F9 soft default: 4h neutral OK when 1h aligns."""
+        prev = self._save()
+        try:
+            self._enable_tf(mode_4h="soft")
+            d = rule_based_decision(self._snap(trend_4h="neutral"))
+            self.assertEqual(d.action, "BUY_LONG")
+            self.assertTrue(d.signal_diag["require_4h_trend"])
+            self.assertEqual(d.signal_diag["rule_4h_mode"], "soft")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m_align+1h+4h_soft")
+            self.assertTrue(d.signal_diag["trend_bullish"])
+        finally:
+            self._restore(prev)
+
     def test_default_require4h_blocks_mismatch_4h(self):
         prev = self._save()
         try:
-            self._enable_tf()
+            self._enable_tf(mode_4h="soft")
             d = rule_based_decision(self._snap(trend_4h="bearish"))
             self.assertEqual(d.action, "WAIT")
             self.assertIn("trend_bullish", d.signal_diag["missing"])
@@ -1948,13 +1976,13 @@ class TestE31TfRequire4h(unittest.TestCase):
     def test_all_three_align_fires_long(self):
         prev = self._save()
         try:
-            self._enable_tf()
+            self._enable_tf(mode_4h="hard")
             d = rule_based_decision(self._snap())
             self.assertEqual(d.action, "BUY_LONG")
             self.assertEqual(d.signal_diag["missing"], [])
             self.assertTrue(d.signal_diag["require_4h_trend"])
             self.assertTrue(d.signal_diag["trend_4h_confirm"])
-            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h+4h")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m_align+1h+4h")
             self.assertTrue(d.signal_diag["trend_bullish"])
         finally:
             self._restore(prev)
@@ -1962,7 +1990,7 @@ class TestE31TfRequire4h(unittest.TestCase):
     def test_all_three_align_fires_short(self):
         prev = self._save()
         try:
-            self._enable_tf()
+            self._enable_tf(mode_4h="hard")
             d = rule_based_decision(
                 self._snap(
                     trend_15m="bearish",
@@ -1975,7 +2003,7 @@ class TestE31TfRequire4h(unittest.TestCase):
             )
             self.assertEqual(d.action, "SELL_SHORT")
             self.assertEqual(d.signal_diag["missing"], [])
-            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h+4h")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m_align+1h+4h")
             self.assertTrue(d.signal_diag["trend_bearish"])
             self.assertTrue(d.signal_diag["trend_4h_confirm"])
         finally:
@@ -1989,7 +2017,7 @@ class TestE31TfRequire4h(unittest.TestCase):
             d = rule_based_decision(self._snap(trend_4h="neutral"))
             self.assertEqual(d.action, "BUY_LONG")
             self.assertFalse(d.signal_diag["require_4h_trend"])
-            self.assertEqual(d.signal_diag["trend_gate"], "15m+1h")
+            self.assertEqual(d.signal_diag["trend_gate"], "15m_align+1h")
             self.assertFalse(d.signal_diag["trend_4h_confirm"])
             self.assertTrue(d.signal_diag["trend_bullish"])
         finally:

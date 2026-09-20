@@ -6,8 +6,9 @@ F5/F6: TradingView-inspired rule variants (public TA concepts — not Pine copy)
   geometry unchanged. Offline scores: barrier + optional ATR trail exit (F6).
 - ``donchian``: prior-bar Donchian breakout + EMA stack filter + volume≥SMA×k;
   no repaint (channel excludes current bar).
-- F6 ADX regime gate (optional, default off live): skip when ADX < min
-  (range). Shared with trend_follow via ``adx_regime_ok``.
+- F6/F9 ADX regime gate (F9 default min=15 for live shadow; 0=off): skip when
+  ADX < min (range). Fail-open if ADX unavailable. Shared with trend_follow
+  via ``adx_regime_ok``.
 
 Cool-down is enforced by the walk / live fire_cooldown path, not here.
 """
@@ -30,7 +31,7 @@ _ST_FACTOR_DEFAULT = 3.0
 _DONCHIAN_PERIOD_DEFAULT = 20
 _DONCHIAN_VOL_MULT_DEFAULT = 1.0
 _DONCHIAN_VOL_SMA_PERIOD_DEFAULT = 20
-_ADX_MIN_DEFAULT = 0.0  # 0 = off (live default)
+_ADX_MIN_DEFAULT = 15.0  # F9: live shadow default 15 (0 = off); fail-open if ADX unavailable
 _ADX_PERIOD_DEFAULT = 14
 _ST_ENTRY_MODE_DEFAULT = "flip"  # flip | soft
 
@@ -96,7 +97,7 @@ def donchian_vol_sma_period() -> int:
 
 
 def adx_min_threshold() -> float:
-    """F6: KEEL_RULE_ADX_MIN — 0 disables regime gate (live default)."""
+    """F9: KEEL_RULE_ADX_MIN — default 15; 0 disables regime gate."""
     v = _env_float("KEEL_RULE_ADX_MIN", _ADX_MIN_DEFAULT)
     if v != v:
         return float(_ADX_MIN_DEFAULT)
@@ -121,27 +122,99 @@ def adx_regime_ok(snapshot: MarketSnapshot) -> dict[str, Any]:
     Optional ADX regime gate for TF / ST / Donchian.
 
     When ``KEEL_RULE_ADX_MIN`` <= 0 → always ok (gate off). Else require
-    ADX >= min on entry-TF candles. No peeking: uses snapshot candles only.
+    ADX >= min on entry-TF candles. Prefer snapshot ADX attrs when present;
+    else compute from candles. If ADX cannot be read/computed → **fail-open**
+    (ok=True, ``adx_fail_open=True``) — mirrors LLM F7/F8 overlay.
+    No peeking: uses snapshot fields / candles only.
     """
     amin = adx_min_threshold()
     period = adx_period()
-    candles = list(snapshot.candles_15m or [])
-    highs = [c.high for c in candles]
-    lows = [c.low for c in candles]
-    closes = [c.close for c in candles]
-    res = calculate_adx(highs, lows, closes, period=period)
-    adx_v = float(res.adx)
-    ok = True if amin <= 0.0 else (adx_v >= float(amin) and adx_v > 0.0)
+    if amin <= 0.0:
+        return {
+            "adx": None,
+            "adx_plus_di": 0.0,
+            "adx_minus_di": 0.0,
+            "adx_period": int(period),
+            "adx_min": float(amin),
+            "adx_enabled": False,
+            "adx_ok": True,
+            "adx_source": "off",
+            "adx_fail_open": False,
+        }
+
+    # Prefer precomputed snapshot ADX when present.
+    adx_v: float | None = None
+    source = "unavailable"
+    plus_di = 0.0
+    minus_di = 0.0
+    for attr in ("adx_14", "adx", "adx_value"):
+        raw = getattr(snapshot, attr, None)
+        if raw is None:
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if v > 0.0:
+            adx_v = v
+            source = "snapshot"
+            break
+
+    if adx_v is None:
+        candles = list(snapshot.candles_15m or [])
+        highs = [c.high for c in candles]
+        lows = [c.low for c in candles]
+        closes = [c.close for c in candles]
+        if len(closes) >= max(2, period + 1):
+            try:
+                res = calculate_adx(highs, lows, closes, period=period)
+                v = float(res.adx)
+                plus_di = float(res.plus_di)
+                minus_di = float(res.minus_di)
+                if v > 0.0:
+                    adx_v = v
+                    source = "computed"
+            except Exception:
+                adx_v = None
+                source = "unavailable"
+
+    if adx_v is None:
+        return {
+            "adx": None,
+            "adx_plus_di": plus_di,
+            "adx_minus_di": minus_di,
+            "adx_period": int(period),
+            "adx_min": float(amin),
+            "adx_enabled": True,
+            "adx_ok": True,
+            "adx_source": source,
+            "adx_fail_open": True,
+            "adx_note": "ADX unavailable — fail-open (F9)",
+        }
+
+    ok = adx_v >= float(amin)
     return {
-        "adx": adx_v,
-        "adx_plus_di": float(res.plus_di),
-        "adx_minus_di": float(res.minus_di),
+        "adx": float(adx_v),
+        "adx_plus_di": plus_di,
+        "adx_minus_di": minus_di,
         "adx_period": int(period),
         "adx_min": float(amin),
-        "adx_enabled": bool(amin > 0.0),
+        "adx_enabled": True,
         "adx_ok": bool(ok),
+        "adx_source": source,
+        "adx_fail_open": False,
     }
 
+
+
+def _rule_4h_mode_raw() -> str:
+    """F9: soft (default) | hard for KEEL_RULE_4H_MODE when TF_REQUIRE_4H=1."""
+    raw = (os.environ.get("KEEL_RULE_4H_MODE") or "soft").strip().lower()
+    if raw in ("hard", "strict", "same"):
+        return "hard"
+    if raw in ("soft", "not_oppose", "not-opposing", "neutral_ok"):
+        return "soft"
+    return "soft"
 
 
 def _htf_flags(snapshot: MarketSnapshot, *, require_1h: bool, require_4h: bool) -> dict[str, Any]:
@@ -154,24 +227,32 @@ def _htf_flags(snapshot: MarketSnapshot, *, require_1h: bool, require_4h: bool) 
     t1h_bear = trend_1h == "bearish"
     t4h_bull = trend_4h == "bullish"
     t4h_bear = trend_4h == "bearish"
+    mode = _rule_4h_mode_raw() if require_4h else "off"
 
     if require_1h and require_4h:
-        htf_long = t1h_bull and t4h_bull
-        htf_short = t1h_bear and t4h_bear
-        trend_gate = "1h+4h"
+        if mode == "hard":
+            htf_long = t1h_bull and t4h_bull
+            htf_short = t1h_bear and t4h_bear
+            trend_gate = "1h+4h"
+        else:
+            # F9 soft-4h: 1h same-dir; 4h not-opposing (neutral OK).
+            htf_long = t1h_bull and (trend_4h != "bearish")
+            htf_short = t1h_bear and (trend_4h != "bullish")
+            trend_gate = "1h+4h_soft"
     elif require_1h:
         htf_long = t1h_bull
         htf_short = t1h_bear
         trend_gate = "1h"
     elif require_4h:
-        htf_long = t4h_bull
-        htf_short = t4h_bear
-        trend_gate = "4h"
+        if mode == "hard":
+            htf_long = t4h_bull
+            htf_short = t4h_bear
+            trend_gate = "4h"
+        else:
+            htf_long = trend_4h != "bearish"
+            htf_short = trend_4h != "bullish"
+            trend_gate = "4h_soft"
     else:
-        # Soft: align with entry-TF EMA stack when HTF off.
-        htf_long = t15_bull or True  # no hard HTF — always ok
-        htf_short = t15_bear or True
-        # When both off, gates pass unconditionally.
         htf_long = True
         htf_short = True
         trend_gate = "off"
@@ -182,6 +263,7 @@ def _htf_flags(snapshot: MarketSnapshot, *, require_1h: bool, require_4h: bool) 
         "trend_4h": trend_4h,
         "require_1h_trend": bool(require_1h),
         "require_4h_trend": bool(require_4h),
+        "rule_4h_mode": mode,
         "trend_gate": trend_gate,
         "htf_long_ok": bool(htf_long),
         "htf_short_ok": bool(htf_short),

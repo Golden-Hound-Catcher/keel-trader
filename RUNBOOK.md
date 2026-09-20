@@ -808,7 +808,34 @@ Jo: 0开火这对吗？优化策略 — **no**, F7 was over-tight. Post-F7 last 
 
 Prompt: `system_rules.v2` documents soft-4h (neutral OK if 1h aligned). Soft-4h restores selectivity without flipping to rule primary or spraying like rule CF.
 
+### Phase F9 — rule selectivity gates (shadow quality)
 
+Jo: why are rules so bad? Optimize. **Keep `KEEL_DECISION_POLICY=llm` primary**; improve rule for shadow quality + future optionality. kill=0 / shadow=0 / near_probe=0 unchanged.
+
+**Why rules looked bad (evidence):** rule fires ~3× LLM; fee markouts worse (72h manual: rule-only 1h ≈ −4.5bps win 42% vs LLM +38bps win 61%). `trend_follow` sprayed on soft volume / aligned HTF without LLM-style selectivity (15m not-opposing, ADX, RSI mid).
+
+**F9 rule gates (env-gated; defaults ON for live shadow under TF):**
+
+| Gate | Env | F9 default | Behavior |
+|------|-----|------------|----------|
+| Soft-4h | `KEEL_RULE_4H_MODE` | **soft** | 1h same-dir required; 4h **not-opposing** (neutral OK). `hard` = E3.1 same-direction |
+| Require 4h | `KEEL_RULE_TF_REQUIRE_4H` | **1** | `0` = off (E2A 15m+1h only); mode ignored when off |
+| 15m align | `KEEL_RULE_REQUIRE_15M_ALIGN` | **1** | TF entry requires **same-dir** 15m (implies not-opposing; neutral blocks). LLM overlay stays not-opposing-only |
+| ADX floor | `KEEL_RULE_ADX_MIN` | **15** (0=off) | reuse factors ADX; **fail-open** if unavailable |
+| RSI mid veto | `KEEL_RULE_SHORT_RSI_MAX` / `KEEL_RULE_LONG_RSI_MIN` | **52** / **48** | short blocked if RSI≥52; long if RSI≤48 |
+
+Audit: gate fails stamped into `signal_diag.missing` + WAIT `reason` (`gates=…`) so Monitor / `rule_shadow` shows why WAIT.
+
+Offline fire-rate before/after (ledger replay, no `.env` write):
+
+```bash
+PYTHONPATH=. python scripts/tf_full_gate_replay.py --db data/keel_ledger.db --hours 72 --compare-f9
+PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hours 72
+```
+
+**Honesty:** still shadow-only under llm policy — do **not** flip primary to rule from F9 alone. Economic edge still unproven.
+
+**Replay caveat:** historical ledger factor payloads often lack `adx_14` / candles → ADX **fail-opens** in `--compare-f9`, so soft-4h can *raise* counterfactual fire-rate vs hard-4h legacy. Live cycles enrich `adx_14` from 15m candles, so the ADX≥15 floor applies. After restart, re-check `llm_vs_rule_daily` + Monitor rule_shadow WAIT `gates=`.
 
 **P5 squeeze-release + cost (`KEEL_RULE_VARIANT=squeeze_release`, default off):** fire only on the first expansion bar after a TTM squeeze, with Supertrend and 1h agreement (RSI chase veto 70/30). Compare CLI leg **H** holds with a **4h hard time-stop** (not Supertrend trail). Legs **C2/H2** reprice the same barrier path at Regular maker 2bps/leg (RT 4 vs taker 10). Fill is assumed 100% at the limit — not a live post-only guarantee. Still **E0 freeze**. Do not flip live variant, exits, or decision policy from F2c/P0–P5/MFE alone.
 
