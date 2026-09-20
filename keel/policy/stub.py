@@ -24,10 +24,15 @@ E2B (trend_follow only): volume soft path without RSI extreme when
 trend+macd+ema align (``volume_path=soft_tf``); small MACD histogram lag
 tolerance via ``KEEL_RULE_TF_MACD_LAG_BPS`` (default 3.0, clamp 0–15).
 mean_revert volume soft + strict MACD sign unchanged.
-E3.1 (trend_follow only): ``KEEL_RULE_TF_REQUIRE_4H`` (default 1) hard-requires
-``trend_4h`` same direction as 15m+1h (``trend_gate=15m+1h+4h``); set 0 to keep
-E2A 15m+1h-only. Folded into ``trend_bullish``/``trend_bearish``. mean_revert
-ignores this env.
+E3.1 (trend_follow only): ``KEEL_RULE_TF_REQUIRE_4H`` (default 1) enables the
+4h leg; F9 ``KEEL_RULE_4H_MODE`` (default **soft**) makes 4h **not-opposing**
+(neutral OK if 1h aligned); ``hard`` restores E3.1 same-direction. Set
+TF_REQUIRE_4H=0 for E2A 15m+1h-only. mean_revert ignores these envs.
+F9 (trend_follow selectivity; keep LLM primary / rule shadow):
+``KEEL_RULE_REQUIRE_15M_ALIGN`` (default 1) — 15m not-opposing;
+``KEEL_RULE_ADX_MIN`` (default **15**, 0=off, fail-open if missing);
+``KEEL_RULE_SHORT_RSI_MAX`` / ``KEEL_RULE_LONG_RSI_MIN`` (default 52/48)
+RSI mid veto. Gates stamped into ``signal_diag`` / reason for rule_shadow audit.
 F2a (trend_follow only): ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default **0=off**,
 clamp 0.5–5 when >0) rejects entries already extended vs ``ema_21`` in ATR
 units — long ``(price-ema_21)/atr_14``, short ``(ema_21-price)/atr_14``. Gate
@@ -92,6 +97,11 @@ _TF_RSI_PULLBACK_LONG_MAX_DEFAULT = 52.0
 _TF_RSI_PULLBACK_SHORT_MIN_DEFAULT = 48.0
 _TF_RSI_PULLBACK_MIN = 20.0
 _TF_RSI_PULLBACK_MAX = 80.0
+# F9: rule-side selectivity (LLM F8 parity for shadow quality).
+_RULE_4H_MODE_DEFAULT = "soft"
+_RULE_REQUIRE_15M_ALIGN_DEFAULT = True
+_RULE_SHORT_RSI_MAX_DEFAULT = 52.0
+_RULE_LONG_RSI_MIN_DEFAULT = 48.0
 # P1 range fade (percent_b / VWAP / RSI).
 _RANGE_PB_LONG_MAX_DEFAULT = 0.20
 _RANGE_PB_SHORT_MIN_DEFAULT = 0.80
@@ -146,6 +156,9 @@ _BINARY_MISSING_GATES = frozenset(
         "squeeze_release",
         "st_ok",
         "htf_ok",
+        "adx_ok",
+        "rsi_mid_ok",
+        "tf15_align_ok",
     }
 )
 
@@ -255,15 +268,73 @@ def resolve_rule_variant() -> str:
 
 def resolve_tf_require_4h() -> bool:
     """
-    E3.1 / F5: effective 4h hard-require for status/config echo.
+    E3.1 / F5 / F9: whether the 4h leg is enabled for status/config echo.
 
     True under ``trend_follow`` / ``supertrend`` / ``donchian`` when
-    ``KEEL_RULE_TF_REQUIRE_4H`` is on (default on). Always False under
-    ``mean_revert`` (env ignored).
+    ``KEEL_RULE_TF_REQUIRE_4H`` is on (default on). Soft vs hard interpretation
+    is ``resolve_rule_4h_mode()``. Always False under ``mean_revert``.
     """
     if _rule_variant() not in ("trend_follow", "supertrend", "donchian"):
         return False
     return _env_bool("KEEL_RULE_TF_REQUIRE_4H", True)
+
+
+def resolve_rule_4h_mode() -> str:
+    """
+    F9: ``soft`` (default) | ``hard`` | ``off``.
+
+    Mapping with ``KEEL_RULE_TF_REQUIRE_4H``:
+    - REQUIRE_4H=0 → ``off`` (E2A 15m+1h only; mode env ignored)
+    - REQUIRE_4H=1 + MODE=soft → 1h same-dir; 4h not-opposing (neutral OK)
+    - REQUIRE_4H=1 + MODE=hard → E3.1 same-direction 4h
+    """
+    if not resolve_tf_require_4h():
+        return "off"
+    raw = (os.environ.get("KEEL_RULE_4H_MODE") or _RULE_4H_MODE_DEFAULT).strip().lower()
+    if raw in ("hard", "strict", "same"):
+        return "hard"
+    if raw in ("soft", "not_oppose", "not-opposing", "neutral_ok"):
+        return "soft"
+    return "soft"
+
+
+def resolve_rule_require_15m_align() -> bool:
+    """F9: 15m not-opposing gate (default on) under trend_follow only."""
+    if _rule_variant() != "trend_follow":
+        return False
+    return _env_bool("KEEL_RULE_REQUIRE_15M_ALIGN", _RULE_REQUIRE_15M_ALIGN_DEFAULT)
+
+
+def resolve_rule_short_rsi_max() -> float:
+    """F9: short blocked when RSI >= this (default 52)."""
+    return _env_float("KEEL_RULE_SHORT_RSI_MAX", _RULE_SHORT_RSI_MAX_DEFAULT)
+
+
+def resolve_rule_long_rsi_min() -> float:
+    """F9: long blocked when RSI <= this (default 48)."""
+    return _env_float("KEEL_RULE_LONG_RSI_MIN", _RULE_LONG_RSI_MIN_DEFAULT)
+
+
+def _rsi_mid_ok_side(
+    snapshot: MarketSnapshot,
+    *,
+    side: str,
+    enabled: bool,
+    short_max: float,
+    long_min: float,
+) -> bool:
+    """
+    F9 RSI mid veto (LLM F8 parity).
+
+    Short blocked if RSI >= short_max; long blocked if RSI <= long_min.
+    When disabled: always True.
+    """
+    if not enabled:
+        return True
+    rsi = float(getattr(snapshot, "rsi_14", 50.0) or 50.0)
+    if side == "short":
+        return bool(rsi < float(short_max))
+    return bool(rsi > float(long_min))
 
 
 def _clamp_tf_max_extension_atr(raw: float) -> float:
@@ -469,6 +540,12 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         "tf_pullback_enabled": False,
         "rsi_pullback_long_max": 0.0,
         "rsi_pullback_short_min": 0.0,
+        # F9: TF-only selectivity (off / ignored under mean_revert).
+        "rule_4h_mode": "off",
+        "require_15m_align": False,
+        "rsi_mid_enabled": False,
+        "short_rsi_max": _RULE_SHORT_RSI_MAX_DEFAULT,
+        "long_rsi_min": _RULE_LONG_RSI_MIN_DEFAULT,
     }
     if variant == "trend_follow":
         # E2A: RSI = not overbought (long) / not oversold (short); force 15m+1h.
@@ -481,8 +558,32 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
         th["tf_macd_lag_bps"] = _clamp_tf_macd_lag_bps(
             _env_float("KEEL_RULE_TF_MACD_LAG_BPS", _TF_MACD_LAG_BPS_DEFAULT)
         )
-        # E3.1: hard-require 4h same direction (default on; 0 = E2A 15m+1h only).
+        # E3.1/F9: 4h leg enabled (default on; 0 = E2A 15m+1h only).
         th["require_4h_trend"] = _env_bool("KEEL_RULE_TF_REQUIRE_4H", True)
+        # F9 soft/hard 4h interpretation (soft = not-opposing; hard = E3.1 same-dir).
+        _m = (os.environ.get("KEEL_RULE_4H_MODE") or _RULE_4H_MODE_DEFAULT).strip().lower()
+        if _m in ("hard", "strict", "same"):
+            th["rule_4h_mode"] = "hard"
+        else:
+            th["rule_4h_mode"] = "soft"
+        # F9: 15m not-opposing (default on).
+        th["require_15m_align"] = _env_bool(
+            "KEEL_RULE_REQUIRE_15M_ALIGN", _RULE_REQUIRE_15M_ALIGN_DEFAULT
+        )
+        # F9: RSI mid veto (default on for TF; KEEL_RULE_RSI_MID=0 disables).
+        th["short_rsi_max"] = _env_float(
+            "KEEL_RULE_SHORT_RSI_MAX", _RULE_SHORT_RSI_MAX_DEFAULT
+        )
+        th["long_rsi_min"] = _env_float(
+            "KEEL_RULE_LONG_RSI_MIN", _RULE_LONG_RSI_MIN_DEFAULT
+        )
+        mid_master = _env_bool("KEEL_RULE_RSI_MID", True)
+        # Extreme bands also disable (legacy replay pack uses 100/0).
+        th["rsi_mid_enabled"] = bool(
+            mid_master
+            and float(th["short_rsi_max"]) < 100.0
+            and float(th["long_rsi_min"]) > 0.0
+        )
         # F2a: reject already-extended TF entries (default 0=off; >0 enables).
         th["max_extension_atr"] = _clamp_tf_max_extension_atr(
             _env_float(
@@ -606,12 +707,20 @@ def _rule_thresholds() -> dict[str, float | bool | str]:
     return th
 
 
+def _missing_gate_suffix(diag: dict[str, Any]) -> str:
+    """F9: stamp WAIT gate fails into reason for Monitor / rule_shadow audit."""
+    missing = diag.get("missing")
+    if not isinstance(missing, list) or not missing:
+        return ""
+    return " | gates=" + ",".join(str(x) for x in missing)
+
+
 def _rule_reason_prefix(diag: dict[str, Any], *, fired: bool, side: str) -> str:
     variant = str(diag.get("rule_variant") or "")
     if variant == "squeeze_release":
         if fired:
             return f"rule {side} squeeze_release"
-        return "no rule signal squeeze_release"
+        return "no rule signal squeeze_release" + _missing_gate_suffix(diag)
     if variant in ("regime", "score"):
         path = str(diag.get("regime") or diag.get("regime_path") or "")
         score = diag.get("score")
@@ -620,14 +729,17 @@ def _rule_reason_prefix(diag: dict[str, Any], *, fired: bool, side: str) -> str:
             score_bit = f" score={int(score)}/{int(diag.get('score_min') or 0)}"
         if fired:
             return f"rule {side} {variant} {path}{score_bit}".strip()
-        return f"no rule signal {variant} {path}{score_bit}".strip()
+        return (
+            f"no rule signal {variant} {path}{score_bit}".strip()
+            + _missing_gate_suffix(diag)
+        )
     if variant == "trend_follow":
         if fired:
             return f"rule {side} trend_follow"
-        return "no rule signal trend_follow"
+        return "no rule signal trend_follow" + _missing_gate_suffix(diag)
     if fired:
         return f"rule {side}"
-    return "no rule signal"
+    return "no rule signal" + _missing_gate_suffix(diag)
 
 
 def _factor_reason(snapshot: MarketSnapshot, prefix: str) -> str:
@@ -1700,8 +1812,10 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     ``rsi_long_ok`` / ``rsi_short_ok``).
     E2B: TF ``volume_path=soft_tf`` (trend+macd+ema, no RSI extreme);
     ``macd_lag_bps`` / ``macd_lag_ok`` for TF MACD hist lag tolerance.
-    E3.1: TF ``require_4h_trend`` / ``trend_4h_confirm``; when on, folds 4h
-    into ``trend_bullish``/``trend_bearish`` and ``trend_gate=15m+1h+4h``.
+    E3.1/F9: TF ``require_4h_trend`` / ``rule_4h_mode`` (soft=4h not-opposing;
+    hard=same-dir) fold into ``trend_bullish``/``trend_bearish``;
+    ``trend_gate`` like ``15m_align+1h+4h_soft``. F9 also stamps
+    ``require_15m_align`` / ``tf15_align_ok``, ``rsi_mid_ok``, ``adx_ok``.
     F2a: TF ``max_extension_atr`` / ``extension_atr`` / ``extension_ok`` /
     ``extension_headroom_atr`` — reject when price is already extended vs
     ``ema_21`` beyond ``KEEL_RULE_TF_MAX_EXTENSION_ATR`` (default 0=off).
@@ -1765,6 +1879,12 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     rsi_short_hard = snapshot.rsi_14 >= rsi_short_min
     require_1h = bool(th["require_1h_trend"])
     require_4h = bool(th.get("require_4h_trend", False))
+    rule_4h_mode = str(th.get("rule_4h_mode") or "off")
+    if require_4h and rule_4h_mode not in ("soft", "hard"):
+        rule_4h_mode = "soft"
+    if not require_4h:
+        rule_4h_mode = "off"
+    require_15m_align = bool(th.get("require_15m_align", False))
     trend_15m = str(snapshot.trend_15m or "neutral")
     trend_1h = str(getattr(snapshot, "trend_1h", "neutral") or "neutral")
     trend_4h = str(getattr(snapshot, "trend_4h", "neutral") or "neutral")
@@ -1775,15 +1895,62 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
     trend_1h_confirm_short = trend_1h == "bearish"
     trend_4h_confirm_long = trend_4h == "bullish"
     trend_4h_confirm_short = trend_4h == "bearish"
-    if require_1h and require_4h:
-        # E3.1 TF default: 15m+1h+4h all same direction (folded into trend_*).
-        trend_bullish = (
-            trend_15m_bullish and trend_1h_confirm_long and trend_4h_confirm_long
-        )
-        trend_bearish = (
-            trend_15m_bearish and trend_1h_confirm_short and trend_4h_confirm_short
-        )
-        trend_gate = "15m+1h+4h"
+    variant = str(th.get("rule_variant") or "mean_revert")
+    is_tf = variant in ("trend_follow", "regime", "score")
+    # F9: 15m not-opposing audit (LLM parity). TF uses this for the align gate.
+    tf15_align_long = trend_15m != "bearish"
+    tf15_align_short = trend_15m != "bullish"
+
+    if variant == "trend_follow":
+        # F9 TF HTF: 1h same-dir (forced); 15m same-dir when align on
+        # (stricter than LLM not-opposing; still blocks opposing 15m);
+        # 4h soft (not-opposing) or hard (same-dir) when REQUIRE_4H.
+        t15_long_ok = trend_15m_bullish if require_15m_align else True
+        t15_short_ok = trend_15m_bearish if require_15m_align else True
+        t1h_long_ok = trend_1h_confirm_long  # TF always requires 1h
+        t1h_short_ok = trend_1h_confirm_short
+        if rule_4h_mode == "hard":
+            t4h_long_ok = trend_4h_confirm_long
+            t4h_short_ok = trend_4h_confirm_short
+        elif rule_4h_mode == "soft":
+            t4h_long_ok = trend_4h != "bearish"
+            t4h_short_ok = trend_4h != "bullish"
+        else:
+            t4h_long_ok = True
+            t4h_short_ok = True
+        trend_bullish = t15_long_ok and t1h_long_ok and t4h_long_ok
+        trend_bearish = t15_short_ok and t1h_short_ok and t4h_short_ok
+        parts = []
+        if require_15m_align:
+            parts.append("15m_align")
+        parts.append("1h")
+        if rule_4h_mode == "soft":
+            parts.append("4h_soft")
+        elif rule_4h_mode == "hard":
+            parts.append("4h")
+        trend_gate = "+".join(parts) if parts else "off"
+    elif require_1h and require_4h:
+        # Non-TF (regime/score): preserve pre-F9 hard 4h when require_4h.
+        if rule_4h_mode == "soft":
+            trend_bullish = (
+                trend_15m_bullish
+                and trend_1h_confirm_long
+                and (trend_4h != "bearish")
+            )
+            trend_bearish = (
+                trend_15m_bearish
+                and trend_1h_confirm_short
+                and (trend_4h != "bullish")
+            )
+            trend_gate = "15m+1h+4h_soft"
+        else:
+            trend_bullish = (
+                trend_15m_bullish and trend_1h_confirm_long and trend_4h_confirm_long
+            )
+            trend_bearish = (
+                trend_15m_bearish and trend_1h_confirm_short and trend_4h_confirm_short
+            )
+            trend_gate = "15m+1h+4h"
     elif require_1h:
         trend_bullish = trend_15m_bullish and trend_1h_confirm_long
         trend_bearish = trend_15m_bearish and trend_1h_confirm_short
@@ -1793,18 +1960,23 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         trend_bearish = trend_15m_bearish
         trend_gate = "15m"
     # Soft confirm flags: higher TF matches directional 15m (audit when soft).
+    # Under TF F9 not-opposing, confirm still means same-dir higher TF.
     if trend_15m_bullish:
         trend_1h_confirm = trend_1h_confirm_long
         trend_4h_confirm = trend_4h_confirm_long
     elif trend_15m_bearish:
         trend_1h_confirm = trend_1h_confirm_short
         trend_4h_confirm = trend_4h_confirm_short
+    elif variant == "trend_follow" and trend_1h_confirm_long:
+        trend_1h_confirm = True
+        trend_4h_confirm = trend_4h_confirm_long
+    elif variant == "trend_follow" and trend_1h_confirm_short:
+        trend_1h_confirm = True
+        trend_4h_confirm = trend_4h_confirm_short
     else:
         trend_1h_confirm = False
         trend_4h_confirm = False
     # E2B: TF MACD lag — allow small adverse hist (bps of price); MR strict.
-    variant = str(th.get("rule_variant") or "mean_revert")
-    is_tf = variant in ("trend_follow", "regime", "score")
     macd_lag_bps = float(th.get("tf_macd_lag_bps") or 0.0)
     hist = float(snapshot.macd_histogram)
     price = float(snapshot.price or 0.0)
@@ -1956,6 +2128,15 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
         "trend_4h_confirm": trend_4h_confirm,
         "require_1h_trend": require_1h,
         "require_4h_trend": require_4h,
+        "rule_4h_mode": rule_4h_mode,
+        "require_15m_align": bool(require_15m_align) if variant == "trend_follow" else False,
+        "tf15_align_ok": True,  # refined after nearest
+        "tf15_align_long_ok": bool(tf15_align_long),
+        "tf15_align_short_ok": bool(tf15_align_short),
+        "rsi_mid_enabled": bool(th.get("rsi_mid_enabled", False)),
+        "short_rsi_max": float(th.get("short_rsi_max") or _RULE_SHORT_RSI_MAX_DEFAULT),
+        "long_rsi_min": float(th.get("long_rsi_min") or _RULE_LONG_RSI_MIN_DEFAULT),
+        "rsi_mid_ok": True,  # refined after nearest
         "rule_variant": str(th.get("rule_variant") or "mean_revert"),
         "regime": (
             "trend" if variant == "regime" else str(getattr(snapshot, "regime", "") or "")
@@ -2061,15 +2242,17 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
             nearest, missing = "short", short_missing
         else:
             nearest, missing = "long", long_missing
-    # F6: optional ADX regime gate for trend_follow (default off live).
+    # F6/F9: ADX regime gate for TF (F9 default min=15; fail-open if missing).
     adx_info = adx_regime_ok(snapshot) if is_tf else {
-        "adx": 0.0,
+        "adx": None,
         "adx_plus_di": 0.0,
         "adx_minus_di": 0.0,
         "adx_period": 14,
         "adx_min": 0.0,
         "adx_enabled": False,
         "adx_ok": True,
+        "adx_source": "off",
+        "adx_fail_open": False,
     }
     adx_ok = bool(adx_info.get("adx_ok", True))
     gates.update(adx_info)
@@ -2091,20 +2274,72 @@ def diagnose_rule_signal(snapshot: MarketSnapshot) -> dict[str, Any]:
             nearest, missing = "short", short_missing
         else:
             nearest, missing = "long", long_missing
+
+    # F9: RSI mid veto (TF only; short if RSI>=max, long if RSI<=min).
+    rsi_mid_enabled = bool(th.get("rsi_mid_enabled", False)) and variant == "trend_follow"
+    short_rsi_max = float(th.get("short_rsi_max") or _RULE_SHORT_RSI_MAX_DEFAULT)
+    long_rsi_min = float(th.get("long_rsi_min") or _RULE_LONG_RSI_MIN_DEFAULT)
+    rsi_mid_ok_long = _rsi_mid_ok_side(
+        snapshot,
+        side="long",
+        enabled=rsi_mid_enabled,
+        short_max=short_rsi_max,
+        long_min=long_rsi_min,
+    )
+    rsi_mid_ok_short = _rsi_mid_ok_side(
+        snapshot,
+        side="short",
+        enabled=rsi_mid_enabled,
+        short_max=short_rsi_max,
+        long_min=long_rsi_min,
+    )
+    if rsi_mid_enabled:
+        if not rsi_mid_ok_long and "rsi_mid_ok" not in long_missing:
+            long_missing = list(long_missing) + ["rsi_mid_ok"]
+        if not rsi_mid_ok_short and "rsi_mid_ok" not in short_missing:
+            short_missing = list(short_missing) + ["rsi_mid_ok"]
+        n_long, n_short = len(long_missing), len(short_missing)
+        if n_long == 0 and n_short == 0:
+            nearest, missing = "long", []
+        elif n_long == 0:
+            nearest, missing = "long", []
+        elif n_short == 0:
+            nearest, missing = "short", []
+        elif n_long < n_short:
+            nearest, missing = "long", long_missing
+        elif n_short < n_long:
+            nearest, missing = "short", short_missing
+        else:
+            nearest, missing = "long", long_missing
+
     if nearest == "short":
         extension_atr = extension_atr_short
         extension_ok = extension_ok_short
         pullback_ok = pullback_ok_short
+        rsi_mid_ok = rsi_mid_ok_short
+        tf15_align_ok = tf15_align_short
     else:
         extension_atr = extension_atr_long
         extension_ok = extension_ok_long
         pullback_ok = pullback_ok_long
+        rsi_mid_ok = rsi_mid_ok_long
+        tf15_align_ok = tf15_align_long
+    # Recompute missing for the chosen nearest after side-specific folds.
+    if nearest == "short":
+        missing = list(short_missing)
+    elif nearest == "long":
+        missing = list(long_missing)
+    else:
+        missing = list(missing)
     gates["nearest"] = nearest
     gates["missing"] = missing
     gates["extension_atr"] = extension_atr
     gates["extension_ok"] = extension_ok
     gates["pullback_ok"] = pullback_ok
     gates["adx_ok"] = adx_ok
+    gates["rsi_mid_ok"] = bool(rsi_mid_ok)
+    gates["rsi_mid_enabled"] = bool(rsi_mid_enabled)
+    gates["tf15_align_ok"] = bool(tf15_align_ok)
     if max_extension_atr > 0 and extension_atr is not None:
         gates["extension_headroom_atr"] = float(max_extension_atr) - float(
             extension_atr
@@ -2264,7 +2499,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         return Decision(
             inst_id=snapshot.inst_id,
             action="WAIT",
-            reason=f"no rule signal {variant}",
+            reason=f"no rule signal {variant}{_missing_gate_suffix(diag)}",
             signal_diag=diag,
         )
 
@@ -2293,6 +2528,21 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
         short_min=pb_short_min,
     )
     adx_ok_tf = bool(diag.get("adx_ok", True))
+    rsi_mid_enabled = bool(diag.get("rsi_mid_enabled", False))
+    rsi_mid_long_ok = _rsi_mid_ok_side(
+        snapshot,
+        side="long",
+        enabled=rsi_mid_enabled,
+        short_max=float(diag.get("short_rsi_max") or _RULE_SHORT_RSI_MAX_DEFAULT),
+        long_min=float(diag.get("long_rsi_min") or _RULE_LONG_RSI_MIN_DEFAULT),
+    )
+    rsi_mid_short_ok = _rsi_mid_ok_side(
+        snapshot,
+        side="short",
+        enabled=rsi_mid_enabled,
+        short_max=float(diag.get("short_rsi_max") or _RULE_SHORT_RSI_MAX_DEFAULT),
+        long_min=float(diag.get("long_rsi_min") or _RULE_LONG_RSI_MIN_DEFAULT),
+    )
     if str(diag.get("rule_variant") or "") in ("score", "squeeze_release"):
         missing = diag.get("missing") or []
         full = isinstance(missing, list) and len(missing) == 0
@@ -2315,6 +2565,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
             and ext_long_ok
             and pb_long_ok
             and adx_ok_tf
+            and rsi_mid_long_ok
         )
         short_ok = (
             diag["rsi_short_ok"]
@@ -2325,6 +2576,7 @@ def rule_based_decision(snapshot: MarketSnapshot) -> Decision:
             and ext_short_ok
             and pb_short_ok
             and adx_ok_tf
+            and rsi_mid_short_ok
         )
     if long_ok:
         entry = price

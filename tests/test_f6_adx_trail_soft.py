@@ -115,7 +115,7 @@ class TestADX(unittest.TestCase):
         self.assertGreaterEqual(trunc.adx, 0.0)
         self.assertIsInstance(full.adx, float)
 
-    def test_regime_gate_off_by_default(self):
+    def test_regime_gate_off_when_min_zero(self):
         snap = _snap(_ohlc())
         with mock.patch.dict(os.environ, {"KEEL_RULE_ADX_MIN": "0"}, clear=False):
             info = adx_regime_ok(snap)

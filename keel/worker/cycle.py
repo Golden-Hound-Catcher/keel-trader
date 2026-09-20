@@ -56,6 +56,7 @@ from keel.factors.technical import (
     calculate_macd,
     calculate_obv,
     calculate_rsi,
+    calculate_adx,
     calculate_supertrend,
     calculate_vwap,
     classify_market_regime,
@@ -305,6 +306,15 @@ def enrich_snapshot(snapshot: MarketSnapshot) -> MarketSnapshot:
     snapshot.supertrend_direction = int(st.direction) if st.valid else 0
     snapshot.supertrend_upper = float(st.upper)
     snapshot.supertrend_lower = float(st.lower)
+    try:
+        adx_res = calculate_adx(highs, lows, closes, period=14)
+        snapshot.adx_14 = float(adx_res.adx)
+        snapshot.adx_plus_di = float(adx_res.plus_di)
+        snapshot.adx_minus_di = float(adx_res.minus_di)
+    except Exception:
+        snapshot.adx_14 = 0.0
+        snapshot.adx_plus_di = 0.0
+        snapshot.adx_minus_di = 0.0
     snapshot.bb_percent_b = float(bb.percent_b)
     snapshot.bb_bandwidth = float(bb.bandwidth)
     kc = calculate_keltner(highs, lows, closes)
@@ -672,6 +682,9 @@ def run_paper_cycle(
                     "volume_percentile": snap.volume_percentile,
                     "supertrend": snap.supertrend,
                     "supertrend_direction": snap.supertrend_direction,
+                    "adx_14": snap.adx_14,
+                    "adx_plus_di": snap.adx_plus_di,
+                    "adx_minus_di": snap.adx_minus_di,
                     "bb_percent_b": snap.bb_percent_b,
                     "squeeze": snap.squeeze,
                     "squeeze_prev": snap.squeeze_prev,

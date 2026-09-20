@@ -9,6 +9,11 @@ never touches OKX keys, never pushes/restarts.
   PYTHONPATH=. python scripts/tf_full_gate_replay.py \
     --db data/keel_ledger.db --hours 168 --variant trend_follow --compare-mr
 
+F9 before/after fire-rate (legacy hard-4h + ADX off + no RSI mid vs F9 defaults):
+
+  PYTHONPATH=. python scripts/tf_full_gate_replay.py \
+    --db data/keel_ledger.db --hours 72 --compare-f9
+
 Markout: skipped for counterfactual replay fires — use
 ``scripts/full_gate_markout.py`` for live full-gate decisions.
 """
@@ -43,9 +48,12 @@ if str(_ROOT) not in sys.path:
 
 from keel.ledger import KeelLedger  # noqa: E402
 from keel.ledger.tf_fire_replay import (  # noqa: E402
+    _F9_LEGACY_ENV,
+    _F9_NEW_ENV,
     load_replay_rows,
     normalize_variant,
     replay_under_variant,
+    replay_under_variant_env,
 )
 
 
@@ -109,6 +117,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Also replay mean_revert side-by-side",
     )
     p.add_argument(
+        "--compare-f9",
+        action="store_true",
+        help=(
+            "F9: replay TF under legacy gates (hard-4h, ADX=0, RSI mid off) "
+            "vs F9 defaults (soft-4h, ADX=15, RSI mid 52/48)"
+        ),
+    )
+    p.add_argument(
         "--market-source",
         default="any",
         help="okx_public | synthetic | any (default any)",
@@ -157,18 +173,49 @@ def main(argv: list[str] | None = None) -> int:
         print("No rows in lookback — nothing to replay.")
         return 0
 
-    _results, summary = replay_under_variant(rows, variant)
-    _print_summary(variant, summary)
+    if args.compare_f9:
+        _leg_results, leg_summary = replay_under_variant_env(
+            rows, variant, _F9_LEGACY_ENV
+        )
+        _new_results, new_summary = replay_under_variant_env(
+            rows, variant, _F9_NEW_ENV
+        )
+        _print_summary("f9_legacy", leg_summary)
+        _print_summary("f9_new", new_summary)
+        leg_fg = int(leg_summary.get("full_gate_count") or 0)
+        new_fg = int(new_summary.get("full_gate_count") or 0)
+        n = int(new_summary.get("n_snapshots") or leg_summary.get("n_snapshots") or 0)
+        print("--- delta F9_new − legacy ---")
+        print(
+            f"full_gate_delta={new_fg - leg_fg} "
+            f"legacy_rate={_fmt_rate(leg_summary.get('full_gate_rate'))} "
+            f"f9_rate={_fmt_rate(new_summary.get('full_gate_rate'))} "
+            f"n={n}"
+        )
+        print(f"legacy_top_missing={leg_summary.get('top_missing_gates')}")
+        print(f"f9_top_missing={new_summary.get('top_missing_gates')}")
+        payload = {
+            "hours": float(args.hours),
+            "db": str(db_path),
+            "prefer": args.prefer,
+            "market_source": args.market_source,
+            "f9_legacy": leg_summary,
+            "f9_new": new_summary,
+            "full_gate_delta": new_fg - leg_fg,
+        }
+        summary = new_summary
+    else:
+        _results, summary = replay_under_variant(rows, variant)
+        _print_summary(variant, summary)
+        payload = {
+            "hours": float(args.hours),
+            "db": str(db_path),
+            "prefer": args.prefer,
+            "market_source": args.market_source,
+            "primary": summary,
+        }
 
-    payload: dict = {
-        "hours": float(args.hours),
-        "db": str(db_path),
-        "prefer": args.prefer,
-        "market_source": args.market_source,
-        "primary": summary,
-    }
-
-    if args.compare_mr and variant != "mean_revert":
+    if args.compare_mr and variant != "mean_revert" and not args.compare_f9:
         _mr_results, mr_summary = replay_under_variant(rows, "mean_revert")
         _print_summary("mean_revert", mr_summary)
         payload["compare_mean_revert"] = mr_summary

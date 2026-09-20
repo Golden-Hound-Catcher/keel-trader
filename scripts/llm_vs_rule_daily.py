@@ -9,6 +9,11 @@ later factor mid prices are available.
 F7: reports markout at multiple horizons (default 300/900/3600s) so geometry
 (~hours of ATR risk) is not scored only on 5m mid.
 
+F9: rule shadow now applies soft-4h / 15m not-opposing / ADX≥15 / RSI mid
+veto (see RUNBOOK Phase F9). Expect rule fire-rate to drop toward LLM; still
+shadow-only under ``KEEL_DECISION_POLICY=llm``. Offline fire-rate delta:
+``scripts/tf_full_gate_replay.py --hours 72 --compare-f9``.
+
   PYTHONPATH=. python scripts/llm_vs_rule_daily.py \
     --db data/keel_ledger.db --hours 24
 

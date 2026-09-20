@@ -120,6 +120,7 @@ class TestDonchianGates(unittest.TestCase):
         with forced_rule_variant("donchian"):
             os.environ["KEEL_RULE_TF_REQUIRE_4H"] = "1"
             os.environ["KEEL_RULE_REQUIRE_1H_TREND"] = "1"
+            os.environ["KEEL_RULE_ADX_MIN"] = "0"  # F9 default 15; pin off for F5 unit
             os.environ["KEEL_RULE_DONCHIAN_PERIOD"] = "20"
             os.environ["KEEL_RULE_DONCHIAN_VOL_MULT"] = "1.0"
             diag = diagnose_rule_signal(snap)
