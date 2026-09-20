@@ -219,7 +219,7 @@ class TestF9RuleSelectivity(unittest.TestCase):
             for k in _KEYS:
                 os.environ.pop(k, None)
             os.environ["KEEL_RULE_VARIANT"] = "trend_follow"
-            self.assertEqual(resolve_rule_4h_mode(), "soft")
+            self.assertEqual(resolve_rule_4h_mode(), "hard")  # F9.1: rules default hard
             self.assertTrue(resolve_rule_require_15m_align())
             os.environ["KEEL_RULE_4H_MODE"] = "hard"
             self.assertEqual(resolve_rule_4h_mode(), "hard")

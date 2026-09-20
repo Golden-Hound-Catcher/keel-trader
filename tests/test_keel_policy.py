@@ -1949,7 +1949,7 @@ class TestE31TfRequire4h(unittest.TestCase):
             self._restore(prev)
 
     def test_soft_require4h_allows_neutral_4h(self):
-        """F9 soft default: 4h neutral OK when 1h aligns."""
+        """F9 soft mode: 4h neutral OK when 1h aligns."""
         prev = self._save()
         try:
             self._enable_tf(mode_4h="soft")
