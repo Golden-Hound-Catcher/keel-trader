@@ -25,7 +25,7 @@ trend+macd+ema align (``volume_path=soft_tf``); small MACD histogram lag
 tolerance via ``KEEL_RULE_TF_MACD_LAG_BPS`` (default 3.0, clamp 0–15).
 mean_revert volume soft + strict MACD sign unchanged.
 E3.1 (trend_follow only): ``KEEL_RULE_TF_REQUIRE_4H`` (default 1) enables the
-4h leg; F9 ``KEEL_RULE_4H_MODE`` (default **soft**) makes 4h **not-opposing**
+4h leg; F9 ``KEEL_RULE_4H_MODE`` (default **hard**=E3.1 same-dir; **soft**=4h not-opposing)
 (neutral OK if 1h aligned); ``hard`` restores E3.1 same-direction. Set
 TF_REQUIRE_4H=0 for E2A 15m+1h-only. mean_revert ignores these envs.
 F9 (trend_follow selectivity; keep LLM primary / rule shadow):
@@ -98,7 +98,7 @@ _TF_RSI_PULLBACK_SHORT_MIN_DEFAULT = 48.0
 _TF_RSI_PULLBACK_MIN = 20.0
 _TF_RSI_PULLBACK_MAX = 80.0
 # F9: rule-side selectivity (LLM F8 parity for shadow quality).
-_RULE_4H_MODE_DEFAULT = "soft"
+_RULE_4H_MODE_DEFAULT = "hard"
 _RULE_REQUIRE_15M_ALIGN_DEFAULT = True
 _RULE_SHORT_RSI_MAX_DEFAULT = 52.0
 _RULE_LONG_RSI_MIN_DEFAULT = 48.0
