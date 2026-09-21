@@ -31,6 +31,9 @@ class TestProfileHelpers(unittest.TestCase):
         self.assertEqual(d["KEEL_RULE_4H_MODE"], "hard")
         self.assertEqual(d["KEEL_LLM_JSON_OBJECT"], "0")
         self.assertEqual(d["KEEL_KILL_SWITCH"], "0")
+        self.assertEqual(d["KEEL_LLM_MIN_CONFIDENCE"], "65")
+        self.assertEqual(d["KEEL_LLM_RSI_CHASE_LONG_MAX"], "65")
+        self.assertEqual(d["KEEL_LLM_RSI_CHASE_SHORT_MIN"], "35")
         self.assertIn("BTC-USDT-SWAP", d["KEEL_INSTRUMENTS"])
 
 

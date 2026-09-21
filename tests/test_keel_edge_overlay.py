@@ -1,4 +1,4 @@
-"""LLM-as-trader kernel overlay: HTF, 15m, ADX, RSI mid/chase, confidence, geometry."""
+"""LLM-as-trader kernel overlay: HTF, soft4h+15m, ADX, RSI mid/chase, confidence, geometry."""
 from __future__ import annotations
 
 import os
@@ -14,6 +14,7 @@ from keel.policy.edge_overlay import (
     HTF_GATE,
     RSI_CHASE_GATE,
     RSI_MID_GATE,
+    SOFT4H_15M_GATE,
     TF15_GATE,
     apply_llm_book_lock,
     apply_llm_edge_overlay,
@@ -30,6 +31,8 @@ _ENV_KEYS = (
     "KEEL_LLM_ADX_PERIOD",
     "KEEL_LLM_SHORT_RSI_MAX",
     "KEEL_LLM_LONG_RSI_MIN",
+    "KEEL_LLM_RSI_CHASE_LONG_MAX",
+    "KEEL_LLM_RSI_CHASE_SHORT_MIN",
     "KEEL_LLM_MIN_CONFIDENCE",
     "KEEL_LLM_SL_ATR",
     "KEEL_LLM_TP_RR",
@@ -380,6 +383,74 @@ class TestLlmEdgeOverlay(unittest.TestCase):
         self.assertEqual(out2.action, "WAIT")
         self.assertIn(ADX_GATE, (out2.signal_diag or {}).get("missing") or [])
 
+    # --- F10 soft-4h needs 15m same-dir + tighter chase ---
+
+    def test_f10_soft4h_15m_neutral_waits(self) -> None:
+        """soft + 4h neutral + 15m neutral → WAIT soft4h_needs_15m."""
+        snap = _aligned_long_snap(trend_4h="neutral", trend_15m="neutral", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(confidence=70.0), snap)
+        self.assertEqual(out.action, "WAIT")
+        diag = out.signal_diag or {}
+        self.assertIn(SOFT4H_15M_GATE, diag.get("missing") or [])
+        self.assertFalse(diag.get(SOFT4H_15M_GATE))
+        self.assertTrue(diag.get("soft4h_15m_applies"))
+        self.assertIn("soft4h needs 15m", out.reason)
+
+    def test_f10_soft4h_15m_opposing_waits(self) -> None:
+        snap = _aligned_short_snap(trend_4h="neutral", trend_15m="bullish", rsi_14=40.0)
+        out = apply_llm_edge_overlay(_sell(confidence=70.0), snap)
+        self.assertEqual(out.action, "WAIT")
+        self.assertIn(SOFT4H_15M_GATE, (out.signal_diag or {}).get("missing") or [])
+
+    def test_f10_soft4h_15m_align_passes(self) -> None:
+        """soft + 4h neutral + 15m same-dir → HTF/15m combo passes."""
+        snap = _aligned_long_snap(trend_4h="neutral", trend_15m="bullish", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(confidence=70.0), snap)
+        self.assertEqual(out.action, "BUY_LONG")
+        diag = out.signal_diag or {}
+        self.assertTrue(diag.get(HTF_GATE))
+        self.assertTrue(diag.get(SOFT4H_15M_GATE))
+        self.assertTrue(diag.get(TF15_GATE))
+        self.assertTrue(diag.get("soft4h_15m_applies"))
+        self.assertEqual(diag.get("llm_4h_mode"), "soft")
+
+    def test_f10_soft4h_15m_align_short_passes(self) -> None:
+        snap = _aligned_short_snap(trend_4h="neutral", trend_15m="bearish", rsi_14=40.0)
+        out = apply_llm_edge_overlay(_sell(confidence=70.0), snap)
+        self.assertEqual(out.action, "SELL_SHORT")
+        diag = out.signal_diag or {}
+        self.assertTrue(diag.get(SOFT4H_15M_GATE))
+        self.assertTrue(diag.get("soft4h_15m_applies"))
+
+    def test_f10_aligned_4h_allows_15m_neutral(self) -> None:
+        """When 4h already same-dir, soft4h confirm N/A; 15m neutral still OK (F7)."""
+        snap = _aligned_long_snap(trend_4h="bullish", trend_15m="neutral", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(confidence=70.0), snap)
+        self.assertEqual(out.action, "BUY_LONG")
+        diag = out.signal_diag or {}
+        self.assertTrue(diag.get(SOFT4H_15M_GATE))
+        self.assertFalse(diag.get("soft4h_15m_applies"))
+
+    def test_f10_rsi_chase_long_67_waits(self) -> None:
+        """F10 chase long max 65 — RSI 67 (under old 70) now WAIT."""
+        snap = _aligned_long_snap(rsi_14=67.0)
+        out = apply_llm_edge_overlay(_buy(confidence=70.0), snap)
+        self.assertEqual(out.action, "WAIT")
+        self.assertIn(RSI_CHASE_GATE, (out.signal_diag or {}).get("missing") or [])
+        self.assertEqual((out.signal_diag or {}).get("rsi_chase_long_max"), 65.0)
+
+    def test_f10_rsi_chase_short_33_waits(self) -> None:
+        snap = _aligned_short_snap(rsi_14=33.0)
+        out = apply_llm_edge_overlay(_sell(confidence=70.0), snap)
+        self.assertEqual(out.action, "WAIT")
+        self.assertIn(RSI_CHASE_GATE, (out.signal_diag or {}).get("missing") or [])
+        self.assertEqual((out.signal_diag or {}).get("rsi_chase_short_min"), 35.0)
+
+    def test_f10_rsi_chase_long_65_allows(self) -> None:
+        snap = _aligned_long_snap(rsi_14=65.0)
+        out = apply_llm_edge_overlay(_buy(confidence=70.0), snap)
+        self.assertEqual(out.action, "BUY_LONG")
+        self.assertTrue((out.signal_diag or {}).get(RSI_CHASE_GATE))
 
 
 

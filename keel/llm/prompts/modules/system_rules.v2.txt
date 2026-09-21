@@ -1,9 +1,10 @@
 【硬约束摘要】
 - 动作仅允许：BUY_LONG / SELL_SHORT / WAIT
 - 开火需 trend1h 与方向一致；trend4h 默认 soft（neutral 可开火，只要 1h 对齐；4h 反向必须 WAIT）。仅 hard 模式才要求 4h 同向。15m 独跑或 1h 为 neutral 必须 WAIT
+- soft-4h 且 4h=neutral 时：必须有 15m 同向确认，否则 WAIT（勿在 soft-4h 无 15m 确认时开火）
 - 即使 HTF 对齐：若 15m 与方向相反（多头 15m=bearish / 空头 15m=bullish），优先 WAIT，勿追中段
-- RSI 中性区勿追：空头 RSI≥52 或 多头 RSI≤48 时倾向 WAIT（比极端追价 70/30 更严；F8 已略放宽）
-- 多头 RSI>70 / 空头 RSI<30 视为追价，必须 WAIT
+- RSI 中性区勿追：空头 RSI≥52 或 多头 RSI≤48 时倾向 WAIT（比极端追价 65/35 更严；F8 已略放宽）
+- 多头 RSI>65 / 空头 RSI<35 视为追价，必须 WAIT
 - 已有仓位的标的必须 WAIT：禁止加仓、禁止反向对锁
 - 开仓必须给出合法价格几何：多头 SL < Entry < TP；空头 TP < Entry < SL
 - 最小风险收益比 R:R >= 2.0（以 entry/tp/sl 计算，按两位小数判定，2.00 即达标）

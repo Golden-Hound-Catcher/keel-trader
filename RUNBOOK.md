@@ -837,6 +837,33 @@ PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hour
 
 **Replay caveat:** historical ledger factor payloads often lack `adx_14` / candles → ADX **fail-opens** in `--compare-f9`, so soft-4h can *raise* counterfactual fire-rate vs hard-4h legacy. Live cycles enrich `adx_14` from 15m candles, so the ADX≥15 floor applies. After restart, re-check `llm_vs_rule_daily` + Monitor rule_shadow WAIT `gates=`.
 
+### Phase F10 — soft-4h needs 15m confirm + tighter chase (LLM overlay)
+
+Jo: 复盘优化 — 72h LLM 24 BUY_LONG: **5m** avg ≈−5.4 win 21%; **1h** avg ≈+34 win 67%. Many 5m losers entered on **4h soft/neutral + 15m neutral**; also RSI 67–69 longs under chase&lt;70.
+
+**Keep** `KEEL_PROFILE=llm_demo`, LLM primary, kill/shadow 0, rule shadow on. Do **not** explode config surface — bake into profile/defaults. Do **not** flip to rule primary or re-enable kill/shadow.
+
+**F10 LLM overlay (code defaults + llm_demo profile):**
+
+| Gate | Env / profile | F10 default | Behavior |
+|------|---------------|-------------|----------|
+| Soft-4h + 15m | (baked; mode=`KEEL_LLM_4H_MODE=soft`) | on when soft+4h neutral | Require **15m same-direction**; else WAIT `soft4h_needs_15m` |
+| 15m not-opposing | `KEEL_LLM_REQUIRE_15M_ALIGN` | **1** | unchanged when 4h already aligned |
+| RSI chase long | `KEEL_LLM_RSI_CHASE_LONG_MAX` | **65** (was 70) | long RSI &gt;65 → WAIT |
+| RSI chase short | `KEEL_LLM_RSI_CHASE_SHORT_MIN` | **35** (was 30) | short RSI &lt;35 → WAIT |
+| Min confidence | `KEEL_LLM_MIN_CONFIDENCE` | code **60**; **llm_demo=65** | profile-only bump |
+
+Prompt: `system_rules.v2` / `user_task.v2` — do not open on soft-4h without 15m confirm; chase lines 65/35.
+
+```bash
+# After deploy / observe restart:
+./scripts/observe_down.sh && ./scripts/observe_up.sh
+./scripts/observe_status.sh
+PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hours 72
+```
+
+**Honesty:** selectivity only — do **not** claim economic edge from F10 alone. Kill stays 0, shadow stays 0, LLM stays primary.
+
 **P5 squeeze-release + cost (`KEEL_RULE_VARIANT=squeeze_release`, default off):** fire only on the first expansion bar after a TTM squeeze, with Supertrend and 1h agreement (RSI chase veto 70/30). Compare CLI leg **H** holds with a **4h hard time-stop** (not Supertrend trail). Legs **C2/H2** reprice the same barrier path at Regular maker 2bps/leg (RT 4 vs taker 10). Fill is assumed 100% at the limit — not a live post-only guarantee. Still **E0 freeze**. Do not flip live variant, exits, or decision policy from F2c/P0–P5/MFE alone.
 
 ### Phase F0b — historical OKX candle backtest (offline)
@@ -913,7 +940,7 @@ Kill-switch (`KEEL_KILL_SWITCH=1`) still blocks order placement; **read-only API
 
 ## 其他机器部署 LLM（`KEEL_PROFILE=llm_demo`）
 
-新机器只需最小 `.env`（密钥 + profile）；F8/F9 默认由代码 profile 注入，**显式 env 仍可覆盖**。
+新机器只需最小 `.env`（密钥 + profile）；F8/F9/F10 默认由代码 profile 注入，**显式 env 仍可覆盖**。
 
 ```bash
 cp env.example .env
