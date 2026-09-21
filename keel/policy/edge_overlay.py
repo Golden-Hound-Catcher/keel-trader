@@ -5,11 +5,13 @@ Kernel (not the model):
 - WAIT unless 1h agrees with the side; 4h is soft by default (F8):
   neutral OK if 1h aligned; still block if 4h opposes. Hard mode =
   same-direction only (``KEEL_LLM_4H_MODE=hard``).
+- F10 soft-4h + 15m: when soft and 4h is **neutral**, require 15m
+  **same-direction** (gate ``soft4h_needs_15m``); else 15m not-opposing (F7)
 - Optional 15m not-opposing (F7): short → 15m≠bullish; long → 15m≠bearish
 - Optional ADX floor (F7/F8, default 15; 0=off; fail-open if ADX unavailable)
-- RSI chase veto (long>70 / short<30)
+- RSI chase veto (F10: long>65 / short<35; was 70/30)
 - RSI mid-range veto (F7/F8): short if RSI≥52; long if RSI≤48
-- Min confidence (F7/F8, default 60)
+- Min confidence (F7/F8 default 60; llm_demo profile may raise to 65)
 - Fee-aware TP/SL: stop must be several times round-trip fees; take-profit
   must be a multiple of that — never a "cover the fee" scalp
 - Optional book lock: no scale-in, no hedge
@@ -26,10 +28,9 @@ from keel.factors.market_data import MarketSnapshot
 from keel.factors.technical import calculate_adx
 
 _FIRE_ACTIONS = frozenset({"BUY_LONG", "SELL_SHORT"})
-_RSI_CHASE_LONG_MAX = 70.0
-_RSI_CHASE_SHORT_MIN = 30.0
 HTF_GATE = "htf_ok"
 TF15_GATE = "tf15_align_ok"
+SOFT4H_15M_GATE = "soft4h_needs_15m"
 ADX_GATE = "adx_ok"
 RSI_CHASE_GATE = "rsi_chase_ok"
 RSI_MID_GATE = "rsi_mid_ok"
@@ -47,6 +48,9 @@ DEFAULT_ADX_PERIOD = 14
 DEFAULT_SHORT_RSI_MAX = 52.0
 DEFAULT_LONG_RSI_MIN = 48.0
 DEFAULT_MIN_CONFIDENCE = 60.0
+# F10: tighter chase than classic 70/30 (still looser than mid veto).
+DEFAULT_RSI_CHASE_LONG_MAX = 65.0
+DEFAULT_RSI_CHASE_SHORT_MIN = 35.0
 
 
 def _flag(key: str, default: bool) -> bool:
@@ -129,6 +133,14 @@ def _min_confidence() -> float:
     return max(0.0, _num("KEEL_LLM_MIN_CONFIDENCE", DEFAULT_MIN_CONFIDENCE))
 
 
+def _rsi_chase_long_max() -> float:
+    return _num("KEEL_LLM_RSI_CHASE_LONG_MAX", DEFAULT_RSI_CHASE_LONG_MAX)
+
+
+def _rsi_chase_short_min() -> float:
+    return _num("KEEL_LLM_RSI_CHASE_SHORT_MIN", DEFAULT_RSI_CHASE_SHORT_MIN)
+
+
 def _trend(snapshot: MarketSnapshot, attr: str) -> str:
     return str(getattr(snapshot, attr, "neutral") or "neutral").strip().lower()
 
@@ -203,6 +215,7 @@ def _tf15_align_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str,
 
     short → trend_15m ≠ bullish; long → trend_15m ≠ bearish.
     Neutral is allowed. Disabled when ``KEEL_LLM_REQUIRE_15M_ALIGN=0``.
+    (F10 soft-4h same-dir confirm is a separate gate — see ``_soft4h_15m_ok``.)
     """
     t15 = _trend(snapshot, "trend_15m")
     require = _require_15m_align()
@@ -218,6 +231,42 @@ def _tf15_align_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str,
         TF15_GATE: bool(ok),
     }
     return bool(ok), audit
+
+
+def _soft4h_15m_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str, Any]]:
+    """
+    F10: when ``KEEL_LLM_4H_MODE=soft`` and 4h is **neutral**, require 15m
+    **same-direction** as the side (not merely not-opposing).
+
+    - Applies only when 4h require is on, mode is soft, and trend_4h == neutral.
+    - long → trend_15m == bullish; short → trend_15m == bearish.
+    - Neutral or opposing 15m → WAIT with gate ``soft4h_needs_15m``.
+    - When 4h already aligns (or hard/off), this gate is a no-op (ok=True).
+    """
+    need_4h = _require_4h()
+    mode = _4h_mode() if need_4h else "off"
+    t4h = _trend(snapshot, "trend_4h")
+    t15 = _trend(snapshot, "trend_15m")
+    applies = bool(need_4h and mode == "soft" and t4h == "neutral")
+    if not applies:
+        return True, {
+            "soft4h_15m_applies": False,
+            "trend_4h": t4h,
+            "trend_15m": t15,
+            "llm_4h_mode": mode,
+            SOFT4H_15M_GATE: True,
+        }
+    if side == "long":
+        ok = t15 == "bullish"
+    else:
+        ok = t15 == "bearish"
+    return bool(ok), {
+        "soft4h_15m_applies": True,
+        "trend_4h": t4h,
+        "trend_15m": t15,
+        "llm_4h_mode": mode,
+        SOFT4H_15M_GATE: bool(ok),
+    }
 
 
 def _snapshot_adx(snapshot: MarketSnapshot) -> tuple[float | None, str]:
@@ -297,11 +346,21 @@ def _adx_ok(snapshot: MarketSnapshot) -> tuple[bool, dict[str, Any]]:
     }
 
 
-def _rsi_chase_ok(snapshot: MarketSnapshot, side: str) -> bool:
+def _rsi_chase_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str, Any]]:
+    """F10 chase veto: long RSI > long_max / short RSI < short_min → WAIT."""
     rsi = float(getattr(snapshot, "rsi_14", 50.0) or 50.0)
+    long_max = _rsi_chase_long_max()
+    short_min = _rsi_chase_short_min()
     if side == "long":
-        return rsi <= _RSI_CHASE_LONG_MAX
-    return rsi >= _RSI_CHASE_SHORT_MIN
+        ok = rsi <= float(long_max)
+    else:
+        ok = rsi >= float(short_min)
+    return bool(ok), {
+        "rsi_14": rsi,
+        "rsi_chase_long_max": long_max,
+        "rsi_chase_short_min": short_min,
+        RSI_CHASE_GATE: bool(ok),
+    }
 
 
 def _rsi_mid_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str, Any]]:
@@ -444,6 +503,19 @@ def apply_llm_edge_overlay(decision: Decision, snapshot: MarketSnapshot) -> Deci
             extra=audit,
         )
 
+    soft4h_ok, soft4h_audit = _soft4h_15m_ok(snapshot, side)
+    audit.update(soft4h_audit)
+    if not soft4h_ok:
+        return _wait(
+            decision,
+            (
+                f"soft4h needs 15m same-dir {side} "
+                f"(t4h={soft4h_audit['trend_4h']} t15={soft4h_audit['trend_15m']})"
+            ),
+            gate=SOFT4H_15M_GATE,
+            extra={**audit, HTF_GATE: True},
+        )
+
     tf15_ok, tf15_audit = _tf15_align_ok(snapshot, side)
     audit.update(tf15_audit)
     if not tf15_ok:
@@ -451,7 +523,7 @@ def apply_llm_edge_overlay(decision: Decision, snapshot: MarketSnapshot) -> Deci
             decision,
             f"15m opposing {side} (t15={tf15_audit['trend_15m']})",
             gate=TF15_GATE,
-            extra={**audit, HTF_GATE: True},
+            extra={**audit, HTF_GATE: True, SOFT4H_15M_GATE: True},
         )
 
     adx_pass, adx_audit = _adx_ok(snapshot)
@@ -461,16 +533,24 @@ def apply_llm_edge_overlay(decision: Decision, snapshot: MarketSnapshot) -> Deci
             decision,
             f"adx floor veto adx={adx_audit.get('adx')} min={adx_audit.get('adx_min')}",
             gate=ADX_GATE,
-            extra={**audit, HTF_GATE: True, TF15_GATE: True},
+            extra={**audit, HTF_GATE: True, SOFT4H_15M_GATE: True, TF15_GATE: True},
         )
 
-    if not _rsi_chase_ok(snapshot, side):
-        rsi = float(getattr(snapshot, "rsi_14", 0.0) or 0.0)
+    chase_ok, chase_audit = _rsi_chase_ok(snapshot, side)
+    audit.update(chase_audit)
+    if not chase_ok:
+        rsi = float(chase_audit.get("rsi_14") or 0.0)
         return _wait(
             decision,
             f"rsi chase veto rsi={rsi:.1f}",
             gate=RSI_CHASE_GATE,
-            extra={**audit, "rsi_14": rsi, HTF_GATE: True, TF15_GATE: True, ADX_GATE: True},
+            extra={
+                **audit,
+                HTF_GATE: True,
+                SOFT4H_15M_GATE: True,
+                TF15_GATE: True,
+                ADX_GATE: True,
+            },
         )
 
     mid_ok, mid_audit = _rsi_mid_ok(snapshot, side)
@@ -483,6 +563,7 @@ def apply_llm_edge_overlay(decision: Decision, snapshot: MarketSnapshot) -> Deci
             extra={
                 **audit,
                 HTF_GATE: True,
+                SOFT4H_15M_GATE: True,
                 TF15_GATE: True,
                 ADX_GATE: True,
                 RSI_CHASE_GATE: True,
@@ -499,6 +580,7 @@ def apply_llm_edge_overlay(decision: Decision, snapshot: MarketSnapshot) -> Deci
             extra={
                 **audit,
                 HTF_GATE: True,
+                SOFT4H_15M_GATE: True,
                 TF15_GATE: True,
                 ADX_GATE: True,
                 RSI_CHASE_GATE: True,
@@ -511,6 +593,7 @@ def apply_llm_edge_overlay(decision: Decision, snapshot: MarketSnapshot) -> Deci
         out.signal_diag = {}
     out.signal_diag.update(audit)
     out.signal_diag[HTF_GATE] = True
+    out.signal_diag[SOFT4H_15M_GATE] = True
     out.signal_diag[TF15_GATE] = True
     out.signal_diag[ADX_GATE] = True
     out.signal_diag[RSI_CHASE_GATE] = True
@@ -576,6 +659,7 @@ __all__ = [
     "HTF_GATE",
     "RSI_CHASE_GATE",
     "RSI_MID_GATE",
+    "SOFT4H_15M_GATE",
     "TF15_GATE",
     "apply_llm_book_lock",
     "apply_llm_edge_overlay",

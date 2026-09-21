@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-# Proven LLM-as-trader demo (F8 overlay + F9 rule shadow). Kill/shadow/near_probe
+# Proven LLM-as-trader demo (F8/F10 overlay + F9 rule shadow). Kill/shadow/near_probe
 # stay off so demo OKX can place real simulated orders.
 LLM_DEMO: dict[str, str] = {
     # Primary path
@@ -28,17 +28,19 @@ LLM_DEMO: dict[str, str] = {
     "KEEL_LLM_BASE_URL": "https://openrouter.ai/api/v1",
     "KEEL_LLM_MODEL": "deepseek/deepseek-v4-flash-0731",
     "KEEL_LLM_JSON_OBJECT": "0",
-    # LLM F8 edge overlay gates
+    # LLM F8/F10 edge overlay gates
     "KEEL_LLM_EDGE_OVERLAY": "1",
     "KEEL_LLM_REQUIRE_1H": "1",
     "KEEL_LLM_REQUIRE_4H": "1",
-    "KEEL_LLM_4H_MODE": "soft",
+    "KEEL_LLM_4H_MODE": "soft",  # F10: soft+4h-neutral needs 15m same-dir
     "KEEL_LLM_REQUIRE_15M_ALIGN": "1",
     "KEEL_LLM_ADX_MIN": "15",
     "KEEL_LLM_ADX_PERIOD": "14",
     "KEEL_LLM_SHORT_RSI_MAX": "52",
     "KEEL_LLM_LONG_RSI_MIN": "48",
-    "KEEL_LLM_MIN_CONFIDENCE": "60",
+    "KEEL_LLM_RSI_CHASE_LONG_MAX": "65",  # F10 (was 70)
+    "KEEL_LLM_RSI_CHASE_SHORT_MIN": "35",  # F10 (was 30)
+    "KEEL_LLM_MIN_CONFIDENCE": "65",  # F10 llm_demo only (code default still 60)
     "KEEL_LLM_NO_SCALE_IN": "1",
     # Rule F9 shadow selectivity
     "KEEL_RULE_VARIANT": "trend_follow",
