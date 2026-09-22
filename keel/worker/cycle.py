@@ -42,6 +42,7 @@ from keel.exchange.protocol import ExchangeProtocol, Ticker
 from keel.execution.orchestrator import ExecutionOrchestrator, ExecutionResult
 from keel.execution.fire_cooldown import apply_rule_fire_cooldown
 from keel.execution.protect import protect_open_positions
+from keel.execution.close_reconcile import reconcile_closed_positions
 from keel.execution.near_probe import (
     evaluate_near_probe,
     record_near_probe_skip,
@@ -934,6 +935,13 @@ def run_paper_cycle(
             )
         except Exception:
             logger.exception("open-trade protect failed")
+
+    # Ledger closes when exchange positions vanish (OKX SL/TP algo fills, etc.).
+    # Baselines on first sight; does not invent closes for pre-baseline orphans.
+    try:
+        reconcile_closed_positions(exchange, ledger, now=now)
+    except Exception:
+        logger.exception("close reconcile failed")
 
     mode = "paper" if isinstance(exchange, PaperAdapter) else "okx_rest"
     duration_ms = max(0, int(round((time.perf_counter() - cycle_t0) * 1000)))

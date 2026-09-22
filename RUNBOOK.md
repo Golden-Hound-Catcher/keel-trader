@@ -66,6 +66,25 @@ python -m keel.worker --once
    - `GET /api/v1/decisions` — 有决策记录
    - `GET /health` — `status=ok`
 
+### Ledger closes / SL·TP hits（observability）
+
+Opens are written on fill (`trades.action=open|scale_in`). **Realized exits** (OKX demo attached TP/SL algo fills, or any flat after a tracked live position) are reconciled each cycle by `keel.execution.close_reconcile`:
+
+| Signal | Ledger |
+|--------|--------|
+| Position still live | `events.event_type=positions_seen` (baseline; links `open_trade_ids`) |
+| Tracked position gone + SL | `trades.action=close` + `events.event_type=sl_hit` |
+| Tracked position gone + TP | `trades.action=close` + `events.event_type=tp_hit` |
+| Tracked position gone (other/unknown) | `trades.action=close` + `events.event_type=close` |
+| SL/TP **amend** only (widen / BE) | `events.event_type=sl_protect` — **not** a fill |
+
+Close rows carry `metadata.open_trade_id`, `metadata.exit_reason` (`sl|tp|manual|unknown`), and `pnl` when entry/exit/size known. First cycle after upgrade only **baselines** live positions — it does **not** invent closes for historical orphan opens.
+
+```bash
+# closes vs opens
+python -c 'import sqlite3; c=sqlite3.connect("data/keel_ledger.db"); print(list(c.execute("SELECT action, COUNT(*) FROM trades GROUP BY action"))); print(list(c.execute("SELECT event_type, COUNT(*) FROM events WHERE event_type IN ("sl_hit","tp_hit","close","sl_protect","positions_seen") GROUP BY event_type")))'
+```
+
 ---
 
 ## 3. OKX demo 验收（有 key 时） / Demo trial (operator-local keys)
