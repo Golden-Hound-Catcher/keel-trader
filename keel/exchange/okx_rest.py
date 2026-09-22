@@ -341,6 +341,41 @@ class OKXRestAdapter:
         rows = result.get("data") or []
         return [r for r in rows if isinstance(r, dict)]
 
+    def get_algo_history(
+        self,
+        inst_id: str | None = None,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Filled/canceled OCO + conditional algo history (demo+live). Empty on failure."""
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for ord_type in ("oco", "conditional"):
+            params: dict[str, Any] = {
+                "ordType": ord_type,
+                "instType": "SWAP",
+                "state": "effective",
+                "limit": str(max(1, min(int(limit), 100))),
+            }
+            if inst_id:
+                params["instId"] = inst_id
+            try:
+                result = self._request(
+                    "GET", "/api/v5/trade/orders-algo-history", params=params
+                )
+            except Exception:
+                continue
+            for row in result.get("data") or []:
+                if not isinstance(row, dict):
+                    continue
+                algo_id = str(row.get("algoId") or "")
+                key = algo_id or f"{ord_type}:{row.get('uTime')}:{row.get('instId')}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(row)
+        return out
+
     def amend_oco_tpsl(
         self,
         inst_id: str,
