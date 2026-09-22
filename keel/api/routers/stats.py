@@ -226,6 +226,13 @@ def _shadow_by_instrument(raw: dict[str, Any] | None) -> dict[str, ShadowInstrum
     return out
 
 
+AGREE_RATE_NOTE = (
+    "LLM 15m=not-opposing (neutral OK unless KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL); "
+    "rule TF 15m=same-dir (neutral blocks). LLM 4h=soft vs rule 4h=hard under llm_demo. "
+    "Dual-log diverge often reflects gate definition mismatch, not model error."
+)
+
+
 def _shadow_response(hours: int, raw: dict[str, Any]) -> ShadowStatsResponse:
     skips_raw = raw.get("probe_skips") if isinstance(raw.get("probe_skips"), dict) else None
     by_skip = dict(raw.get("by_skip_reason") or {})
@@ -238,6 +245,7 @@ def _shadow_response(hours: int, raw: dict[str, Any]) -> ShadowStatsResponse:
         by_policy=dict(raw.get("by_policy") or {}),
         probe_count=int(raw.get("probe_count", 0)),
         last_timestamp=raw.get("last_timestamp"),
+        agree_rate_note=AGREE_RATE_NOTE,
         probe_skips=_probe_skips(skips_raw),
         by_skip_reason=by_skip,
         fee_model=_fee_model(raw.get("fee_model") if isinstance(raw.get("fee_model"), dict) else None),
@@ -266,6 +274,10 @@ def get_decision_stats(
         by_policy=dict(raw.get("by_policy") or {}),
         wait_rate=float(raw.get("wait_rate") or 0.0),
         risk_deny_events=int(raw.get("risk_deny_events", 0)),
+        risk_deny_by_gate={
+            str(k): int(v) for k, v in dict(raw.get("risk_deny_by_gate") or {}).items()
+        },
+        decision_invalid_events=int(raw.get("decision_invalid_events", 0)),
         cycle_count=int(raw.get("cycle_count", 0)),
         avg_cycle_duration_ms=raw.get("avg_cycle_duration_ms"),
         market_source=str(raw.get("market_source") or market_source or "any"),

@@ -39,6 +39,10 @@ _show_pid() {
 echo "run_dir=$RUN_DIR"
 _show_pid "keel-api" "$API_PID_FILE"
 _show_pid "keel-worker" "$WORKER_PID_FILE"
+# P1-6: optional Monitor / tunnel sidecars (report only — never auto-start tunnel)
+_show_pid "vite-monitor" "$RUN_DIR/vite-monitor.pid"
+_show_pid "cloudflared-tunnel" "$RUN_DIR/cloudflared-tunnel.pid"
+echo "(note) Vite Monitor + cloudflared tunnel are optional sidecars; observe does not auto-start tunnel."
 
 _HEALTH_BODY=""
 _READY_BODY=""

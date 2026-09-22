@@ -236,7 +236,61 @@ function tradeIsProbe(t: {
   return tag.includes('near-probe') || tag.includes('probe')
 }
 
+function tradeMeta(t: { metadata?: Record<string, unknown> | null }): Record<string, unknown> {
+  return (t.metadata && typeof t.metadata === 'object') ? t.metadata : {}
+}
 
+function tradeExitReason(t: { metadata?: Record<string, unknown> | null; reason?: string }): string | null {
+  const md = tradeMeta(t)
+  const er = md.exit_reason ?? md.exitReason
+  if (typeof er === 'string' && er.trim()) return er.trim()
+  return null
+}
+
+function tradeOpenTradeId(t: { metadata?: Record<string, unknown> | null }): string | null {
+  const md = tradeMeta(t)
+  const oid = md.open_trade_id ?? md.openTradeId
+  if (oid != null && oid !== '') return String(oid)
+  return null
+}
+
+function tradeExitBadge(t: {
+  action?: string
+  metadata?: Record<string, unknown> | null
+}): { label: string; cls: string; title: string } | null {
+  const a = String(t.action || '').toLowerCase()
+  const md = tradeMeta(t)
+  const er = String(tradeExitReason(t) || md.hit_type || md.close_reason || '').toLowerCase()
+  if (a === 'close' || er) {
+    if (er.includes('sl') || er === 'stop' || er === 'stop_loss') {
+      return { label: '止损', cls: 'bg-rose-500/15 text-rose-300 border-rose-500/40', title: er || 'SL' }
+    }
+    if (er.includes('tp') || er === 'take_profit') {
+      return { label: '止盈', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40', title: er || 'TP' }
+    }
+    if (a === 'close') {
+      return { label: '平仓', cls: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40', title: er || 'close' }
+    }
+  }
+  return null
+}
+
+function tradeAttachBadge(t: { metadata?: Record<string, unknown> | null }): { label: string; cls: string; title: string } | null {
+  const md = tradeMeta(t)
+  if (md.sl_tp_attached === true || md.sl_tp_attach === 'ok') {
+    const ids = md.algo_ids
+    const tip = Array.isArray(ids) ? `algo ${ids.join(',')}` : 'SL/TP attached'
+    return { label: '止盈止损已挂', cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30', title: tip }
+  }
+  if (md.sl_tp_attach_failed === true || md.sl_tp_attach === 'failed') {
+    return { label: '挂单失败', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/40', title: String(md.sl_tp_attach_reason || 'attach failed') }
+  }
+  const algoId = md.algo_id ?? md.algoId
+  if (algoId != null && String(algoId)) {
+    return { label: '止盈止损已挂', cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30', title: `algo ${algoId}` }
+  }
+  return null
+}
 
 function marketSourceLabel(src: string | null | undefined): string {
   return marketSourceZh(src)
@@ -523,6 +577,8 @@ const EVENT_TYPE_ZH: Record<string, string> = {
   sl_hit: '止损成交',
   tp_hit: '止盈成交',
   close: '平仓',
+  sl_tp_attached: '止盈止损已挂',
+  sl_tp_attach_failed: '止盈止损挂单失败',
 }
 
 function eventTypeZh(raw: unknown): string {
@@ -726,7 +782,7 @@ const shadowProbeMarkoutChip = computed(() => {
       : '—'
   const feeRole = shadowStats.value?.fee_model?.role
   const rtFee = shadowStats.value?.fee_model?.round_trip_fee_bps
-  const netTag = useNet ? 'netRT' : 'gross'
+  const netTag = useNet ? '净往返' : '毛'
   return {
     horizon: Number(best.horizon_seconds),
     samples: Number(best.probe_sample_count || 0),
@@ -967,7 +1023,7 @@ const economicByInstrumentChips = computed(() => {
       inst,
       label: shortInstLabel(inst),
       text: `成交${fills} 近探${probe} 样本${sample} · ${avg}bps 胜率${wr}`,
-      title: `${inst} fills=${fills} probe=${probe} sample=${sample} avgNetRT=${avg} wr=${wr}`,
+      title: `${inst} fills=${fills} probe=${probe} sample=${sample} 净往返均值=${avg} wr=${wr}`,
     }
   })
 })
@@ -1515,6 +1571,13 @@ const configStrip = computed(() => {
               >
                 孤儿开仓 {{ orphanOpenTotal }}（live {{ store.status?.ledger_orphans?.live ?? '—' }} / shadow {{ store.status?.ledger_orphans?.shadow ?? '—' }}）
               </div>
+              <div
+                v-if="(store.status?.decision_invalid_24h ?? 0) > 0"
+                class="mt-1.5 inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300"
+                title="近24小时 decision_invalid 事件"
+              >
+                决策无效 24h {{ store.status?.decision_invalid_24h }}
+              </div>
             </div>
           </div>
 
@@ -1829,14 +1892,14 @@ const configStrip = computed(() => {
                   :title="`F1 post_e31 FG 5m netRT when fires≥20; cohort=${armingEconomic.full_gate_cohort_used ?? '—'}; n=${armingEconomic.full_gate_sample_count ?? 0}; post=${armingEconomic.full_gate_fires_post_e31 ?? 0} pre=${armingEconomic.full_gate_fires_pre_e31 ?? 0}`"
                 >5分钟净胜率 {{ Number(armingEconomic.full_gate_win_rate_net_roundtrip).toFixed(2) }}</span>
                 <span>标记 {{ armingEconomic.horizon_seconds ?? 300 }}s n=<span class="text-white">{{ armingEconomic.sample_count ?? '—' }}</span></span>
-                <span>netRT wr <span class="text-white">{{
+                <span>净往返胜率 <span class="text-white">{{
                   armingEconomic.probe_win_rate_net_roundtrip != null
                     ? Number(armingEconomic.probe_win_rate_net_roundtrip).toFixed(2)
                     : (armingEconomic.win_rate_net_roundtrip != null
                       ? Number(armingEconomic.win_rate_net_roundtrip).toFixed(2)
                       : '—')
                 }}</span>≥{{ armingEconomic.min_probe_win_rate_net_rt ?? 0.55 }}</span>
-                <span>avgNetRT <span class="text-white">{{
+                <span>净往返均值 <span class="text-white">{{
                   armingEconomic.avg_net_roundtrip_markout_bps != null
                     ? Number(armingEconomic.avg_net_roundtrip_markout_bps).toFixed(1)
                     : '—'
@@ -2038,7 +2101,7 @@ const configStrip = computed(() => {
               v-if="configStrip.preset"
               class="text-[#A8B3C7]"
               :title="configStrip.presetTitle"
-            >preset <span class="text-cyan-400">{{ configStrip.preset }}</span></span>
+            >观测预设 <span class="text-cyan-400">{{ configStrip.preset }}</span></span>
             <span
               class="inline-flex items-center gap-1 ml-auto px-1.5 py-0.5 rounded text-[10px] font-bold border"
               :class="workerLagSeconds == null
@@ -2123,6 +2186,28 @@ const configStrip = computed(() => {
                 <div class="text-[#707E94]">风控拒绝</div>
                 <div class="text-white tabular-nums">{{ decisionStats.risk_deny_events }}</div>
               </div>
+              <div>
+                <div class="text-[#707E94]">决策无效</div>
+                <div
+                  class="tabular-nums"
+                  :class="(decisionStats.decision_invalid_events || 0) > 0 ? 'text-amber-300' : 'text-white'"
+                  title="近窗口 decision_invalid（超时/非JSON/几何拒）"
+                >{{ decisionStats.decision_invalid_events ?? 0 }}</div>
+              </div>
+              <div
+                v-if="riskDenyByGateLabel"
+                class="md:col-span-2"
+              >
+                <div class="text-[#707E94]">拒绝门分布</div>
+                <div class="text-amber-200/90 truncate text-[11px]" :title="riskDenyByGateLabel">{{ riskDenyByGateLabel }}</div>
+              </div>
+            </div>
+            <div
+              v-if="store.status?.llm_rule_asymmetry_note || shadowStats?.agree_rate_note"
+              class="mt-2 text-[10px] text-[#707E94] leading-relaxed"
+              :title="store.status?.llm_rule_asymmetry_note || shadowStats?.agree_rate_note || ''"
+            >
+              规则影子说明：LLM 与规则的 15m/4h 门控定义不同，分歧常为门控不对称而非模型错误。
             </div>
           </div>
 
@@ -2429,6 +2514,23 @@ const configStrip = computed(() => {
                         :class="tradeMarketSource(t) ? marketSourceClass(tradeMarketSource(t)) : 'bg-zinc-500/10 text-[#707E94] border-zinc-500/30'"
                         :title="tradeMarketSource(t) || provenanceMissingZh('market_source')"
                       >{{ tradeMarketSource(t) ? marketSourceLabel(tradeMarketSource(t)) : provenanceMissingZh('market_source') }}</span>
+                      <span
+                        v-if="tradeExitBadge(t)"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                        :class="tradeExitBadge(t)?.cls"
+                        :title="tradeExitBadge(t)?.title"
+                      >{{ tradeExitBadge(t)?.label }}</span>
+                      <span
+                        v-if="tradeAttachBadge(t)"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                        :class="tradeAttachBadge(t)?.cls"
+                        :title="tradeAttachBadge(t)?.title"
+                      >{{ tradeAttachBadge(t)?.label }}</span>
+                      <span
+                        v-if="tradeOpenTradeId(t)"
+                        class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border bg-sky-500/10 text-sky-300 border-sky-500/30"
+                        :title="`关联开仓 #${tradeOpenTradeId(t)}`"
+                      >→开#{{ tradeOpenTradeId(t) }}</span>
                     </div>
                     <div v-if="t.reason" class="mt-0.5 text-[10px] text-[#707E94] line-clamp-1 max-w-[12rem]" :title="t.reason">{{ displayReason(t.reason) }}</div>
                   </td>
@@ -2437,7 +2539,8 @@ const configStrip = computed(() => {
                   <td
                     class="py-2 text-right font-bold"
                     :class="Number(t.pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'"
-                  >{{ t.pnl == null ? '无盈亏' : fmt(t.pnl) }}</td>
+                    :title="tradeExitReason(t) || undefined"
+                  >{{ t.pnl == null ? (String(t.action||'').toLowerCase()==='close' ? '平仓无盈亏' : '无盈亏') : fmt(t.pnl) }}</td>
                 </tr>
               </tbody>
             </table>

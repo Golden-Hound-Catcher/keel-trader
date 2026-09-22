@@ -57,6 +57,7 @@ def main() -> int:
         "KEEL_LLM_SHORT_RSI_MAX",
         "KEEL_LLM_LONG_RSI_MIN",
         "KEEL_LLM_MIN_CONFIDENCE",
+        "KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL",
         "KEEL_RULE_4H_MODE",
         "KEEL_RULE_TF_REQUIRE_4H",
         "KEEL_RULE_REQUIRE_15M_ALIGN",

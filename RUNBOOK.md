@@ -911,6 +911,30 @@ PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hour
 
 **Honesty:** selectivity only — do **not** claim economic edge from F10 alone. Kill stays 0, shadow stays 0, LLM stays primary.
 
+### Gap P1 (2026-09-22) — dual-log honesty + soft-4h fairness + ops
+
+**P1-1 LLM vs rule gate asymmetry (document, do not silent-align):**
+
+| Path | 15m when require on | 4h under `llm_demo` |
+|------|---------------------|---------------------|
+| LLM overlay | not-opposing (neutral OK) unless `KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL=1` | soft |
+| Rule TF shadow | **same-direction** (neutral blocks) | hard |
+
+Dual-log `agree_rate` / diverge often reflects this definition mismatch, not model error. Status / shadow stats carry `llm_rule_asymmetry_note` / `agree_rate_note`. Monitor rule_shadow chip title explains the same.
+
+**P1-2 `KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL`:** when on (with `KEEL_LLM_REQUIRE_15M_ALIGN`), LLM 15m upgrades to **same-dir** (neutral blocks) even if 4h already aligned — rule fairness. Code default **off**; **`llm_demo` profile default ON**. Does not tighten RSI chase beyond F10 65/35. Unit-tested in `test_keel_edge_overlay`.
+
+**P1-3 / P1-8:** `GET /api/v1/stats/decisions` exposes `decision_invalid_events` + `risk_deny_by_gate`; status has `decision_invalid_24h`.
+
+**P1-6:** `observe_status.sh` reports `vite-monitor.pid` + `cloudflared-tunnel.pid` liveness; **does not** auto-start tunnel. Status `monitor_sidecar_note` reminds operators.
+
+**P1-7:** after fill, one `get_pending_oco` → event `sl_tp_attached` / `sl_tp_attach_failed` (algo ids when present). Monitor trade row badges when metadata/events present.
+
+**P1-9:** shadow/live `scale_in` stamps `metadata.open_trade_id` = latest parent open same inst/direction.
+
+**P1-10:** `scripts/llm_vs_rule_daily.py` header prints effective profile / `min_confidence` / soft4h knob.
+
+
 **P5 squeeze-release + cost (`KEEL_RULE_VARIANT=squeeze_release`, default off):** fire only on the first expansion bar after a TTM squeeze, with Supertrend and 1h agreement (RSI chase veto 70/30). Compare CLI leg **H** holds with a **4h hard time-stop** (not Supertrend trail). Legs **C2/H2** reprice the same barrier path at Regular maker 2bps/leg (RT 4 vs taker 10). Fill is assumed 100% at the limit — not a live post-only guarantee. Still **E0 freeze**. Do not flip live variant, exits, or decision policy from F2c/P0–P5/MFE alone.
 
 ### Phase F0b — historical OKX candle backtest (offline)
@@ -1029,6 +1053,7 @@ Kill-switch on, no orders — continuous iteration on live observation.
 - Does not disable KEEL_KILL_SWITCH (leave it 1 for read-only hanging).
 - Live without OKX triple: warn only (paper fallback likely); does not hard-refuse.
 - Vite Monitor is optional and separate: see frontend/README.md (dev server port 5173). Not started by observe scripts.
+- P1-6: `observe_status.sh` also reports `vite-monitor.pid` / `cloudflared-tunnel.pid` liveness (dead/stale/not started). **Never auto-starts tunnel.**
 - Monitor UI is **中文优先** ops surface（总览 status hero / 中文 tabs）；engineer chip grids live under 「技术细节」.
 
 ### Observation checklist

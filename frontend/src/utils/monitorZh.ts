@@ -226,6 +226,17 @@ const MISSING_GATE_ZH: Record<string, string> = {
   data_valid: '数据',
   extension_ok: '延伸',
   pullback_ok: '回撤',
+  // P1 / P2-6 overlay gates
+  soft4h_needs_15m: '软4h需15m同向',
+  tf15_align_ok: '15m对齐',
+  adx_ok: 'ADX',
+  rsi_chase_ok: 'RSI追价',
+  rsi_mid_ok: 'RSI中性区',
+  confidence_ok: '置信度',
+  confidence: '置信度',
+  htf_ok: '高周期',
+  geometry_ok: '几何',
+  book_ok: '持仓锁',
 }
 
 export function missingGateZh(raw: unknown): string {

@@ -55,6 +55,16 @@ class ObserveScriptsTest(unittest.TestCase):
         self.assertIn("STALE API", text)
         self.assertIn("KEEL_OKX_ENV", text)
 
+    def test_observe_status_reports_vite_and_tunnel(self) -> None:
+        """P1-6: report sidecar pid liveness; never auto-start tunnel."""
+        text = (ROOT / "scripts" / "observe_status.sh").read_text(encoding="utf-8")
+        self.assertIn("vite-monitor.pid", text)
+        self.assertIn("cloudflared-tunnel.pid", text)
+        self.assertIn("does not auto-start tunnel", text.lower())
+        self.assertNotIn("npm run", text.lower())
+        # No process spawners for sidecars
+        self.assertNotRegex(text, r"(?i)\bnpx\b|cloudflared\s+tunnel\s+--")
+
 
 if __name__ == "__main__":
     unittest.main()
