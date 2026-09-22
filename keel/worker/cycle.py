@@ -922,6 +922,13 @@ def run_paper_cycle(
             result_row["signal_diag"] = decision.signal_diag
         results.append(result_row)
 
+    # One book fetch shared by protect + close reconcile (fewer OKX 503s).
+    live_positions = None
+    try:
+        live_positions = list(exchange.get_positions() or [])
+    except Exception:
+        logger.warning("get_positions for protect/reconcile failed", exc_info=True)
+
     if str(audit_policy).strip().lower() == "llm":
         atr_by_inst = {
             iid: float(s.atr_14 or 0.0) for iid, s in snapshots.items()
@@ -939,7 +946,12 @@ def run_paper_cycle(
     # Ledger closes when exchange positions vanish (OKX SL/TP algo fills, etc.).
     # Baselines on first sight; does not invent closes for pre-baseline orphans.
     try:
-        reconcile_closed_positions(exchange, ledger, now=now)
+        reconcile_closed_positions(
+            exchange,
+            ledger,
+            now=now,
+            positions=live_positions,
+        )
     except Exception:
         logger.exception("close reconcile failed")
 

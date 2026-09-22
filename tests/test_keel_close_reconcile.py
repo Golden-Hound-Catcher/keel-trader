@@ -200,5 +200,27 @@ class TestReconcileClosedPositions(unittest.TestCase):
         self.assertEqual(len(self.ledger.get_events(event_type="tp_hit")), 1)
 
 
+    def test_positions_kwarg_skips_exchange_fetch(self) -> None:
+        open_id = self._open_trade()
+        live = [
+            Position(
+                inst_id="BTC-USDT-SWAP",
+                side="long",
+                size=1.0,
+                avg_price=100.0,
+                mark_price=99.0,
+                leverage=3.0,
+            )
+        ]
+        ex = self._exchange([])  # exchange flat; caller supplies live book
+        out = reconcile_closed_positions(
+            ex, self.ledger, now=time.time(), positions=live
+        )
+        self.assertEqual(out, [])
+        ex.get_positions.assert_not_called()
+        seen = self.ledger.get_events(event_type=POSITIONS_SEEN_EVENT, limit=1)
+        self.assertEqual(seen[0].data["positions"][0]["open_trade_ids"], [open_id])
+
+
 if __name__ == "__main__":
     unittest.main()
