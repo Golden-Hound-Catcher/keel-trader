@@ -299,6 +299,26 @@ class KeelLedger:
         rows = conn.execute(query, params).fetchall()
         return [self._row_to_trade(row) for row in rows]
 
+    def latest_open_trade_id(self, inst_id: str, direction: str) -> int | None:
+        """P1-9: most recent ``open`` trade id for inst+direction (scale_in parent)."""
+        inst = str(inst_id or "").strip()
+        side = str(direction or "").strip().lower()
+        if not inst or side not in ("long", "short"):
+            return None
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT id FROM trades "
+            "WHERE inst_id = ? AND direction = ? AND action = 'open' "
+            "ORDER BY timestamp DESC, id DESC LIMIT 1",
+            (inst, side),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            return int(row["id"])
+        except (TypeError, ValueError, KeyError):
+            return None
+
     def get_decisions(
         self,
         since: float | None = None,
@@ -396,6 +416,24 @@ class KeelLedger:
         ).fetchone()
         risk_deny_events = int(risk_row["n"]) if risk_row else 0
 
+        risk_deny_by_gate: dict[str, int] = {}
+        for row in conn.execute(
+            "SELECT COALESCE(json_extract(data, '$.gate'), '') AS gate, "
+            "COUNT(*) AS n FROM events "
+            "WHERE timestamp >= ? AND event_type = ? "
+            "GROUP BY COALESCE(json_extract(data, '$.gate'), '')",
+            (since, "risk_gate_blocked"),
+        ):
+            gate = str(row["gate"] or "unknown").strip() or "unknown"
+            risk_deny_by_gate[gate] = int(row["n"])
+
+        inv_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM events "
+            "WHERE timestamp >= ? AND event_type = ?",
+            (since, "decision_invalid"),
+        ).fetchone()
+        decision_invalid_events = int(inv_row["n"]) if inv_row else 0
+
         cycle_rows = conn.execute(
             "SELECT data FROM events "
             "WHERE timestamp >= ? AND event_type = ? "
@@ -435,6 +473,8 @@ class KeelLedger:
             "by_policy": by_policy,
             "wait_rate": wait_rate,
             "risk_deny_events": risk_deny_events,
+            "risk_deny_by_gate": risk_deny_by_gate,
+            "decision_invalid_events": decision_invalid_events,
             "cycle_count": cycle_count,
             "avg_cycle_duration_ms": avg_ms,
             "market_source": ms_filter or "any",

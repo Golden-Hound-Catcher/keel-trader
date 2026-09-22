@@ -110,6 +110,41 @@ def _markout_bucket() -> dict[str, Any]:
     return {"llm": [], "rule_cf": []}
 
 
+
+def _effective_config_header() -> dict[str, Any]:
+    """P1-10 / P1-1: pin profile + min_confidence + asymmetry for day-over-day compare."""
+    out: dict[str, Any] = {
+        "profile": None,
+        "min_confidence": None,
+        "soft4h_block_15m_neutral": None,
+        "llm_4h_mode": None,
+        "rule_4h_mode": None,
+        "asymmetry_note": (
+            "LLM 15m=not-opposing unless SOFT4H_BLOCK_15M_NEUTRAL; "
+            "rule TF 15m=same-dir; llm_demo LLM 4h=soft / rule 4h=hard"
+        ),
+    }
+    try:
+        from keel.config.settings import _env, get_settings, refresh_settings
+
+        refresh_settings()
+        settings = get_settings()
+        out["profile"] = settings.profile
+        out["min_confidence"] = float(_env("KEEL_LLM_MIN_CONFIDENCE", "60") or 60)
+        raw = (_env("KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL", "") or "").strip().lower()
+        if raw in ("1", "true", "yes", "on"):
+            out["soft4h_block_15m_neutral"] = True
+        elif raw in ("0", "false", "no", "off"):
+            out["soft4h_block_15m_neutral"] = False
+        else:
+            out["soft4h_block_15m_neutral"] = False
+        out["llm_4h_mode"] = (_env("KEEL_LLM_4H_MODE", "soft") or "soft").strip().lower()
+        out["rule_4h_mode"] = (_env("KEEL_RULE_4H_MODE", "hard") or "hard").strip().lower()
+    except Exception:
+        pass
+    return out
+
+
 def summarize(
     ledger: KeelLedger,
     *,
@@ -260,6 +295,13 @@ def summarize(
         float(k) if "." in k else int(k) for k in by_h.keys()
     ]
 
+    invalid_n = 0
+    try:
+        stats = ledger.get_decision_stats(hours=float(hours))
+        invalid_n = int(stats.get("decision_invalid_events") or 0)
+    except Exception:
+        invalid_n = 0
+
     return {
         "hours": hours,
         "decision_rows_scanned": len(rows),
@@ -278,12 +320,30 @@ def summarize(
         "by_instrument": by_inst,
         "markout": primary_mk,
         "markouts": markouts,
+        "decision_invalid_events": invalid_n,
+        "effective_config": _effective_config_header(),
     }
 
 
 def format_zh(summary: dict[str, Any]) -> str:
     lines = [
         "=== Keel LLM vs 规则影子 日摘要 ===",
+    ]
+    eff = summary.get("effective_config") or {}
+    if eff:
+        lines.append(
+            f"生效: profile={eff.get('profile') or '(none)'} "
+            f"| min_confidence={eff.get('min_confidence')} "
+            f"| soft4h_block_15m_neutral={eff.get('soft4h_block_15m_neutral')} "
+            f"| llm_4h={eff.get('llm_4h_mode')} rule_4h={eff.get('rule_4h_mode')}"
+        )
+        note = eff.get("asymmetry_note")
+        if note:
+            lines.append(f"门控不对称: {note}")
+    inv = summary.get("decision_invalid_events")
+    if inv is not None:
+        lines.append(f"决策无效(decision_invalid): {inv}")
+    lines.extend([
         f"窗口: 近 {summary['hours']} 小时 | 含影子决策: {summary['with_rule_shadow']}"
         f" / 扫描 {summary['decision_rows_scanned']}",
         f"一致 agree: {summary['agree']} | 分歧 diverge: {summary['diverge']}"
@@ -292,7 +352,7 @@ def format_zh(summary: dict[str, Any]) -> str:
         f"  双方同向: {summary['both_fire_same']} | 双方反向: {summary['both_fire_opposite']}",
         f"  仅 LLM: {summary['llm_only_fire']} | 仅规则: {summary['rule_only_fire']}"
         f" | 双方 WAIT: {summary['both_wait']}",
-    ]
+    ])
     markouts = summary.get("markouts") or {}
     if markouts:
         lines.append("费用后标记 (多 horizon, geometry-aware):")

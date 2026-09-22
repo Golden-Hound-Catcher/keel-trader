@@ -180,6 +180,12 @@ class StatusResponse(BaseModel):
     lifetime_close_count: int = 0
     # P0: orphan open inventory (compact).
     ledger_orphans: LedgerOrphanSummary | None = None
+    # P1-3: last-24h decision_invalid event count (LLM parse/timeout/geometry).
+    decision_invalid_24h: int = 0
+    # P1-1: static note for Interpreting LLM vs rule agree_rate.
+    llm_rule_asymmetry_note: str | None = None
+    # P1-6: optional Monitor/tunnel sidecar hint (never auto-starts).
+    monitor_sidecar_note: str | None = None
 
 
 class ConfigResponse(BaseModel):
@@ -303,6 +309,10 @@ class DecisionStatsResponse(BaseModel):
     by_policy: dict[str, int] = Field(default_factory=dict)
     wait_rate: float = 0.0
     risk_deny_events: int = 0
+    # P1-8: 24h risk_gate_blocked histogram by gate name.
+    risk_deny_by_gate: dict[str, int] = Field(default_factory=dict)
+    # P1-3: decision_invalid event count in window.
+    decision_invalid_events: int = 0
     cycle_count: int = 0
     avg_cycle_duration_ms: float | None = None
     market_source: str = "any"
@@ -418,6 +428,8 @@ class ShadowStatsResponse(BaseModel):
     by_policy: dict[str, int] = Field(default_factory=dict)
     probe_count: int = 0
     last_timestamp: float | None = None
+    # P1-1: dual-log agree_rate interpretation (15m/4h gate asymmetry).
+    agree_rate_note: str | None = None
     # Q3.5: near-probe skips (durable events; hours-filterable).
     probe_skips: ProbeSkipsBlock | None = None
     by_skip_reason: dict[str, int] = Field(default_factory=dict)

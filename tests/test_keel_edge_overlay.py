@@ -27,6 +27,7 @@ _ENV_KEYS = (
     "KEEL_LLM_REQUIRE_4H",
     "KEEL_LLM_4H_MODE",
     "KEEL_LLM_REQUIRE_15M_ALIGN",
+    "KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL",
     "KEEL_LLM_ADX_MIN",
     "KEEL_LLM_ADX_PERIOD",
     "KEEL_LLM_SHORT_RSI_MAX",
@@ -122,6 +123,8 @@ class TestLlmEdgeOverlay(unittest.TestCase):
             os.environ.pop(k, None)
         # Deterministic F7 defaults for unit tests (ADX off → no candle dependency).
         os.environ["KEEL_LLM_ADX_MIN"] = "0"
+        # Pin P1-2 off so profile llm_demo soft4h_block cannot leak via _DOTENV_VALUES.
+        os.environ["KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL"] = "0"
 
     def tearDown(self) -> None:
         for k in _ENV_KEYS:
@@ -452,6 +455,35 @@ class TestLlmEdgeOverlay(unittest.TestCase):
         self.assertEqual(out.action, "BUY_LONG")
         self.assertTrue((out.signal_diag or {}).get(RSI_CHASE_GATE))
 
+
+    def test_p1_block_15m_neutral_when_4h_aligned(self) -> None:
+        """P1-2: KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL=1 → 15m neutral WAIT even if 4h aligned."""
+        os.environ["KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL"] = "1"
+        snap = _aligned_long_snap(trend_4h="bullish", trend_15m="neutral", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(confidence=70.0), snap)
+        self.assertEqual(out.action, "WAIT")
+        diag = out.signal_diag or {}
+        self.assertIn(TF15_GATE, diag.get("missing") or [])
+        self.assertFalse(diag.get(TF15_GATE))
+        self.assertTrue(diag.get("block_15m_neutral"))
+        self.assertIn("15m same-dir", out.reason)
+
+    def test_p1_block_15m_neutral_allows_same_dir(self) -> None:
+        os.environ["KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL"] = "1"
+        snap = _aligned_long_snap(trend_4h="bullish", trend_15m="bullish", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(confidence=70.0), snap)
+        self.assertEqual(out.action, "BUY_LONG")
+        diag = out.signal_diag or {}
+        self.assertTrue(diag.get(TF15_GATE))
+        self.assertTrue(diag.get("block_15m_neutral"))
+
+    def test_p1_block_15m_neutral_off_keeps_f7(self) -> None:
+        """Code default / explicit 0: 4h-aligned + 15m neutral still fires (F7)."""
+        os.environ["KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL"] = "0"
+        snap = _aligned_long_snap(trend_4h="bullish", trend_15m="neutral", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(confidence=70.0), snap)
+        self.assertEqual(out.action, "BUY_LONG")
+        self.assertFalse((out.signal_diag or {}).get("block_15m_neutral"))
 
 
 if __name__ == "__main__":

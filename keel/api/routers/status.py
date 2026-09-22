@@ -23,6 +23,17 @@ from keel.execution.near_probe import resolve_near_probe_hurdle_bps
 from keel.risk.arming import build_first_live, evaluate_arming
 from keel.domain.instruments import InstrumentPool
 from keel.ledger.orphan_inventory import daily_loss_gate_honesty, inventory_orphans
+
+LLM_RULE_ASYMMETRY_NOTE = (
+    "LLM 15m=not-opposing (neutral OK unless KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL); "
+    "rule TF 15m=same-dir (neutral blocks). LLM 4h=soft vs rule 4h=hard under llm_demo. "
+    "Dual-log diverge often reflects gate definition mismatch, not model error."
+)
+MONITOR_SIDECAR_NOTE = (
+    "Vite Monitor + cloudflared tunnel are optional sidecars "
+    "(vite-monitor.pid / cloudflared-tunnel.pid); observe_status reports "
+    "liveness but does not auto-start tunnel."
+)
 from keel.policy import (
     build_decision_policy,
     describe_policy,
@@ -124,6 +135,9 @@ def status() -> StatusResponse:
             note=first_live_report.note,
         ),
         **_p0_ledger_honesty(get_ledger()),
+        decision_invalid_24h=_decision_invalid_24h(get_ledger()),
+        llm_rule_asymmetry_note=LLM_RULE_ASYMMETRY_NOTE,
+        monitor_sidecar_note=MONITOR_SIDECAR_NOTE,
     )
 
 

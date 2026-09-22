@@ -312,6 +312,112 @@ class ExecutionOrchestrator:
             had_position=current_position is not None,
         )
 
+
+    def _latest_parent_open_id(self, inst_id: str, direction: str) -> int | None:
+        """P1-9: latest ``open`` trade id for inst+direction (parent for scale_in)."""
+        finder = getattr(self._ledger, "latest_open_trade_id", None)
+        if callable(finder):
+            try:
+                oid = finder(inst_id, direction)
+            except Exception:
+                return None
+            if oid is None:
+                return None
+            try:
+                return int(oid)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _scale_in_meta(
+        self,
+        *,
+        base: dict,
+        had_position: bool,
+        direction: str,
+        inst_id: str,
+    ) -> dict:
+        """Stamp parent open_trade_id on scale_in metadata when available."""
+        meta = dict(base)
+        if had_position:
+            parent = self._latest_parent_open_id(inst_id, direction)
+            if parent is not None:
+                meta["open_trade_id"] = parent
+        return meta
+
+    def _confirm_sl_tp_attach(
+        self,
+        *,
+        decision: Decision,
+        order_id: str | None,
+        size: float,
+        entry_price: float,
+    ) -> dict:
+        """
+        P1-7: after fill, query pending algos once → ``sl_tp_attached`` /
+        ``sl_tp_attach_failed`` (with algo ids when present).
+
+        Returns a small metadata stamp for the trade row (empty if N/A).
+        """
+        want_sl = decision.stop_loss is not None and float(decision.stop_loss or 0) > 0
+        want_tp = decision.take_profit is not None and float(decision.take_profit or 0) > 0
+        if not want_sl and not want_tp:
+            return {}
+        lister = getattr(self._exchange, "get_pending_oco", None)
+        if not callable(lister):
+            # Paper / adapters without algo listing — no confirmation event.
+            return {}
+        try:
+            algos = list(lister(decision.inst_id) or [])
+        except Exception:
+            algos = []
+        pos_side = "long" if decision.action == "BUY_LONG" else "short"
+        matching: list[dict] = []
+        for row in algos:
+            if not isinstance(row, dict):
+                continue
+            inst = str(row.get("instId") or row.get("inst_id") or "")
+            if inst and inst != decision.inst_id:
+                continue
+            side = str(row.get("posSide") or row.get("pos_side") or "").lower()
+            if side and side != pos_side:
+                continue
+            matching.append(row)
+        algo_ids = [
+            str(a.get("algoId") or a.get("algo_id") or "")
+            for a in matching
+            if (a.get("algoId") or a.get("algo_id"))
+        ]
+        algo_ids = [x for x in algo_ids if x]
+        payload = {
+            "order_id": order_id,
+            "action": decision.action,
+            "price": entry_price,
+            "size": size,
+            "take_profit": decision.take_profit,
+            "stop_loss": decision.stop_loss,
+            "algo_ids": algo_ids,
+            "pending_algo_count": len(matching),
+            **provenance_fields(decision),
+        }
+        stamp: dict = {"algo_ids": algo_ids, "pending_algo_count": len(matching)}
+        if matching:
+            self._ledger.record_event(
+                "sl_tp_attached",
+                inst_id=decision.inst_id,
+                data=payload,
+            )
+            stamp["sl_tp_attached"] = True
+        else:
+            self._ledger.record_event(
+                "sl_tp_attach_failed",
+                inst_id=decision.inst_id,
+                data={**payload, "reason": "no_pending_oco"},
+            )
+            stamp["sl_tp_attach_failed"] = True
+            stamp["sl_tp_attach_reason"] = "no_pending_oco"
+        return stamp
+
     def _shadow_fill(
         self,
         *,
@@ -347,15 +453,21 @@ class ExecutionOrchestrator:
             inst_id=decision.inst_id,
             data=event_data,
         )
-        meta = {
-            "order_id": order_id,
-            "leverage": decision.leverage,
-            "margin_usdt": decision.margin_usdt,
-            "take_profit": decision.take_profit,
-            "stop_loss": decision.stop_loss,
-            "shadow": True,
-            **prov,
-        }
+        direction = "long" if decision.action == "BUY_LONG" else "short"
+        meta = self._scale_in_meta(
+            base={
+                "order_id": order_id,
+                "leverage": decision.leverage,
+                "margin_usdt": decision.margin_usdt,
+                "take_profit": decision.take_profit,
+                "stop_loss": decision.stop_loss,
+                "shadow": True,
+                **prov,
+            },
+            had_position=had_position,
+            direction=direction,
+            inst_id=decision.inst_id,
+        )
         strategy_tag = "keel-shadow"
         if probe:
             meta["policy"] = PROBE_POLICY
@@ -367,7 +479,7 @@ class ExecutionOrchestrator:
                 timestamp=time.time(),
                 inst_id=decision.inst_id,
                 action="open" if not had_position else "scale_in",
-                direction="long" if decision.action == "BUY_LONG" else "short",
+                direction=direction,
                 size=size,
                 price=entry_price,
                 strategy_tag=strategy_tag,
@@ -443,24 +555,39 @@ class ExecutionOrchestrator:
 
         if is_filled or not is_paper:
             prov = provenance_fields(decision)
+            direction = "long" if decision.action == "BUY_LONG" else "short"
+            meta = self._scale_in_meta(
+                base={
+                    "order_id": order_result.order_id,
+                    "leverage": decision.leverage,
+                    "margin_usdt": decision.margin_usdt,
+                    "take_profit": decision.take_profit,
+                    "stop_loss": decision.stop_loss,
+                    **prov,
+                },
+                had_position=had_position,
+                direction=direction,
+                inst_id=decision.inst_id,
+            )
+            attach_stamp = self._confirm_sl_tp_attach(
+                decision=decision,
+                order_id=order_result.order_id,
+                size=size,
+                entry_price=entry_price,
+            )
+            if attach_stamp:
+                meta.update(attach_stamp)
             self._ledger.record_trade(
                 TradeRecord(
                     timestamp=time.time(),
                     inst_id=decision.inst_id,
                     action="open" if not had_position else "scale_in",
-                    direction="long" if decision.action == "BUY_LONG" else "short",
+                    direction=direction,
                     size=size,
                     price=entry_price,
                     strategy_tag="keel-llm",
                     reason=decision.reason,
-                    metadata={
-                        "order_id": order_result.order_id,
-                        "leverage": decision.leverage,
-                        "margin_usdt": decision.margin_usdt,
-                        "take_profit": decision.take_profit,
-                        "stop_loss": decision.stop_loss,
-                        **prov,
-                    },
+                    metadata=meta,
                 )
             )
             self._ledger.record_event(
@@ -471,7 +598,10 @@ class ExecutionOrchestrator:
                     "price": entry_price,
                     "size": size,
                     "action": decision.action,
+                    "take_profit": decision.take_profit,
+                    "stop_loss": decision.stop_loss,
                     **prov,
+                    **({k: attach_stamp[k] for k in ("algo_ids", "sl_tp_attached", "sl_tp_attach_failed") if k in attach_stamp}),
                 },
             )
             return ExecutionResult(

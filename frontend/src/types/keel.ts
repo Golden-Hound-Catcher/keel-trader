@@ -174,6 +174,12 @@ export interface KeelStatus {
   /** P0: DailyLossGate honesty — false when no realized close pnls exist. */
   daily_loss_gate_effective?: boolean
   daily_loss_gate_reason?: string | null
+  /** P1-3: last-24h decision_invalid count. */
+  decision_invalid_24h?: number
+  /** P1-1: LLM vs rule 15m/4h asymmetry note. */
+  llm_rule_asymmetry_note?: string | null
+  /** P1-6: Monitor/tunnel sidecar reminder. */
+  monitor_sidecar_note?: string | null
   realized_close_count?: number
   realized_close_count_today?: number
   lifetime_close_count?: number
@@ -337,6 +343,10 @@ export interface KeelDecisionStats {
   by_policy: Record<string, number>
   wait_rate: number
   risk_deny_events: number
+  /** P1-8: 24h risk_gate_blocked histogram by gate name. */
+  risk_deny_by_gate?: Record<string, number>
+  /** P1-3: decision_invalid events in window. */
+  decision_invalid_events?: number
   cycle_count: number
   avg_cycle_duration_ms: number | null
   /** Filter echo: okx_public | synthetic | any */
@@ -439,6 +449,8 @@ export interface KeelShadowStats {
   /** Q3 near-probe fills in lookback. */
   probe_count?: number
   last_timestamp?: number | null
+  /** P1-1: dual-log agree_rate interpretation (15m/4h asymmetry). */
+  agree_rate_note?: string | null
   /** Q3.5 skip counts (hours-filterable). */
   probe_skips?: KeelProbeSkips | null
   by_skip_reason?: Record<string, number>

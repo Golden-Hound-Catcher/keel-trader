@@ -34,6 +34,8 @@ LLM_DEMO: dict[str, str] = {
     "KEEL_LLM_REQUIRE_4H": "1",
     "KEEL_LLM_4H_MODE": "soft",  # F10: soft+4h-neutral needs 15m same-dir
     "KEEL_LLM_REQUIRE_15M_ALIGN": "1",
+    # P1-2: 15m same-dir (neutral blocks) when require_15m on — rule fairness
+    "KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL": "1",
     "KEEL_LLM_ADX_MIN": "15",
     "KEEL_LLM_ADX_PERIOD": "14",
     "KEEL_LLM_SHORT_RSI_MAX": "52",

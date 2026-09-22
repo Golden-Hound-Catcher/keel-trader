@@ -8,6 +8,8 @@ Kernel (not the model):
 - F10 soft-4h + 15m: when soft and 4h is **neutral**, require 15m
   **same-direction** (gate ``soft4h_needs_15m``); else 15m not-opposing (F7)
 - Optional 15m not-opposing (F7): short → 15m≠bullish; long → 15m≠bearish
+- P1-2 opt-in same-dir 15m (``KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL``): when on,
+  15m must match side (neutral blocks) — rule fairness; llm_demo default ON
 - Optional ADX floor (F7/F8, default 15; 0=off; fail-open if ADX unavailable)
 - RSI chase veto (F10: long>65 / short<35; was 70/30)
 - RSI mid-range veto (F7/F8): short if RSI≥52; long if RSI≤48
@@ -209,18 +211,34 @@ def _htf_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str, Any]]:
     return bool(ok_1h and ok_4h), audit
 
 
+def _block_15m_neutral() -> bool:
+    """
+    P1-2: when on (with ``KEEL_LLM_REQUIRE_15M_ALIGN``), require 15m
+    **same-direction** (neutral blocks) — matches rule TF fairness.
+
+    Code default **off** (F7 not-opposing). ``llm_demo`` profile sets **on**.
+    Does not change RSI chase caps.
+    """
+    return _flag("KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL", False)
+
+
 def _tf15_align_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str, Any]]:
     """
-    F7: 15m must not oppose the side.
+    F7: 15m must not oppose the side (neutral OK).
 
-    short → trend_15m ≠ bullish; long → trend_15m ≠ bearish.
-    Neutral is allowed. Disabled when ``KEEL_LLM_REQUIRE_15M_ALIGN=0``.
-    (F10 soft-4h same-dir confirm is a separate gate — see ``_soft4h_15m_ok``.)
+    P1-2: when ``KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL=1``, upgrade to
+    **same-direction** (long→bullish, short→bearish; neutral blocks).
+    Disabled when ``KEEL_LLM_REQUIRE_15M_ALIGN=0``.
+    (F10 soft-4h same-dir confirm when 4h is neutral is separate —
+    see ``_soft4h_15m_ok``.)
     """
     t15 = _trend(snapshot, "trend_15m")
     require = _require_15m_align()
+    same_dir = _block_15m_neutral()
     if not require:
         ok = True
+    elif same_dir:
+        ok = t15 == ("bullish" if side == "long" else "bearish")
     elif side == "long":
         ok = t15 != "bearish"
     else:
@@ -228,6 +246,7 @@ def _tf15_align_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str,
     audit = {
         "trend_15m": t15,
         "require_15m_align": require,
+        "block_15m_neutral": bool(same_dir),
         TF15_GATE: bool(ok),
     }
     return bool(ok), audit
@@ -521,7 +540,11 @@ def apply_llm_edge_overlay(decision: Decision, snapshot: MarketSnapshot) -> Deci
     if not tf15_ok:
         return _wait(
             decision,
-            f"15m opposing {side} (t15={tf15_audit['trend_15m']})",
+            (
+                f"15m same-dir required {side} (t15={tf15_audit['trend_15m']})"
+                if tf15_audit.get("block_15m_neutral")
+                else f"15m opposing {side} (t15={tf15_audit['trend_15m']})"
+            ),
             gate=TF15_GATE,
             extra={**audit, HTF_GATE: True, SOFT4H_15M_GATE: True},
         )
