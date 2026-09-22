@@ -190,6 +190,7 @@ export function actionZh(action: string | undefined | null): string {
   if (a === 'WAIT') return '观望'
   if (a === 'CLOSE' || a === 'CLOSE_LONG' || a === 'CLOSE_SHORT') return '平仓'
   if (a === 'OPEN') return '开仓'
+  if (a === 'SCALE_IN') return '加仓'
   if (a === 'BUY') return '买入'
   if (a === 'SELL') return '卖出'
   return action || '—'

@@ -82,8 +82,36 @@ Close rows carry `metadata.open_trade_id`, `metadata.exit_reason` (`sl|tp|manual
 
 ```bash
 # closes vs opens
-python -c 'import sqlite3; c=sqlite3.connect("data/keel_ledger.db"); print(list(c.execute("SELECT action, COUNT(*) FROM trades GROUP BY action"))); print(list(c.execute("SELECT event_type, COUNT(*) FROM events WHERE event_type IN ("sl_hit","tp_hit","close","sl_protect","positions_seen") GROUP BY event_type")))'
+python -c 'import sqlite3; c=sqlite3.connect("data/keel_ledger.db"); print(list(c.execute("SELECT action, COUNT(*) FROM trades GROUP BY action"))); print(list(c.execute("SELECT event_type, COUNT(*) FROM events WHERE event_type IN (\"sl_hit\",\"tp_hit\",\"close\",\"sl_protect\",\"positions_seen\") GROUP BY event_type")))'
 ```
+
+### Verify open → positions_seen → close (P0)
+
+Forward path (no invented history):
+
+1. **Open while live** — worker records `trades.action=open|scale_in`.
+2. **Next cycle while still open** — `events.positions_seen` must include that inst/side with nonempty `open_trade_ids`. If the book is already flat before the first baseline after the open, the open becomes an **orphan** (visible via inventory; never auto-closed).
+3. **Flat (SL/TP/manual)** — subsequent cycle writes `trades.action=close` + `sl_hit|tp_hit|close` and links `metadata.open_trade_id`.
+
+Operator tools (read-only):
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/orphan_inventory.py
+PYTHONPATH=. .venv/bin/python scripts/smoke_close_reconcile_check.py
+# optional stub — lists orphans only, never writes:
+PYTHONPATH=. .venv/bin/python scripts/okx_orphan_backfill_dryrun.py
+```
+
+Status honesty fields (`GET /api/v1/status`):
+
+| Field | Meaning |
+|-------|---------|
+| `ledger_orphans.total/live/shadow` | Opens without linked close |
+| `daily_loss_gate_effective` | `false` when no realized close pnls → gate cannot trip |
+| `daily_loss_gate_reason` | e.g. `no_realized_closes` |
+| `GET /api/v1/ledger/orphans` | Sample rows for operators |
+
+Monitor Overview shows chip **「日损门控无有效已实现样本」** while the gate is ineffective.
 
 ---
 

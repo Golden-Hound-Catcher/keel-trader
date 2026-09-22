@@ -99,6 +99,48 @@ class FirstLiveStatus(BaseModel):
     note: str = ""
 
 
+
+class LedgerOrphanSummary(BaseModel):
+    """Compact orphan open inventory (open/scale_in without linked close)."""
+    total: int = 0
+    live: int = 0
+    shadow: int = 0
+    other: int = 0
+    by_inst: dict[str, int] = Field(default_factory=dict)
+    by_strategy_tag: dict[str, int] = Field(default_factory=dict)
+    oldest_age_seconds: float | None = None
+    newest_age_seconds: float | None = None
+
+
+class LedgerOrphanRow(BaseModel):
+    trade_id: int
+    inst_id: str
+    direction: str
+    size: float
+    price: float
+    strategy_tag: str
+    timestamp: float
+    age_seconds: float
+    cohort: str
+
+
+class LedgerOrphansResponse(BaseModel):
+    """Detailed orphan inventory for operators (read-only)."""
+    total: int = 0
+    live: int = 0
+    shadow: int = 0
+    other: int = 0
+    by_inst: dict[str, int] = Field(default_factory=dict)
+    by_strategy_tag: dict[str, int] = Field(default_factory=dict)
+    oldest_age_seconds: float | None = None
+    newest_age_seconds: float | None = None
+    sample: list[LedgerOrphanRow] = Field(default_factory=list)
+    note: str = (
+        "Orphans are opens never baselined in positions_seen; "
+        "close_reconcile does not invent historical closes."
+    )
+
+
 class StatusResponse(BaseModel):
     version: str
     mode: str
@@ -130,6 +172,14 @@ class StatusResponse(BaseModel):
     arming: ArmingStatus | None = None
     # S2: first-live Stage T gate checklist (allowed_now never true while kill on).
     first_live: FirstLiveStatus | None = None
+    # P0: DailyLossGate honesty — false when no realized close pnls exist.
+    daily_loss_gate_effective: bool = True
+    daily_loss_gate_reason: str | None = None
+    realized_close_count: int = 0
+    realized_close_count_today: int = 0
+    lifetime_close_count: int = 0
+    # P0: orphan open inventory (compact).
+    ledger_orphans: LedgerOrphanSummary | None = None
 
 
 class ConfigResponse(BaseModel):
