@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from keel import __version__
 from keel.api.auth import ApiTokenMiddleware
-from keel.api.routers import health, status, positions, decisions, factors, pnl, stats, signals
+from keel.api.routers import health, status, positions, decisions, factors, pnl, stats, signals, ledger
 
 # repo_root/frontend/dist (keel/api/app.py -> parents[2] == repo root)
 _FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -51,6 +51,7 @@ def create_app() -> FastAPI:
     app.include_router(pnl.router, prefix="/api/v1", tags=["pnl"])
     app.include_router(stats.router, prefix="/api/v1", tags=["stats"])
     app.include_router(signals.router, prefix="/api/v1", tags=["signals"])
+    app.include_router(ledger.router, prefix="/api/v1", tags=["ledger"])
 
     # Optional U1 static monitor (built with: cd frontend && npm run build)
     if _FRONTEND_DIST.is_dir() and (_FRONTEND_DIST / "index.html").is_file():

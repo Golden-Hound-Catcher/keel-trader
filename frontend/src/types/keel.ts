@@ -171,6 +171,23 @@ export interface KeelStatus {
   arming?: KeelArmingStatus | null
   /** S2: first-live checklist (allowed_now false while kill on / econ fail). */
   first_live?: KeelFirstLiveStatus | null
+  /** P0: DailyLossGate honesty — false when no realized close pnls exist. */
+  daily_loss_gate_effective?: boolean
+  daily_loss_gate_reason?: string | null
+  realized_close_count?: number
+  realized_close_count_today?: number
+  lifetime_close_count?: number
+  /** P0: orphan open inventory (open/scale_in without linked close). */
+  ledger_orphans?: {
+    total: number
+    live: number
+    shadow: number
+    other: number
+    by_inst?: Record<string, number>
+    by_strategy_tag?: Record<string, number>
+    oldest_age_seconds?: number | null
+    newest_age_seconds?: number | null
+  } | null
 }
 
 export interface KeelConfig {

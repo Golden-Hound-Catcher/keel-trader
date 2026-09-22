@@ -517,6 +517,12 @@ const EVENT_TYPE_ZH: Record<string, string> = {
   order_sized: '仓位已缩放',
   shadow_fill: '影子成交',
   shadow_near_probe_skip: '近探跳过',
+  rule_shadow: '规则影子',
+  sl_protect: '止损保护调整',
+  positions_seen: '持仓基线',
+  sl_hit: '止损成交',
+  tp_hit: '止盈成交',
+  close: '平仓',
 }
 
 function eventTypeZh(raw: unknown): string {
@@ -1041,6 +1047,17 @@ const riskBudgetCritical = computed(
   () => riskBudgetUsage.value != null && riskBudgetUsage.value >= 1,
 )
 
+/** P0: DailyLossGate is a no-op until realized closes exist. */
+const dailyLossGateEffective = computed(() => {
+  const v = store.status?.daily_loss_gate_effective
+  return v !== false
+})
+const dailyLossGateReason = computed(() => store.status?.daily_loss_gate_reason ?? null)
+const orphanOpenTotal = computed(() => {
+  const n = Number(store.status?.ledger_orphans?.total ?? NaN)
+  return Number.isFinite(n) ? n : null
+})
+
 /** Sum of positions[].upl (null/NaN → 0). */
 const positionsFloatPnl = computed(() => {
   let sum = 0
@@ -1483,6 +1500,20 @@ const configStrip = computed(() => {
                 <template v-else>
                   已实现亏损 ${{ fmt(Math.abs(realizedPnl)) }} / ${{ fmt(maxDailyLoss) }}
                 </template>
+              </div>
+              <div
+                v-if="!dailyLossGateEffective"
+                class="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300"
+                :title="dailyLossGateReason || 'no_realized_closes'"
+              >
+                日损门控无有效已实现样本
+              </div>
+              <div
+                v-if="orphanOpenTotal != null && orphanOpenTotal > 0"
+                class="mt-1.5 text-[11px] text-[#707E94]"
+                title="开仓无匹配平仓（历史孤儿不自动回填）"
+              >
+                孤儿开仓 {{ orphanOpenTotal }}（live {{ store.status?.ledger_orphans?.live ?? '—' }} / shadow {{ store.status?.ledger_orphans?.shadow ?? '—' }}）
               </div>
             </div>
           </div>

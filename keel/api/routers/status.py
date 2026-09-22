@@ -8,12 +8,21 @@ from fastapi import APIRouter
 from keel import __version__
 from keel.api.cycle_time import is_worker_stale, seconds_since_last_cycle
 from keel.api.deps import get_ledger
-from keel.api.schemas import ArmingStatus, ConfigResponse, CredentialsStatus, FirstLiveStatus, LastCycleSummary, StatusResponse
+from keel.api.schemas import (
+    ArmingStatus,
+    ConfigResponse,
+    CredentialsStatus,
+    FirstLiveStatus,
+    LastCycleSummary,
+    LedgerOrphanSummary,
+    StatusResponse,
+)
 from keel.config import get_settings
 from keel.exchange.capability import probe_okx_capability
 from keel.execution.near_probe import resolve_near_probe_hurdle_bps
 from keel.risk.arming import build_first_live, evaluate_arming
 from keel.domain.instruments import InstrumentPool
+from keel.ledger.orphan_inventory import daily_loss_gate_honesty, inventory_orphans
 from keel.policy import (
     build_decision_policy,
     describe_policy,
@@ -39,6 +48,17 @@ def _near_probe_hurdle_fields(settings) -> dict:
         "shadow_near_probe_min_edge_bps": settings.shadow_near_probe_min_edge_bps,
         "shadow_near_probe_hurdle_bps": float(hurdle),
     }
+
+
+
+
+def _p0_ledger_honesty(ledger) -> dict:
+    """Orphan inventory + DailyLossGate honesty for status (read-only)."""
+    honesty = daily_loss_gate_honesty(ledger)
+    orphans = inventory_orphans(ledger, sample_limit=0)
+    payload = honesty.to_status_dict()
+    payload["ledger_orphans"] = LedgerOrphanSummary.model_validate(orphans.to_status_dict())
+    return payload
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -103,6 +123,7 @@ def status() -> StatusResponse:
             human_steps=list(first_live_report.human_steps),
             note=first_live_report.note,
         ),
+        **_p0_ledger_honesty(get_ledger()),
     )
 
 
