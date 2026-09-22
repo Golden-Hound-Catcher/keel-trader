@@ -34,6 +34,7 @@ import {
   HERO_TONE_CLASS,
   humanizeError,
   marketSourceZh,
+  eventTypeZh,
   missingGateZh,
   policyZh,
   policyLabel,
@@ -558,34 +559,6 @@ function actionClass(action: string | undefined | null): string {
   return 'text-cyan-400'
 }
 
-const EVENT_TYPE_ZH: Record<string, string> = {
-  worker_cycle_summary: '周期摘要',
-  trader_cycle_complete: '交易周期完成',
-  paper_cycle_complete: '本地模拟周期完成',
-  decision_invalid: '决策无效',
-  risk_gate_blocked: '风控拦截',
-  order_failed: '下单失败',
-  order_resting: '订单挂单',
-  order_filled: '成交',
-  order_accepted: '订单已接受',
-  order_sized: '仓位已缩放',
-  shadow_fill: '影子成交',
-  shadow_near_probe_skip: '近探跳过',
-  rule_shadow: '规则影子',
-  sl_protect: '止损保护调整',
-  positions_seen: '持仓基线',
-  sl_hit: '止损成交',
-  tp_hit: '止盈成交',
-  close: '平仓',
-  sl_tp_attached: '止盈止损已挂',
-  sl_tp_attach_failed: '止盈止损挂单失败',
-}
-
-function eventTypeZh(raw: unknown): string {
-  const t = String(raw || '').trim()
-  if (!t) return '事件'
-  return EVENT_TYPE_ZH[t] || t
-}
 
 function eventHeadline(e: Record<string, unknown>): string {
   const t = eventTypeZh(e.event_type ?? e.type)
@@ -2697,7 +2670,10 @@ const configStrip = computed(() => {
     </main>
 
     <footer class="border-t border-[#1A2232] bg-[#0A0D14] py-3 text-center text-[10px] font-mono text-[#707E94]">
-      Keel Trader · 界面只读 ·
+      Keel Trader · 界面只读 · 列表默认最近 50 条 ·
+      全日导出用
+      <code class="text-zinc-400">scripts/llm_vs_rule_daily.py</code>
+      ·
       <a href="/docs" class="text-cyan-500/80 hover:text-cyan-400">API 文档</a>
     </footer>
   </div>

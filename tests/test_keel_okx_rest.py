@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 import os
 import tempfile
 import unittest
@@ -401,6 +402,104 @@ class TestSettingsExchangeMode(unittest.TestCase):
         os.environ["KEEL_OKX_ENV"] = "demo"
         refresh_settings()
         self.assertEqual(get_settings().exchange_mode, "okx_rest:demo")
+
+
+
+class FlakyHttpTransport:
+    """Raise HTTPError for the first N calls, then return OKX JSON."""
+
+    def __init__(self, fail_times: int, fail_code: int, success_body: str):
+        self.fail_times = fail_times
+        self.fail_code = fail_code
+        self.success_body = success_body
+        self.calls = 0
+
+    def __call__(
+        self, method: str, url: str, headers: dict[str, str], body: bytes | None
+    ) -> str:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise urllib.error.HTTPError(
+                url, self.fail_code, "unavailable", hdrs=None, fp=None
+            )
+        return self.success_body
+
+
+class TestOkxRestGetRetry(unittest.TestCase):
+    def test_get_retries_503_then_succeeds(self):
+        body = _okx_payload(
+            [
+                {
+                    "imr": "0",
+                    "details": [
+                        {
+                            "ccy": "USDT",
+                            "eq": "1000",
+                            "availBal": "1000",
+                            "cashBal": "1000",
+                            "upl": "0",
+                        }
+                    ],
+                }
+            ]
+        )
+        transport = FlakyHttpTransport(fail_times=2, fail_code=503, success_body=body)
+        adapter = OkxRestAdapter(
+            api_key="k", secret_key="s", passphrase="p", demo=True, transport=transport
+        )
+        with patch("keel.exchange.okx_rest.time.sleep") as sleep:
+            bal = adapter.get_balance()
+        self.assertEqual(bal.total_equity, 1000.0)
+        self.assertEqual(transport.calls, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_get_retries_429_then_succeeds(self):
+        body = _okx_payload([])
+        transport = FlakyHttpTransport(fail_times=1, fail_code=429, success_body=body)
+        adapter = OkxRestAdapter(
+            api_key="k", secret_key="s", passphrase="p", demo=True, transport=transport
+        )
+        with patch("keel.exchange.okx_rest.time.sleep"):
+            # empty positions is fine
+            positions = adapter.get_positions()
+        self.assertEqual(positions, [])
+        self.assertEqual(transport.calls, 2)
+
+    def test_get_exhausts_retries_and_raises(self):
+        transport = FlakyHttpTransport(fail_times=10, fail_code=503, success_body="{}")
+        adapter = OkxRestAdapter(
+            api_key="k", secret_key="s", passphrase="p", demo=True, transport=transport
+        )
+        with patch("keel.exchange.okx_rest.time.sleep"):
+            with self.assertRaises(ValueError) as ctx:
+                adapter.get_balance()
+        self.assertIn("HTTP 503", str(ctx.exception))
+        self.assertEqual(transport.calls, 3)
+
+    def test_post_place_order_does_not_retry_503(self):
+        """Writes stay single-shot even when transport returns 503."""
+        transport = FlakyHttpTransport(fail_times=10, fail_code=503, success_body="{}")
+        adapter = OkxRestAdapter(
+            api_key="k", secret_key="s", passphrase="p", demo=True, transport=transport
+        )
+        # Seed cache so place_order does not first GET /account/config (which *would* retry).
+        adapter._account_cfg = {"posMode": "long_short_mode", "acctLv": "2"}
+        with patch("keel.exchange.okx_rest.time.sleep") as sleep:
+            result = adapter.place_order(
+                OrderRequest(
+                    inst_id="BTC-USDT-SWAP",
+                    side="buy",
+                    pos_side="long",
+                    size=1,
+                    order_type="limit",
+                    price=65000,
+                )
+            )
+        self.assertFalse(result.success)
+        self.assertIn("HTTP 503", result.error or "")
+        self.assertEqual(transport.calls, 1)  # POST /trade/order only, no retry
+        sleep.assert_not_called()
+
 
 
 if __name__ == "__main__":

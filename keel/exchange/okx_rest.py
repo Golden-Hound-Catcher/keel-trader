@@ -33,6 +33,11 @@ from keel.exchange.protocol import (
 # (method, url, headers, body_bytes) -> response body str
 HttpTransport = Callable[[str, str, dict[str, str], bytes | None], str]
 
+# Idempotent GET only — never blind-retry place_order / cancel / amend.
+_GET_RETRY_STATUSES = frozenset({429, 503})
+_GET_RETRY_MAX_ATTEMPTS = 3
+_GET_RETRY_BACKOFF_S = (0.25, 0.75, 1.5)
+
 
 def _okx_error_text(result: dict[str, Any]) -> str:
     """Include nested sCode/sMsg — OKX wraps those as code=1 All operations failed."""
@@ -156,57 +161,82 @@ class OKXRestAdapter:
         signed: bool = True,
     ) -> dict[str, Any]:
         method = method.upper()
-        query = ""
-        if params:
-            # Stable order helps tests; OKX accepts any order.
-            items = [(k, v) for k, v in params.items() if v is not None]
-            query = urllib.parse.urlencode(items)
+        # GET is idempotent — bounded backoff on 429/503. Writes stay single-shot.
+        idempotent = method == "GET"
+        max_attempts = _GET_RETRY_MAX_ATTEMPTS if idempotent else 1
+        last_http: urllib.error.HTTPError | None = None
 
-        request_path = path + (f"?{query}" if query else "")
-        url = self._base_url + request_path
-        body_str = (
-            json.dumps(body, separators=(",", ":")) if body is not None else ""
-        )
-        body_bytes = body_str.encode("utf-8") if body_str else None
+        for attempt in range(max_attempts):
+            query = ""
+            if params:
+                # Stable order helps tests; OKX accepts any order.
+                items = [(k, v) for k, v in params.items() if v is not None]
+                query = urllib.parse.urlencode(items)
 
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Keel-Trader/0.1",
-        }
-
-        if signed:
-            if not self.credentials_configured:
-                raise ValueError(
-                    "OKX private endpoint requires KEEL_OKX_API_KEY / "
-                    "KEEL_OKX_SECRET_KEY / KEEL_OKX_PASSPHRASE (or OKX_* aliases)"
-                )
-            timestamp = _utc_timestamp()
-            headers.update(
-                {
-                    "OK-ACCESS-KEY": self._api_key,
-                    "OK-ACCESS-SIGN": self._sign(
-                        timestamp, method, request_path, body_str
-                    ),
-                    "OK-ACCESS-TIMESTAMP": timestamp,
-                    "OK-ACCESS-PASSPHRASE": self._passphrase,
-                }
+            request_path = path + (f"?{query}" if query else "")
+            url = self._base_url + request_path
+            body_str = (
+                json.dumps(body, separators=(",", ":")) if body is not None else ""
             )
-            if self._demo:
-                headers["x-simulated-trading"] = "1"
+            body_bytes = body_str.encode("utf-8") if body_str else None
 
-        try:
-            raw = self._transport(method, url, headers, body_bytes)
-            result = json.loads(raw)
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8") if e.fp else ""
-            raise ValueError(f"HTTP {e.code}: {error_body[:300]}") from e
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid OKX JSON response: {e}") from e
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "Keel-Trader/0.1",
+            }
 
-        code = result.get("code")
-        if code not in (None, "0", 0):
-            raise ValueError(_okx_error_text(result))
-        return result
+            if signed:
+                if not self.credentials_configured:
+                    raise ValueError(
+                        "OKX private endpoint requires KEEL_OKX_API_KEY / "
+                        "KEEL_OKX_SECRET_KEY / KEEL_OKX_PASSPHRASE (or OKX_* aliases)"
+                    )
+                # Re-sign each attempt — timestamp must be fresh.
+                timestamp = _utc_timestamp()
+                headers.update(
+                    {
+                        "OK-ACCESS-KEY": self._api_key,
+                        "OK-ACCESS-SIGN": self._sign(
+                            timestamp, method, request_path, body_str
+                        ),
+                        "OK-ACCESS-TIMESTAMP": timestamp,
+                        "OK-ACCESS-PASSPHRASE": self._passphrase,
+                    }
+                )
+                if self._demo:
+                    headers["x-simulated-trading"] = "1"
+
+            try:
+                raw = self._transport(method, url, headers, body_bytes)
+                result = json.loads(raw)
+            except urllib.error.HTTPError as e:
+                last_http = e
+                retryable = (
+                    idempotent
+                    and e.code in _GET_RETRY_STATUSES
+                    and attempt < max_attempts - 1
+                )
+                if retryable:
+                    delay = _GET_RETRY_BACKOFF_S[
+                        min(attempt, len(_GET_RETRY_BACKOFF_S) - 1)
+                    ]
+                    time.sleep(delay)
+                    continue
+                error_body = e.read().decode("utf-8") if e.fp else ""
+                raise ValueError(f"HTTP {e.code}: {error_body[:300]}") from e
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid OKX JSON response: {e}") from e
+
+            code = result.get("code")
+            if code not in (None, "0", 0):
+                raise ValueError(_okx_error_text(result))
+            return result
+
+        # Unreachable, but keeps type-checkers happy.
+        if last_http is not None:
+            error_body = last_http.read().decode("utf-8") if last_http.fp else ""
+            raise ValueError(f"HTTP {last_http.code}: {error_body[:300]}") from last_http
+        raise ValueError("OKX request failed with no response")
 
     def _public_request(
         self, path: str, params: dict[str, Any] | None = None
