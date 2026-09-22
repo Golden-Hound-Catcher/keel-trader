@@ -23,6 +23,12 @@ from keel.execution.near_probe import resolve_near_probe_hurdle_bps
 from keel.risk.arming import build_first_live, evaluate_arming
 from keel.domain.instruments import InstrumentPool
 from keel.ledger.orphan_inventory import daily_loss_gate_honesty, inventory_orphans
+from keel.policy import (
+    build_decision_policy,
+    describe_policy,
+    resolve_rule_variant,
+    resolve_tf_require_4h,
+)
 
 LLM_RULE_ASYMMETRY_NOTE = (
     "LLM 15m=not-opposing (neutral OK unless KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL); "
@@ -33,12 +39,6 @@ MONITOR_SIDECAR_NOTE = (
     "Vite Monitor + cloudflared tunnel are optional sidecars "
     "(vite-monitor.pid / cloudflared-tunnel.pid); observe_status reports "
     "liveness but does not auto-start tunnel."
-)
-from keel.policy import (
-    build_decision_policy,
-    describe_policy,
-    resolve_rule_variant,
-    resolve_tf_require_4h,
 )
 
 router = APIRouter()
@@ -61,6 +61,16 @@ def _near_probe_hurdle_fields(settings) -> dict:
     }
 
 
+
+
+
+def _decision_invalid_24h(ledger) -> int:
+    """P1-3: count decision_invalid events in the last 24h."""
+    try:
+        stats = ledger.get_decision_stats(hours=24.0)
+        return int(stats.get("decision_invalid_events") or 0)
+    except Exception:
+        return 0
 
 
 def _p0_ledger_honesty(ledger) -> dict:
