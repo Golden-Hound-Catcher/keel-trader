@@ -416,21 +416,30 @@ def reconcile_closed_positions(
     ledger: Any,
     *,
     now: float | None = None,
+    positions: list[Any] | None = None,
 ) -> list[CloseOutcome]:
     """
     Detect positions that vanished since the last cycle and ledger closes.
 
     First successful snapshot only baselines (no closes). Subsequent cycles
     emit close rows solely for ``open_trade_ids`` that were tracked while live.
+
+    Pass ``positions`` when the caller already fetched the book (avoids an extra
+    OKX round-trip / 503). When omitted, fetches via ``exchange.get_positions``.
     """
-    getter = getattr(exchange, "get_positions", None)
-    if not callable(getter) or ledger is None:
+    if ledger is None:
         return []
-    try:
-        positions = list(getter() or [])
-    except Exception:
-        logger.debug("close_reconcile: get_positions failed", exc_info=True)
-        return []
+    if positions is None:
+        getter = getattr(exchange, "get_positions", None)
+        if not callable(getter):
+            return []
+        try:
+            positions = list(getter() or [])
+        except Exception:
+            logger.warning("close_reconcile: get_positions failed", exc_info=True)
+            return []
+    else:
+        positions = list(positions)
 
     ts = time.time() if now is None else float(now)
     last = load_last_positions_seen(ledger)
