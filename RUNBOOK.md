@@ -248,6 +248,9 @@ PYTHONPATH=. python scripts/compare_rule_params.py \
 # Prints missing_gates[A|B]; tuned B (short_min=40) can show occasional non-WAIT on oversold-bear cohorts.
 ```
 
+
+> **当前生效以 profile / `scripts/print_effective_config.py` 为准。** 下方 Phase 年表保留历史默认值，可能已被后续 Phase / `llm_demo` profile 覆盖（例如 F9 表曾写 `KEEL_RULE_4H_MODE=soft`，现 profile 为 **hard**）。
+
 ### Phase R — Rule v3+ volume / RSI edge (observe knobs)
 
 `volume_ratio` semantics (unchanged market truth): **last 15m bar volume / mean(last 20 bars)**. 1.0 = average bar; live okx_public is right-skewed (p50≈0.36–0.40, p90≈0.86), so the old default `KEEL_RULE_MIN_VOLUME_RATIO=1.0` blocked most near-signals.
@@ -865,7 +868,7 @@ Jo: why are rules so bad? Optimize. **Keep `KEEL_DECISION_POLICY=llm` primary**;
 
 | Gate | Env | F9 default | Behavior |
 |------|-----|------------|----------|
-| Soft-4h | `KEEL_RULE_4H_MODE` | **soft** | 1h same-dir required; 4h **not-opposing** (neutral OK). `hard` = E3.1 same-direction |
+| Soft-4h | `KEEL_RULE_4H_MODE` | **hard**（`llm_demo` / 现默认；历史 F9 表曾写 soft） | 1h same-dir required; `hard` = 4h same-direction（E3.1）；`soft` = 4h **not-opposing** (neutral OK) |
 | Require 4h | `KEEL_RULE_TF_REQUIRE_4H` | **1** | `0` = off (E2A 15m+1h only); mode ignored when off |
 | 15m align | `KEEL_RULE_REQUIRE_15M_ALIGN` | **1** | TF entry requires **same-dir** 15m (implies not-opposing; neutral blocks). LLM overlay stays not-opposing-only |
 | ADX floor | `KEEL_RULE_ADX_MIN` | **15** (0=off) | reuse factors ADX; **fail-open** if unavailable |

@@ -44,6 +44,8 @@ def main() -> int:
         closes = ledger.get_trades(action="close", limit=20)
         sl_hits = ledger.get_events(event_type="sl_hit", limit=5)
         tp_hits = ledger.get_events(event_type="tp_hit", limit=5)
+        attached = ledger.get_events(event_type="sl_tp_attached", limit=20)
+        attach_failed = ledger.get_events(event_type="sl_tp_attach_failed", limit=20)
 
         recent_nonempty = False
         last_count = 0
@@ -70,6 +72,10 @@ def main() -> int:
                 "sample_count": len(closes),
                 "sl_hit_sample": len(sl_hits),
                 "tp_hit_sample": len(tp_hits),
+            },
+            "sl_tp_attach": {
+                "attached_sample": len(attached),
+                "attach_failed_sample": len(attach_failed),
             },
             "orphans": inv.to_status_dict(),
             "daily_loss_gate": honesty.to_status_dict(),

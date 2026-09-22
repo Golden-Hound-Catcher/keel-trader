@@ -145,6 +145,87 @@ def _effective_config_header() -> dict[str, Any]:
     return out
 
 
+
+def _event_decision_id(data: Any) -> int | None:
+    if not isinstance(data, dict):
+        return None
+    raw = data.get("decision_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def sized_fill_funnel(ledger: KeelLedger, *, hours: float, limit: int = 5000) -> dict[str, Any]:
+    """Correlate order_sized → filled / failed / risk_denied by decision_id (P2-5).
+
+    ``order_sized`` only fires when size was clipped — unexplained = sized with a
+    decision_id that never got filled, failed, or risk-blocked in the window.
+    """
+    since = time.time() - max(0.0, float(hours)) * 3600.0
+
+    def _load(event_type: str) -> list[Any]:
+        try:
+            rows = ledger.get_events(event_type=event_type, limit=limit)
+        except Exception:
+            return []
+        return [e for e in rows if float(getattr(e, "timestamp", 0) or 0) >= since]
+
+    sized = _load("order_sized")
+    filled = _load("order_filled")
+    failed = _load("order_failed")
+    denied = _load("risk_gate_blocked")
+
+    filled_ids = {i for e in filled if (i := _event_decision_id(getattr(e, "data", None)))}
+    failed_ids = {i for e in failed if (i := _event_decision_id(getattr(e, "data", None)))}
+    denied_ids = {i for e in denied if (i := _event_decision_id(getattr(e, "data", None)))}
+
+    sized_with_id = 0
+    sized_no_id = 0
+    to_filled = 0
+    to_failed = 0
+    to_denied = 0
+    unexplained: list[int] = []
+    seen_unexplained: set[int] = set()
+
+    for e in sized:
+        did = _event_decision_id(getattr(e, "data", None))
+        if did is None:
+            sized_no_id += 1
+            continue
+        sized_with_id += 1
+        if did in filled_ids:
+            to_filled += 1
+        elif did in failed_ids:
+            to_failed += 1
+        elif did in denied_ids:
+            to_denied += 1
+        elif did not in seen_unexplained:
+            seen_unexplained.add(did)
+            unexplained.append(did)
+
+    return {
+        "hours": hours,
+        "order_sized": len(sized),
+        "order_filled": len(filled),
+        "order_failed": len(failed),
+        "risk_gate_blocked": len(denied),
+        "sized_with_decision_id": sized_with_id,
+        "sized_without_decision_id": sized_no_id,
+        "sized_then_filled": to_filled,
+        "sized_then_failed": to_failed,
+        "sized_then_denied": to_denied,
+        "unexplained_sized": len(unexplained),
+        "unexplained_decision_ids_sample": unexplained[:20],
+        "note": (
+            "order_sized 仅在仓位被 clip 时写入；"
+            "unexplained = 有 decision_id 但窗口内未见 filled/failed/risk_gate_blocked"
+        ),
+    }
+
+
 def summarize(
     ledger: KeelLedger,
     *,
@@ -386,6 +467,21 @@ def format_zh(summary: dict[str, Any]) -> str:
                 f"  {inst}: n={b['n']} agree={b['agree']} diverge={b['diverge']}"
                 f" llm_fire={b['llm_fire']} rule_fire={b['rule_fire']}"
             )
+
+    funnel = summary.get("sized_fill_funnel") or {}
+    if funnel:
+        lines.append(
+            f"仓位漏斗 order_sized→filled: sized={funnel.get('order_sized')} "
+            f"filled={funnel.get('order_filled')} failed={funnel.get('order_failed')} "
+            f"denied={funnel.get('risk_gate_blocked')} | "
+            f"sized→filled={funnel.get('sized_then_filled')} "
+            f"→failed={funnel.get('sized_then_failed')} "
+            f"→denied={funnel.get('sized_then_denied')} "
+            f"未解释={funnel.get('unexplained_sized')}"
+        )
+        sample = funnel.get("unexplained_decision_ids_sample") or []
+        if sample:
+            lines.append(f"  未解释 decision_id 样本: {sample}")
     return "\n".join(lines)
 
 
@@ -454,6 +550,7 @@ def main(argv: list[str] | None = None) -> int:
         fee_bps=args.fee_bps,
         markout_horizons=horizons,
     )
+    summary["sized_fill_funnel"] = sized_fill_funnel(ledger, hours=float(args.hours))
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     if not args.json_only:
         print()

@@ -204,7 +204,7 @@ export function sideZh(side: string | undefined | null): string {
   return side || '—'
 }
 
-const MISSING_GATE_ZH: Record<string, string> = {
+export const MISSING_GATE_ZH: Record<string, string> = {
   volume_ok: '量能',
   rsi_ok: 'RSI',
   rsi_long_ok: 'RSI多',
@@ -237,6 +237,68 @@ const MISSING_GATE_ZH: Record<string, string> = {
   htf_ok: '高周期',
   geometry_ok: '几何',
   book_ok: '持仓锁',
+}
+
+
+/** High-frequency / reconcile event types that must stay in EVENT_TYPE_ZH (P2-1). */
+export const KNOWN_HIGH_FREQ_EVENT_TYPES = [
+  'sl_hit',
+  'tp_hit',
+  'close',
+  'positions_seen',
+  'sl_tp_attached',
+  'sl_tp_attach_failed',
+  'rule_shadow',
+  'sl_protect',
+  'order_sized',
+  'order_filled',
+  'order_failed',
+  'risk_gate_blocked',
+  'decision_invalid',
+] as const
+
+/** Overlay / selectivity gate codes that should have Chinese chips (P2-6). */
+export const KNOWN_OVERLAY_GATE_KEYS = [
+  'soft4h_needs_15m',
+  'tf15_align_ok',
+  'adx_ok',
+  'rsi_chase_ok',
+  'confidence',
+  'confidence_ok',
+] as const
+
+export const EVENT_TYPE_ZH: Record<string, string> = {
+  worker_cycle_summary: '周期摘要',
+  trader_cycle_complete: '交易周期完成',
+  paper_cycle_complete: '本地模拟周期完成',
+  decision_invalid: '决策无效',
+  risk_gate_blocked: '风控拦截',
+  order_failed: '下单失败',
+  order_resting: '订单挂单',
+  order_filled: '成交',
+  order_accepted: '订单已接受',
+  order_sized: '仓位已缩放',
+  shadow_fill: '影子成交',
+  shadow_near_probe_skip: '近探跳过',
+  rule_shadow: '规则影子',
+  sl_protect: '止损保护调整',
+  positions_seen: '持仓基线',
+  sl_hit: '止损成交',
+  tp_hit: '止盈成交',
+  close: '平仓',
+  sl_tp_attached: '止盈止损已挂',
+  sl_tp_attach_failed: '止盈止损挂单失败',
+}
+
+export function eventTypeZh(raw: unknown): string {
+  const t = String(raw || '').trim()
+  if (!t) return '事件'
+  return EVENT_TYPE_ZH[t] || t
+}
+
+/** Exported for lightweight map-completeness checks (no vitest). */
+export function missingGateKeys(): string[] {
+  return Object.keys(MISSING_GATE_ZH)
 }
 
 export function missingGateZh(raw: unknown): string {
