@@ -914,6 +914,18 @@ PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hour
 
 **Honesty:** selectivity only — do **not** claim economic edge from F10 alone. Kill stays 0, shadow stays 0, LLM stays primary.
 
+### Opt A+B — post-exit cooldown + BE ratchet (2026-09-24)
+
+9/23 BTC demo: TP then +15m long −4.7; SL then +69m long −2.1; BE 86594 pulled back to 86031 on a later protect pass.
+
+| Opt | Env / code | Default | Behavior |
+|-----|------------|---------|----------|
+| A post-exit | `KEEL_LLM_POST_EXIT_COOLDOWN_SECONDS` | **7200** (`llm_demo` + code) | After `trades.action=close` (or `sl_hit`/`tp_hit`), same-inst LLM fire → WAIT (`fire_cooldown_reason=post_exit_cooldown`, `fire_cooldown_ok` in missing). Complements fire→fire `KEEL_LLM_REENTRY_SECONDS`. |
+| B BE ratchet | `keel.execution.protect.plan_protect` | always on | Once SL is at/above entry (long) or at/below (short), never move adversely (`max`/`min`). Fee-geometry widen still OK on risk-side stops. Do **not** disable `sl_protect`. |
+
+Wired in existing `apply_rule_fire_cooldown` (cycle path). Opt C (stack RSI chase / volume gates) is **out of scope** here.
+
+
 ### Gap P1 (2026-09-22) — dual-log honesty + soft-4h fairness + ops
 
 **P1-1 LLM vs rule gate asymmetry (document, do not silent-align):**

@@ -67,6 +67,66 @@ class TestProtectPlan(unittest.TestCase):
     def test_favorable_r_short(self) -> None:
         self.assertAlmostEqual(favorable_r("short", 100.0, 102.0, 99.0), 0.5)
 
+    def test_be_ratchet_long_mark_pullback_keeps_be(self) -> None:
+        """After BE lock, a later pass must not mirror SL back below entry."""
+        entry = 86000.0
+        pad = close_fee_pad(entry)
+        be_sl = entry + pad  # ~86594-style lock relative to entry
+        # Mark still green but pulled back — old bug recomputed entry-dist and
+        # widened SL down into loss territory.
+        mark = entry + pad * 2
+        tp = entry + 2.2 * (entry * 0.001 * 6)
+        plan = plan_protect(
+            side="long",
+            entry=entry,
+            mark=mark,
+            sl=be_sl,
+            tp=tp,
+            atr=80.0,
+        )
+        # Either no amend, or SL stays at/above locked BE (never below entry).
+        if plan is None:
+            return
+        self.assertGreaterEqual(plan.new_sl, be_sl - 1e-9)
+        self.assertGreaterEqual(plan.new_sl, entry)
+
+    def test_be_ratchet_short_keeps_locked_be(self) -> None:
+        entry = 77144.0
+        pad = close_fee_pad(entry)
+        be_sl = entry - pad
+        mark = entry - pad * 2  # still favorable but softer
+        tp = entry - 2.2 * (entry * 0.001 * 6)
+        plan = plan_protect(
+            side="short",
+            entry=entry,
+            mark=mark,
+            sl=be_sl,
+            tp=tp,
+            atr=80.0,
+        )
+        if plan is None:
+            return
+        self.assertLessEqual(plan.new_sl, be_sl + 1e-9)
+        self.assertLessEqual(plan.new_sl, entry)
+
+    def test_be_then_recompute_never_below_entry_long(self) -> None:
+        """Replay 9/23-shaped numbers: BE above entry must survive protect."""
+        entry = 86000.0
+        be_sl = 86594.0
+        mark = 86650.0  # still green
+        tp = 88000.0
+        plan = plan_protect(
+            side="long",
+            entry=entry,
+            mark=mark,
+            sl=be_sl,
+            tp=tp,
+            atr=100.0,
+        )
+        if plan is not None:
+            self.assertGreaterEqual(plan.new_sl, be_sl - 1e-6)
+            self.assertNotAlmostEqual(plan.new_sl, 86031.0, places=0)
+
 
 if __name__ == "__main__":
     unittest.main()

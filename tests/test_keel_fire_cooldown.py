@@ -10,11 +10,15 @@ from pathlib import Path
 from keel.config import refresh_settings
 from keel.domain.decision import Decision
 from keel.domain.records import DecisionRecord
+from keel.domain.records import TradeRecord
 from keel.execution.fire_cooldown import (
     apply_rule_fire_cooldown,
+    clamp_llm_post_exit_cooldown_seconds,
     clamp_rule_fire_cooldown_seconds,
     full_gate_fire_recent,
     is_cooldown_fire,
+    latest_close_timestamp,
+    post_exit_cooldown_active,
 )
 from keel.ledger import KeelLedger
 from keel.ledger.full_gate import is_full_gate_fire
@@ -380,6 +384,132 @@ class TestFireCooldownApply(unittest.TestCase):
         self.assertGreaterEqual(
             int(out.signal_diag.get("fire_cooldown_seconds") or 0), 3600
         )
+
+
+    def test_post_exit_cooldown_blocks_llm_reentry(self):
+        """Close 30m ago + fire aged out → still WAIT via post_exit (not fire→fire)."""
+        os.environ["KEEL_LLM_POST_EXIT_COOLDOWN_SECONDS"] = "7200"
+        os.environ["KEEL_LLM_REENTRY_SECONDS"] = "3600"
+        try:
+            # Fire long ago (past reentry window)
+            self.ledger.record_decision(
+                DecisionRecord(
+                    timestamp=self.now - 4000,
+                    inst_id=self.inst,
+                    action="BUY_LONG",
+                    confidence=70.0,
+                    entry_price=100.0,
+                    take_profit=105.0,
+                    stop_loss=98.0,
+                    reason="old llm fire",
+                    policy_name="llm",
+                    calculus_data={"signal_diag": {"reason": "model"}},
+                )
+            )
+            # Realized close 30 minutes ago (inside 7200s post-exit)
+            self.ledger.record_trade(
+                TradeRecord(
+                    timestamp=self.now - 1800,
+                    inst_id=self.inst,
+                    action="close",
+                    direction="long",
+                    size=1.0,
+                    price=104.0,
+                    pnl=3.0,
+                    fee=0.1,
+                    reason="tp",
+                )
+            )
+            self.assertTrue(
+                post_exit_cooldown_active(
+                    self.ledger,
+                    inst_id=self.inst,
+                    cooldown_seconds=7200,
+                    now=self.now,
+                )
+            )
+            self.assertAlmostEqual(
+                latest_close_timestamp(self.ledger, inst_id=self.inst) or 0.0,
+                self.now - 1800,
+                places=0,
+            )
+            candidate = Decision(
+                inst_id=self.inst,
+                action="BUY_LONG",
+                confidence=70.0,
+                entry_price=100.0,
+                take_profit=105.0,
+                stop_loss=98.0,
+                reason="reenter after tp",
+            )
+            out = apply_rule_fire_cooldown(
+                candidate,
+                ledger=self.ledger,
+                cooldown_seconds=900,
+                now=self.now,
+                policy_name="llm",
+            )
+            self.assertEqual(out.action, "WAIT")
+            self.assertTrue(out.signal_diag.get("fire_cooldown_active"))
+            self.assertEqual(out.signal_diag.get("fire_cooldown_reason"), "post_exit_cooldown")
+            self.assertIs(out.signal_diag.get("fire_cooldown_ok"), False)
+            self.assertIn("fire_cooldown_ok", out.signal_diag.get("missing") or [])
+            self.assertIn("post-exit", out.reason.lower())
+        finally:
+            os.environ.pop("KEEL_LLM_POST_EXIT_COOLDOWN_SECONDS", None)
+            os.environ.pop("KEEL_LLM_REENTRY_SECONDS", None)
+
+    def test_post_exit_cooldown_expires(self):
+        os.environ["KEEL_LLM_POST_EXIT_COOLDOWN_SECONDS"] = "7200"
+        os.environ["KEEL_LLM_REENTRY_SECONDS"] = "0"
+        try:
+            self.ledger.record_trade(
+                TradeRecord(
+                    timestamp=self.now - 8000,
+                    inst_id=self.inst,
+                    action="close",
+                    direction="long",
+                    size=1.0,
+                    price=100.0,
+                    pnl=-1.0,
+                    reason="sl",
+                )
+            )
+            self.assertFalse(
+                post_exit_cooldown_active(
+                    self.ledger,
+                    inst_id=self.inst,
+                    cooldown_seconds=7200,
+                    now=self.now,
+                )
+            )
+            candidate = Decision(
+                inst_id=self.inst,
+                action="BUY_LONG",
+                confidence=70.0,
+                entry_price=100.0,
+                take_profit=105.0,
+                stop_loss=98.0,
+                reason="ok after window",
+            )
+            out = apply_rule_fire_cooldown(
+                candidate,
+                ledger=self.ledger,
+                cooldown_seconds=900,
+                now=self.now,
+                policy_name="llm",
+            )
+            self.assertEqual(out.action, "BUY_LONG")
+        finally:
+            os.environ.pop("KEEL_LLM_POST_EXIT_COOLDOWN_SECONDS", None)
+            os.environ.pop("KEEL_LLM_REENTRY_SECONDS", None)
+
+    def test_post_exit_clamp(self):
+        self.assertEqual(clamp_llm_post_exit_cooldown_seconds(7200), 7200)
+        self.assertEqual(clamp_llm_post_exit_cooldown_seconds(0), 0)
+        self.assertEqual(clamp_llm_post_exit_cooldown_seconds(-1), 0)
+        self.assertEqual(clamp_llm_post_exit_cooldown_seconds(999999), 86400)
+
 
 
 if __name__ == "__main__":
