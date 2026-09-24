@@ -68,8 +68,11 @@ def plan_protect(
     """
     Compute a wider SL / farther TP, and optionally a BE+close-fee stop.
 
-    Never tightens SL. Never sets TP closer. BE only after ``be_r`` of risk
-    is already in the money, so a scratch is insurance — not the profit plan.
+    Fee-starved stops may widen (more room). Once a protective SL exists,
+    ratchet only the favorable direction (long: max; short: min) so a later
+    widen_fee_geometry pass cannot pull a locked BE back through entry.
+    Never sets TP closer. BE only after ``be_r`` of risk is already in the
+    money, so a scratch is insurance — not the profit plan.
     """
     side_s = str(side or "").strip().lower()
     if side_s not in ("long", "short"):
@@ -92,7 +95,24 @@ def plan_protect(
     sl_dist = max(cur_sl_dist, min_sl)
     tp_dist = max(cur_tp_dist, min_tp, float(geo["tp_rr"]) * sl_dist)
     widened = sl_dist > cur_sl_dist + 1e-12 or tp_dist > cur_tp_dist + 1e-12
-    if side_s == "long":
+    # If SL is already at/above entry (long) or at/below entry (short), a
+    # distance-from-entry recompute would mirror it back into loss territory
+    # (9/23 BTC BE 86594 → 86031). Keep the locked stop as the baseline.
+    already_be = (
+        (side_s == "long" and cur_sl >= entry_f)
+        or (side_s == "short" and cur_sl <= entry_f)
+    )
+    if already_be:
+        new_sl = cur_sl
+        # TP may still extend; risk for RR uses fee-floor geometry.
+        risk = max(min_sl, 1e-12)
+        tp_dist = max(cur_tp_dist, min_tp, float(geo["tp_rr"]) * risk)
+        if side_s == "long":
+            new_tp = entry_f + tp_dist
+        else:
+            new_tp = entry_f - tp_dist
+        widened = tp_dist > cur_tp_dist + 1e-12
+    elif side_s == "long":
         new_sl = entry_f - sl_dist
         new_tp = entry_f + tp_dist
     else:
@@ -122,7 +142,20 @@ def plan_protect(
                 new_sl = be_sl
                 breakeven = True
                 reason = "breakeven_plus_close_fee"
-    if not widened and not breakeven:
+
+    # BE ratchet: once SL is at/above entry (long) or at/below (short), never
+    # move it adversely (long: max; short: min). Risk-side fee-geometry widen
+    # still allowed when the stop has not yet locked BE.
+    if sl not in (None, 0):
+        prior = float(sl)
+        if side_s == "long" and prior >= entry_f:
+            new_sl = max(new_sl, prior)
+        elif side_s == "short" and prior <= entry_f:
+            new_sl = min(new_sl, prior)
+
+    if not widened and not breakeven and abs(new_sl - cur_sl) <= 1e-12 and abs(
+        new_tp - cur_tp
+    ) <= 1e-12:
         return None
     return ProtectPlan(
         side=side_s,

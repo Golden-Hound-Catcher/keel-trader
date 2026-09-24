@@ -34,6 +34,7 @@ class TestProfileHelpers(unittest.TestCase):
         self.assertEqual(d["KEEL_LLM_MIN_CONFIDENCE"], "65")
         self.assertEqual(d["KEEL_LLM_RSI_CHASE_LONG_MAX"], "65")
         self.assertEqual(d["KEEL_LLM_RSI_CHASE_SHORT_MIN"], "35")
+        self.assertEqual(d["KEEL_LLM_POST_EXIT_COOLDOWN_SECONDS"], "7200")
         self.assertIn("BTC-USDT-SWAP", d["KEEL_INSTRUMENTS"])
 
 

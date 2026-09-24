@@ -44,6 +44,8 @@ LLM_DEMO: dict[str, str] = {
     "KEEL_LLM_RSI_CHASE_SHORT_MIN": "35",  # F10 (was 30)
     "KEEL_LLM_MIN_CONFIDENCE": "65",  # F10 llm_demo only (code default still 60)
     "KEEL_LLM_NO_SCALE_IN": "1",
+    # Opt A: quiet after TP/SL before same-symbol re-entry (fire→fire alone misses this)
+    "KEEL_LLM_POST_EXIT_COOLDOWN_SECONDS": "7200",
     # Rule F9 shadow selectivity
     "KEEL_RULE_VARIANT": "trend_follow",
     "KEEL_RULE_4H_MODE": "hard",
