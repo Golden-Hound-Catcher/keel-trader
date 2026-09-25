@@ -43,6 +43,7 @@ from keel.execution.orchestrator import ExecutionOrchestrator, ExecutionResult
 from keel.execution.fire_cooldown import apply_rule_fire_cooldown
 from keel.execution.protect import protect_open_positions
 from keel.execution.close_reconcile import reconcile_closed_positions
+from keel.execution.entry_fill import reconcile_resting_entries
 from keel.execution.near_probe import (
     evaluate_near_probe,
     record_near_probe_skip,
@@ -652,10 +653,34 @@ def run_paper_cycle(
         except Exception:  # noqa: BLE001 — shadow must not break the cycle
             logger.exception("rule_shadow decide failed; continuing without shadow")
 
+    book_ok = True
     try:
         book_positions = list(exchange.get_positions() or [])
     except Exception:
         book_positions = []
+        book_ok = False
+
+    # 9/24 PM: resolve resting entries and ledger closes *before* per-inst
+    # cooldown / book-lock checks, so post-exit cooldown sees a close that
+    # happened since the last cycle (#278 re-entered 3 min after #276 SL).
+    try:
+        reconcile_resting_entries(
+            exchange,
+            ledger,
+            record_open=orchestrator.record_filled_open,
+            now=time.time(),
+        )
+    except Exception:
+        logger.exception("resting entry reconcile failed")
+    try:
+        reconcile_closed_positions(
+            exchange,
+            ledger,
+            now=time.time(),
+            positions=book_positions if book_ok else None,
+        )
+    except Exception:
+        logger.exception("pre-decision close reconcile failed")
 
     for inst_id, snap in snapshots.items():
         ledger.record_factor_snapshot(
@@ -949,7 +974,7 @@ def run_paper_cycle(
         reconcile_closed_positions(
             exchange,
             ledger,
-            now=now,
+            now=time.time(),
             positions=live_positions,
         )
     except Exception:

@@ -371,6 +371,87 @@ class OKXRestAdapter:
         rows = result.get("data") or []
         return [r for r in rows if isinstance(r, dict)]
 
+    def get_order(self, inst_id: str, order_id: str) -> dict[str, Any] | None:
+        """Raw order row (state/accFillSz/avgPx/fillTime/fee/attachAlgoOrds). None on failure."""
+        if not inst_id or not order_id:
+            return None
+        try:
+            result = self._request(
+                "GET",
+                "/api/v5/trade/order",
+                params={"instId": inst_id, "ordId": str(order_id)},
+            )
+        except Exception:
+            return None
+        rows = result.get("data") or []
+        row = rows[0] if rows else None
+        return row if isinstance(row, dict) else None
+
+    def get_positions_history(
+        self,
+        inst_id: str | None = None,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Closed-position history (closeAvgPx, realizedPnl, fee, fundingFee). Empty on failure."""
+        params: dict[str, Any] = {
+            "instType": "SWAP",
+            "limit": str(max(1, min(int(limit), 100))),
+        }
+        if inst_id:
+            params["instId"] = inst_id
+        try:
+            result = self._request(
+                "GET", "/api/v5/account/positions-history", params=params
+            )
+        except Exception:
+            return []
+        return [r for r in (result.get("data") or []) if isinstance(r, dict)]
+
+    def place_oco_tpsl(
+        self,
+        inst_id: str,
+        pos_side: str,
+        *,
+        sl: float | None = None,
+        tp: float | None = None,
+    ) -> str | None:
+        """
+        Standalone full-position TP/SL (closeFraction=1) for an already-open
+        position whose attached algo never materialized. Returns algoId or None.
+        """
+        if sl is None and tp is None:
+            return None
+        side = "sell" if str(pos_side).lower() == "long" else "buy"
+        body: dict[str, Any] = {
+            "instId": inst_id,
+            "tdMode": "cross",
+            "side": side,
+            "ordType": "oco" if (sl is not None and tp is not None) else "conditional",
+            "closeFraction": "1",
+        }
+        if self._pos_mode() == "long_short_mode":
+            body["posSide"] = str(pos_side).lower()
+        else:
+            body["reduceOnly"] = True
+        if sl is not None:
+            body["slTriggerPx"] = _fmt_px(float(sl), inst_id)
+            body["slOrdPx"] = "-1"
+            body["slTriggerPxType"] = "last"
+        if tp is not None:
+            body["tpTriggerPx"] = _fmt_px(float(tp), inst_id)
+            body["tpOrdPx"] = "-1"
+            body["tpTriggerPxType"] = "last"
+        try:
+            result = self._request("POST", "/api/v5/trade/order-algo", body=body)
+        except Exception:
+            return None
+        data = (result.get("data") or [{}])[0]
+        if str(data.get("sCode", "0")) != "0":
+            return None
+        algo_id = str(data.get("algoId") or "")
+        return algo_id or None
+
     def get_algo_history(
         self,
         inst_id: str | None = None,

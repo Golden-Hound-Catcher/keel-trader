@@ -36,7 +36,9 @@ LLM_DEMO: dict[str, str] = {
     "KEEL_LLM_REQUIRE_15M_ALIGN": "1",
     # P1-2: 15m same-dir (neutral blocks) when require_15m on — rule fairness
     "KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL": "1",
-    "KEEL_LLM_ADX_MIN": "15",
+    # 9/24 PM: 15m ADX<20 LLM entries 9/21–9/25 = 10 trades, 0 winners, net −27.8 USDT
+    # (plateau 20–25 identical); est. fires/day ~6.4 → ~4.5. Veto diag: adx_ok.
+    "KEEL_LLM_ADX_MIN": "20",
     "KEEL_LLM_ADX_PERIOD": "14",
     "KEEL_LLM_SHORT_RSI_MAX": "52",
     "KEEL_LLM_LONG_RSI_MIN": "48",
@@ -46,6 +48,15 @@ LLM_DEMO: dict[str, str] = {
     "KEEL_LLM_NO_SCALE_IN": "1",
     # Opt A: quiet after TP/SL before same-symbol re-entry (fire→fire alone misses this)
     "KEEL_LLM_POST_EXIT_COOLDOWN_SECONDS": "7200",
+    # 9/24 PM: BE+fee stop arms at 1.0R (was code default 0.5R). 0.5R scratched
+    # #276/#278 which later hit TP; 1m replay 32 trades: 1.0R best in all slices.
+    "KEEL_LLM_BE_R": "1.0",
+    # 9/24 PM execution truth: ledger opens only on real fills; cancel entries
+    # still resting after TTL (#275 filled 48 min late → −1.77); backfill
+    # missed closes from OKX positions-history inside the lookback.
+    "KEEL_ENTRY_FILL_WAIT_SECONDS": "8",
+    "KEEL_ENTRY_TTL_SECONDS": "900",
+    "KEEL_CLOSE_BACKFILL_LOOKBACK_HOURS": "72",
     # Rule F9 shadow selectivity
     "KEEL_RULE_VARIANT": "trend_follow",
     "KEEL_RULE_4H_MODE": "hard",

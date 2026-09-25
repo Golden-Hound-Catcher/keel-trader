@@ -26,6 +26,12 @@ from keel.execution.near_probe import (
     probe_audit_fields,
 )
 from keel.execution.provenance import provenance_fields
+from keel.execution.entry_fill import (
+    ORDER_RESTING_EVENT,
+    FillInfo,
+    await_fill,
+    confirm_protection,
+)
 from keel.domain.instruments import lookup_instrument, notional_from_size
 from keel.execution.sizing import SizeConstraints, size_order
 
@@ -418,6 +424,121 @@ class ExecutionOrchestrator:
             stamp["sl_tp_attach_reason"] = "no_pending_oco"
         return stamp
 
+    def _entry_ctx(
+        self,
+        *,
+        decision: Decision,
+        order_id: str | None,
+        entry_price: float,
+        size: float,
+        had_position: bool,
+    ) -> dict:
+        """JSON-safe replay context so a later fill can ledger the same open."""
+        return {
+            "inst_id": decision.inst_id,
+            "action": str(decision.action),
+            "direction": "long" if decision.action == "BUY_LONG" else "short",
+            "order_id": order_id,
+            "limit_px": float(entry_price),
+            "size": float(size),
+            "had_position": bool(had_position),
+            "leverage": decision.leverage,
+            "margin_usdt": decision.margin_usdt,
+            "take_profit": decision.take_profit,
+            "stop_loss": decision.stop_loss,
+            "confidence": decision.confidence,
+            "reason": decision.reason,
+            "created_at": time.time(),
+            "prov": provenance_fields(decision),
+        }
+
+    def record_filled_open(self, ctx: dict, info: FillInfo) -> ExecutionResult:
+        """Ledger an ``open`` from a confirmed OKX fill, then confirm TP/SL."""
+        inst_id = str(ctx.get("inst_id") or "")
+        direction = str(ctx.get("direction") or "long")
+        action = str(ctx.get("action") or ("BUY_LONG" if direction == "long" else "SELL_SHORT"))
+        limit_px = float(ctx.get("limit_px") or 0.0)
+        fill_px = float(info.avg_px or limit_px)
+        size = float(info.filled_size or ctx.get("size") or 0.0)
+        prov = dict(ctx.get("prov") or {})
+        created = float(ctx.get("created_at") or 0.0)
+        fill_ts = info.fill_ts or time.time()
+        meta = self._scale_in_meta(
+            base={
+                "order_id": ctx.get("order_id"),
+                "leverage": ctx.get("leverage"),
+                "margin_usdt": ctx.get("margin_usdt"),
+                "take_profit": ctx.get("take_profit"),
+                "stop_loss": ctx.get("stop_loss"),
+                **prov,
+                "limit_px": limit_px,
+                "fill_px": fill_px,
+                "fill_ts": fill_ts,
+                "fill_delay_s": round(fill_ts - created, 1) if created else None,
+                "entry_fee": info.fee,
+                "fill_source": "okx_order",
+            },
+            had_position=bool(ctx.get("had_position")),
+            direction=direction,
+            inst_id=inst_id,
+        )
+        if info.attach_fail:
+            meta["okx_attach_fail"] = info.attach_fail
+        stamp = confirm_protection(
+            self._exchange,
+            self._ledger,
+            inst_id=inst_id,
+            pos_side=direction,
+            stop_loss=ctx.get("stop_loss"),
+            take_profit=ctx.get("take_profit"),
+            event_base={
+                "order_id": ctx.get("order_id"),
+                "action": action,
+                "price": fill_px,
+                "size": size,
+                **prov,
+            },
+        )
+        meta.update(stamp)
+        self._ledger.record_trade(
+            TradeRecord(
+                timestamp=fill_ts,
+                inst_id=inst_id,
+                action="open" if not ctx.get("had_position") else "scale_in",
+                direction=direction,  # type: ignore[arg-type]
+                size=size,
+                price=fill_px,
+                fee=abs(float(info.fee or 0.0)),
+                strategy_tag="keel-llm",
+                reason=str(ctx.get("reason") or ""),
+                metadata=meta,
+            )
+        )
+        self._ledger.record_event(
+            "order_filled",
+            inst_id=inst_id,
+            data={
+                "order_id": ctx.get("order_id"),
+                "price": fill_px,
+                "limit_px": limit_px,
+                "size": size,
+                "action": action,
+                "take_profit": ctx.get("take_profit"),
+                "stop_loss": ctx.get("stop_loss"),
+                **prov,
+                **{k: stamp[k] for k in ("algo_ids", "sl_tp_attached", "sl_tp_attach_failed", "sl_tp_repaired") if k in stamp},
+            },
+        )
+        return ExecutionResult(
+            inst_id=inst_id,
+            action=action,
+            success=True,
+            order_id=ctx.get("order_id"),
+            price=fill_px,
+            size=size,
+            filled=True,
+        )
+
     def _shadow_fill(
         self,
         *,
@@ -552,6 +673,65 @@ class ExecutionOrchestrator:
                 size=size,
                 resting=True,
             )
+
+        if not is_paper:
+            # 9/24 PM: OKX limit entries often rest (2 s – 48 min). Ledger the
+            # open only on a real fill (avgPx / fillTime / fee); otherwise an
+            # ``order_resting`` event that the worker resolves next cycles.
+            info = await_fill(self._exchange, decision.inst_id, order_result.order_id)
+            if info is not None:
+                ctx = self._entry_ctx(
+                    decision=decision,
+                    order_id=order_result.order_id,
+                    entry_price=entry_price,
+                    size=size,
+                    had_position=had_position,
+                )
+                if info.fully_filled or (info.terminal and info.filled_size > 0):
+                    return self.record_filled_open(ctx, info)
+                if info.terminal:
+                    self._ledger.record_event(
+                        "order_failed",
+                        inst_id=decision.inst_id,
+                        data={
+                            "error": f"entry {info.state} without fill",
+                            "order_id": order_result.order_id,
+                            "action": decision.action,
+                            **provenance_fields(decision),
+                        },
+                    )
+                    return ExecutionResult(
+                        inst_id=decision.inst_id,
+                        action=decision.action,
+                        success=False,
+                        order_id=order_result.order_id,
+                        error=f"entry {info.state} without fill",
+                        price=entry_price,
+                        size=size,
+                    )
+                self._ledger.record_event(
+                    ORDER_RESTING_EVENT,
+                    inst_id=decision.inst_id,
+                    data={
+                        "order_id": order_result.order_id,
+                        "price": entry_price,
+                        "size": size,
+                        "action": decision.action,
+                        "state": info.state,
+                        "filled_size": info.filled_size,
+                        "ctx": ctx,
+                        **provenance_fields(decision),
+                    },
+                )
+                return ExecutionResult(
+                    inst_id=decision.inst_id,
+                    action=decision.action,
+                    success=True,
+                    order_id=order_result.order_id,
+                    price=entry_price,
+                    size=size,
+                    resting=True,
+                )
 
         if is_filled or not is_paper:
             prov = provenance_fields(decision)

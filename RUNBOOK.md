@@ -926,6 +926,18 @@ PYTHONPATH=. python scripts/llm_vs_rule_daily.py --db data/keel_ledger.db --hour
 Wired in existing `apply_rule_fire_cooldown` (cycle path). Opt C (stack RSI chase / volume gates) is **out of scope** here.
 
 
+### 9/24 post-mortem — fill truth, close reconcile, ADX 20, BE 1.0R (2026-09-25)
+
+Audit: `audit/review-2026-09-24.md`.
+
+| Change | Env / code | Default | Behavior |
+|--------|------------|---------|----------|
+| Fill truth | `keel.execution.entry_fill` + orchestrator | wait **8 s** | Ledger `open` only after OKX `get_order` shows a fill (price = avgPx, ts = fillTime, fee). Still resting → `order_resting` event (with replay ctx); each cycle `reconcile_resting_entries` ledgers the fill or cancels after `KEEL_ENTRY_TTL_SECONDS` (**900**, 0=never) → `order_entry_resolved`. |
+| TP/SL confirm | `confirm_protection` | on | Checked only after fill, retried; missing → standalone full-position OCO (`place_oco_tpsl`, `sl_tp_repaired`). `no_pending_oco_after_fill` = real failure. |
+| Close truth | `close_reconcile` | lookback **72 h** | Runs before decisions *and* at cycle end. Tracked ids dropped while the key stays live now close. Exit/PnL/fee from OKX positions-history (`pnl` = realizedPnl net of fees+funding, `metadata.gross_pnl`). Sweep backfills live `keel-llm` opens no position covers, only when history proves the close. |
+| ADX floor | `KEEL_LLM_ADX_MIN` | **20** (`llm_demo`; code 15) | WAIT `adx floor veto`, gate `adx_ok`. |
+| BE trigger | `KEEL_LLM_BE_R` | **1.0** (`llm_demo`; code 0.5) | `sl_protect` event carries `be_r`. |
+
 ### Gap P1 (2026-09-22) — dual-log honesty + soft-4h fairness + ops
 
 **P1-1 LLM vs rule gate asymmetry (document, do not silent-align):**
