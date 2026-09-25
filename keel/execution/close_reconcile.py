@@ -10,6 +10,16 @@ Design (no invented history):
 - Next cycle, keys present last time but gone now → record ``trades(action=close)``
   plus ``sl_hit`` / ``tp_hit`` / ``close`` events.
 - First cycle after deploy only baselines; historical orphan opens stay unmatched.
+
+9/24 post-mortem fixes:
+- A key (``inst|side``) that stays live while its tracked open ids change
+  (old position SL'd, new one opened between two cycles — #274/#277) now
+  closes the dropped ids instead of silently re-pointing the key.
+- Exit price / PnL / fees come from OKX ``positions-history`` (closeAvgPx,
+  realizedPnl, fee, fundingFee, uTime) when the adapter supports it; the old
+  ticker-at-detection estimate is only a fallback.
+- Live ``keel-llm`` opens inside ``KEEL_CLOSE_BACKFILL_LOOKBACK_HOURS`` that no
+  live position covers are closed only when positions-history proves it.
 """
 from __future__ import annotations
 
@@ -18,12 +28,18 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from keel.config.settings import _env
 from keel.domain.instruments import lookup_instrument
 from keel.domain.records import TradeRecord
+from keel.execution.entry_fill import fetch_fill
 
 logger = logging.getLogger("keel.execution.close_reconcile")
 
 POSITIONS_SEEN_EVENT = "positions_seen"
+DEFAULT_BACKFILL_LOOKBACK_HOURS = 72.0
+_BACKFILL_GRACE_SECONDS = 120.0
+_MAX_ORDER_LOOKUPS = 8
+_HISTORY_MATCH_TOLERANCE_S = 5.0
 ExitReason = Literal["sl", "tp", "manual", "unknown"]
 
 
@@ -79,6 +95,9 @@ def infer_exit_reason(
     tp = float(take_profit) if take_profit not in (None, "", 0, 0.0) else None
 
     if algo:
+        actual = str(algo.get("actualSide") or "").strip().lower()
+        if actual in ("sl", "tp"):
+            return actual  # type: ignore[return-value]
         try:
             trigger = float(algo.get("triggerPx") or 0) or None
         except (TypeError, ValueError):
@@ -304,8 +323,15 @@ def record_close_for_open(
     now: float | None = None,
     algo: dict[str, Any] | None = None,
     extra_meta: dict[str, Any] | None = None,
+    pnl_override: float | None = None,
+    fee: float = 0.0,
 ) -> CloseOutcome | None:
-    """Append close trade + distinct hit/close event. Idempotent on open_trade_id."""
+    """
+    Append close trade + distinct hit/close event. Idempotent on open_trade_id.
+
+    ``pnl_override`` (e.g. OKX realizedPnl, fee+funding inclusive) replaces the
+    price-diff estimate; ``fee`` is stored as a positive cost.
+    """
     if open_trade.id is None:
         return None
     open_id = int(open_trade.id)
@@ -326,6 +352,8 @@ def record_close_for_open(
             size=size,
             inst_id=open_trade.inst_id,
         )
+    if pnl_override is not None:
+        pnl = float(pnl_override)
     meta: dict[str, Any] = {
         "open_trade_id": open_id,
         "exit_reason": exit_reason,
@@ -350,6 +378,7 @@ def record_close_for_open(
             size=size,
             price=float(exit_price),
             pnl=pnl,
+            fee=abs(float(fee or 0.0)),
             strategy_tag=open_trade.strategy_tag or "keel-llm",
             reason=f"exit:{exit_reason}",
             metadata=meta,
@@ -411,6 +440,216 @@ def _build_current_snapshot(
     return snap
 
 
+def backfill_lookback_seconds() -> float:
+    """KEEL_CLOSE_BACKFILL_LOOKBACK_HOURS (default 72; 0 disables the sweep)."""
+    raw = (_env("KEEL_CLOSE_BACKFILL_LOOKBACK_HOURS", "") or "").strip()
+    try:
+        hours = float(raw) if raw else DEFAULT_BACKFILL_LOOKBACK_HOURS
+    except ValueError:
+        hours = DEFAULT_BACKFILL_LOOKBACK_HOURS
+    return max(0.0, min(hours, 24.0 * 90)) * 3600.0
+
+
+def _fetch_positions_history(exchange: Any) -> list[dict[str, Any]] | None:
+    """None when the adapter has no positions-history (paper / mocks)."""
+    getter = getattr(exchange, "get_positions_history", None)
+    if not callable(getter):
+        return None
+    try:
+        rows = getter()
+    except Exception:
+        logger.debug("positions history failed", exc_info=True)
+        return []
+    if not isinstance(rows, (list, tuple)):
+        return None
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def _is_live_open(t: TradeRecord) -> bool:
+    meta = t.metadata or {}
+    return (t.strategy_tag or "") == "keel-llm" and not meta.get("shadow") and not meta.get("probe")
+
+
+class _FillTsResolver:
+    """Open fill time: metadata ``fill_ts`` else OKX order ``fillTime`` (bounded lookups)."""
+
+    def __init__(self, exchange: Any, max_lookups: int = _MAX_ORDER_LOOKUPS) -> None:
+        self._exchange = exchange
+        self._left = int(max_lookups)
+
+    def __call__(self, t: TradeRecord) -> float | None:
+        meta = t.metadata or {}
+        try:
+            ts = float(meta.get("fill_ts") or 0.0)
+        except (TypeError, ValueError):
+            ts = 0.0
+        if ts > 0:
+            return ts
+        oid = meta.get("order_id")
+        if not oid or self._left <= 0:
+            return None
+        self._left -= 1
+        info = fetch_fill(self._exchange, t.inst_id, str(oid))
+        return info.fill_ts if info is not None else None
+
+
+def match_history_close(
+    history: list[dict[str, Any]],
+    *,
+    inst_id: str,
+    side: str,
+    fill_ts: float,
+    tolerance_s: float = _HISTORY_MATCH_TOLERANCE_S,
+) -> dict[str, Any] | None:
+    """Closed position whose open time (cTime) matches the entry fill time."""
+    best: tuple[float, dict[str, Any]] | None = None
+    for row in history:
+        if str(row.get("instId") or "") != inst_id:
+            continue
+        pos_side = str(row.get("posSide") or "").lower()
+        if pos_side not in ("net", "", str(side).lower()):
+            continue
+        try:
+            c_ts = float(row.get("cTime") or 0) / 1000.0
+            close_px = float(row.get("closeAvgPx") or 0)
+            u_ts = float(row.get("uTime") or 0) / 1000.0
+        except (TypeError, ValueError):
+            continue
+        if close_px <= 0 or u_ts <= 0:
+            continue
+        gap = abs(c_ts - float(fill_ts))
+        if gap > tolerance_s:
+            continue
+        if best is None or gap < best[0]:
+            best = (gap, row)
+    return best[1] if best else None
+
+
+def _history_close_fields(row: dict[str, Any], open_trade: TradeRecord) -> dict[str, Any]:
+    def f(key: str) -> float:
+        try:
+            return float(row.get(key) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    total = f("closeTotalPos") or float(open_trade.size or 0.0) or 1.0
+    share = min(1.0, float(open_trade.size or total) / total) if total > 0 else 1.0
+    return {
+        "exit_px": f("closeAvgPx"),
+        "close_ts": f("uTime") / 1000.0,
+        "net_pnl": f("realizedPnl") * share,
+        "gross_pnl": f("pnl") * share,
+        "fee_total": f("fee") * share,
+        "funding_fee": f("fundingFee") * share,
+        "okx_open_avg_px": f("openAvgPx"),
+        "pos_id": str(row.get("posId") or ""),
+        "close_type": str(row.get("type") or ""),
+    }
+
+
+def _close_from_history(
+    ledger: Any,
+    open_trade: TradeRecord,
+    row: dict[str, Any],
+    *,
+    algos: list[dict[str, Any]],
+    source: str,
+) -> CloseOutcome | None:
+    h = _history_close_fields(row, open_trade)
+    meta = open_trade.metadata or {}
+    side = str(open_trade.direction or "long").lower()
+
+    def fnum(raw: Any) -> float | None:
+        try:
+            return float(raw) if raw not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    algo = _pick_algo_fill(
+        algos, inst_id=open_trade.inst_id, side=side, since_ts=float(open_trade.timestamp or 0.0)
+    )
+    entry = h["okx_open_avg_px"] or float(open_trade.price or 0.0)
+    reason = infer_exit_reason(
+        side=side,
+        entry=entry,
+        exit_price=h["exit_px"],
+        stop_loss=fnum(meta.get("stop_loss")),
+        take_profit=fnum(meta.get("take_profit")),
+        algo=algo,
+    )
+    return record_close_for_open(
+        ledger,
+        open_trade=open_trade,
+        exit_price=h["exit_px"],
+        exit_reason=reason,
+        now=h["close_ts"],
+        algo=algo,
+        pnl_override=h["net_pnl"],
+        fee=abs(h["fee_total"]),
+        extra_meta={
+            "source": source,
+            "pnl_basis": "okx_realized_net",
+            "gross_pnl": h["gross_pnl"],
+            "fee_total": h["fee_total"],
+            "funding_fee": h["funding_fee"],
+            "okx_open_avg_px": h["okx_open_avg_px"],
+            "pos_id": h["pos_id"],
+            "close_type": h["close_type"],
+        },
+    )
+
+
+def _close_estimated(
+    exchange: Any,
+    ledger: Any,
+    open_trade: TradeRecord,
+    *,
+    prev: dict[str, Any],
+    algos: list[dict[str, Any]],
+    ts: float,
+) -> CloseOutcome | None:
+    """Legacy estimate (algo actualPx → ticker → last mark) when no history row."""
+    side = str(open_trade.direction or "long").lower()
+    algo = _pick_algo_fill(
+        algos, inst_id=open_trade.inst_id, side=side, since_ts=float(open_trade.timestamp or 0.0)
+    )
+    fallback_mark = prev.get("mark_price") or prev.get("avg_price")
+    exit_px = _exit_price_from_sources(
+        exchange=exchange,
+        inst_id=open_trade.inst_id,
+        algo=algo,
+        fallback_mark=float(fallback_mark) if fallback_mark else None,
+    )
+    meta = open_trade.metadata or {}
+    try:
+        sl_f = float(meta["stop_loss"]) if meta.get("stop_loss") not in (None, "") else None
+    except (TypeError, ValueError):
+        sl_f = None
+    try:
+        tp_f = float(meta["take_profit"]) if meta.get("take_profit") not in (None, "") else None
+    except (TypeError, ValueError):
+        tp_f = None
+    reason = infer_exit_reason(
+        side=side,
+        entry=float(open_trade.price or 0.0),
+        exit_price=exit_px,
+        stop_loss=sl_f,
+        take_profit=tp_f,
+        algo=algo,
+    )
+    # No price at all → close at entry for bookkeeping (pnl 0).
+    px = exit_px if exit_px > 0 else float(open_trade.price or 0.0)
+    return record_close_for_open(
+        ledger,
+        open_trade=open_trade,
+        exit_price=px,
+        exit_reason=reason,
+        now=ts,
+        algo=algo,
+        extra_meta={"source": "position_vanish", "pnl_basis": "estimate_gross"},
+    )
+
+
 def reconcile_closed_positions(
     exchange: Any,
     ledger: Any,
@@ -419,13 +658,16 @@ def reconcile_closed_positions(
     positions: list[Any] | None = None,
 ) -> list[CloseOutcome]:
     """
-    Detect positions that vanished since the last cycle and ledger closes.
+    Detect closed ledger opens and record closes.
 
-    First successful snapshot only baselines (no closes). Subsequent cycles
-    emit close rows solely for ``open_trade_ids`` that were tracked while live.
+    1. Keys live last snapshot but gone now → close their tracked ids.
+    2. Keys still live whose tracked ids changed → close the dropped ids.
+    3. Sweep: live ``keel-llm`` opens (lookback window) that no live position
+       covers → close only when OKX positions-history proves the close.
 
-    Pass ``positions`` when the caller already fetched the book (avoids an extra
-    OKX round-trip / 503). When omitted, fetches via ``exchange.get_positions``.
+    Exit data prefers positions-history (true avg exit, net realized PnL,
+    fees, close time); otherwise the legacy estimate. First snapshot only
+    baselines paths 1–2. Pass ``positions`` to reuse a book fetch.
     """
     if ledger is None:
         return []
@@ -445,86 +687,102 @@ def reconcile_closed_positions(
     last = load_last_positions_seen(ledger)
     current = _build_current_snapshot(exchange, ledger, positions)
     outcomes: list[CloseOutcome] = []
+    tracked_now: set[int] = set()
+    for row in current.values():
+        for oid in row.get("open_trade_ids") or []:
+            try:
+                tracked_now.add(int(oid))
+            except (TypeError, ValueError):
+                continue
 
-    if last:
-        vanished_keys = set(last) - set(current)
-        # Prefetch algo history once when anything vanished.
+    # open_id -> (prev snapshot row | None for sweep-only)
+    candidates: dict[int, dict[str, Any] | None] = {}
+    for key, prev in (last or {}).items():
+        prev_ids = prev.get("open_trade_ids") or []
+        if not isinstance(prev_ids, list) or not prev_ids:
+            # Nothing tracked while live — do not invent closes from orphans.
+            continue
+        for oid in prev_ids:
+            try:
+                oid_i = int(oid)
+            except (TypeError, ValueError):
+                continue
+            if oid_i not in tracked_now:
+                candidates[oid_i] = prev
+
+    lookback = backfill_lookback_seconds()
+    sweep: list[TradeRecord] = []
+    if lookback > 0:
+        seen_keys: set[str] = set()
+        try:
+            recent = ledger.get_trades(since=ts - lookback, action="open", limit=500)
+        except Exception:
+            recent = []
+        for t in recent:
+            key = f"{t.inst_id}|{str(t.direction).lower()}"
+            if key in seen_keys or not _is_live_open(t):
+                continue
+            seen_keys.add(key)
+            for u in unmatched_open_trades(ledger, t.inst_id, str(t.direction)):
+                if u.id is None or int(u.id) in tracked_now or int(u.id) in candidates:
+                    continue
+                if not _is_live_open(u):
+                    continue
+                if float(u.timestamp or 0.0) < ts - lookback:
+                    continue
+                if ts - float(u.timestamp or 0.0) < _BACKFILL_GRACE_SECONDS:
+                    continue
+                sweep.append(u)
+
+    if candidates or sweep:
+        history = _fetch_positions_history(exchange)
+        fill_ts_of = _FillTsResolver(exchange)
         algo_cache: dict[str, list[dict[str, Any]]] = {}
-        for key in vanished_keys:
-            prev = last[key]
-            inst = str(prev.get("inst_id") or "")
-            side = str(prev.get("side") or "").lower()
-            if not inst or side not in ("long", "short"):
-                continue
-            open_ids = prev.get("open_trade_ids") or []
-            if not isinstance(open_ids, list) or not open_ids:
-                # Nothing tracked while live — do not invent closes from orphans.
-                continue
+
+        def algos_for(inst: str) -> list[dict[str, Any]]:
             if inst not in algo_cache:
                 algo_cache[inst] = _fetch_algo_history(exchange, inst)
-            algos = algo_cache[inst]
-            # Oldest tracked open timestamp bounds algo search.
-            open_rows: list[TradeRecord] = []
-            for oid in open_ids:
-                try:
-                    oid_i = int(oid)
-                except (TypeError, ValueError):
-                    continue
-                # Look up among unmatched + already-listed opens for this inst.
-                found = None
-                for t in unmatched_open_trades(ledger, inst, side):
-                    if t.id == oid_i:
-                        found = t
-                        break
-                if found is None:
-                    # May already be closed (idempotent skip) or missing.
-                    continue
-                open_rows.append(found)
-            if not open_rows:
-                continue
-            since_ts = min(float(t.timestamp or 0.0) for t in open_rows)
-            algo = _pick_algo_fill(algos, inst_id=inst, side=side, since_ts=since_ts)
-            fallback_mark = prev.get("mark_price") or prev.get("avg_price")
-            exit_px = _exit_price_from_sources(
-                exchange=exchange,
-                inst_id=inst,
-                algo=algo,
-                fallback_mark=float(fallback_mark) if fallback_mark else None,
+            return algo_cache[inst]
+
+        def by_history(t: TradeRecord, source: str) -> CloseOutcome | None | bool:
+            if history is None:
+                return False
+            fts = fill_ts_of(t)
+            if fts is None:
+                return False
+            row = match_history_close(
+                history, inst_id=t.inst_id, side=str(t.direction), fill_ts=fts
             )
-            for open_trade in open_rows:
-                meta = open_trade.metadata or {}
-                sl = meta.get("stop_loss")
-                tp = meta.get("take_profit")
-                try:
-                    sl_f = float(sl) if sl not in (None, "") else None
-                except (TypeError, ValueError):
-                    sl_f = None
-                try:
-                    tp_f = float(tp) if tp not in (None, "") else None
-                except (TypeError, ValueError):
-                    tp_f = None
-                reason = infer_exit_reason(
-                    side=side,
-                    entry=float(open_trade.price or 0.0),
-                    exit_price=exit_px,
-                    stop_loss=sl_f,
-                    take_profit=tp_f,
-                    algo=algo,
+            if row is None:
+                return False
+            return _close_from_history(
+                ledger, t, row, algos=algos_for(t.inst_id), source=source
+            )
+
+        open_by_id: dict[int, TradeRecord] = {}
+        for oid_i, prev in candidates.items():
+            inst = str((prev or {}).get("inst_id") or "")
+            side = str((prev or {}).get("side") or "").lower()
+            if not inst or side not in ("long", "short"):
+                continue
+            for t in unmatched_open_trades(ledger, inst, side):
+                if t.id is not None:
+                    open_by_id[int(t.id)] = t
+        for oid_i, prev in candidates.items():
+            t = open_by_id.get(oid_i)
+            if t is None:
+                continue  # already closed (idempotent) or missing
+            res = by_history(t, "okx_positions_history")
+            if res is False:
+                res = _close_estimated(
+                    exchange, ledger, t, prev=prev or {}, algos=algos_for(t.inst_id), ts=ts
                 )
-                # If we have no price at all, still record with entry as last resort
-                # so the open is closed for bookkeeping (pnl None / 0).
-                px = exit_px if exit_px > 0 else float(open_trade.price or 0.0)
-                outcome = record_close_for_open(
-                    ledger,
-                    open_trade=open_trade,
-                    exit_price=px,
-                    exit_reason=reason,
-                    now=ts,
-                    algo=algo,
-                    extra_meta={"source": "position_vanish"},
-                )
-                if outcome is not None:
-                    outcomes.append(outcome)
+            if isinstance(res, CloseOutcome):
+                outcomes.append(res)
+        for t in sweep:
+            res = by_history(t, "okx_positions_history_backfill")
+            if isinstance(res, CloseOutcome):
+                outcomes.append(res)
 
     # Always refresh baseline snapshot (including first run).
     try:
@@ -551,7 +809,9 @@ def reconcile_closed_positions(
 __all__ = [
     "POSITIONS_SEEN_EVENT",
     "CloseOutcome",
+    "backfill_lookback_seconds",
     "infer_exit_reason",
+    "match_history_close",
     "match_open_trade_ids",
     "realized_pnl",
     "reconcile_closed_positions",

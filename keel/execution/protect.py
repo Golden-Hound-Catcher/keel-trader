@@ -27,6 +27,11 @@ def _num(key: str, default: float) -> float:
         return default
 
 
+def be_trigger_r() -> float:
+    """Favorable-R that arms the BE+fee stop (KEEL_LLM_BE_R; code default 0.5)."""
+    return max(0.0, _num("KEEL_LLM_BE_R", DEFAULT_BE_R))
+
+
 def close_fee_pad(entry: float, *, taker_bps: float | None = None) -> float:
     bps = DEFAULT_TAKER_BPS if taker_bps is None else float(taker_bps)
     return float(entry) * max(0.0, bps) / 10_000.0
@@ -268,6 +273,7 @@ def protect_open_positions(
                         "favorable_r": plan.favorable_r,
                         "widened": plan.widened,
                         "breakeven": plan.breakeven,
+                        "be_r": be_trigger_r(),
                     },
                     timestamp=now,
                 )
@@ -278,6 +284,7 @@ def protect_open_positions(
 
 __all__ = [
     "ProtectPlan",
+    "be_trigger_r",
     "close_fee_pad",
     "favorable_r",
     "plan_protect",
