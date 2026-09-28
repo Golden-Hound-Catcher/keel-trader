@@ -1,9 +1,16 @@
 """Fee-aware SL protect: widen starved stops, BE only after a real R."""
 from __future__ import annotations
 
+import os
 import unittest
+from unittest.mock import patch
 
-from keel.execution.protect import close_fee_pad, favorable_r, plan_protect
+from keel.execution.protect import (
+    close_fee_pad,
+    favorable_r,
+    plan_protect,
+    price_tick_tolerance,
+)
 
 
 class TestProtectPlan(unittest.TestCase):
@@ -126,6 +133,72 @@ class TestProtectPlan(unittest.TestCase):
         if plan is not None:
             self.assertGreaterEqual(plan.new_sl, be_sl - 1e-6)
             self.assertNotAlmostEqual(plan.new_sl, 86031.0, places=0)
+
+    def test_tick_rounded_be_short_not_reapplied(self) -> None:
+        """9/25 #294 shape: OKX stores BE 84037.66015 as 84037.7 (BTC tick 0.1).
+
+        Without a tick tolerance every cycle re-armed BE, re-amended the OCO
+        and re-logged ``breakeven_plus_close_fee`` (event spam).
+        """
+        with patch.dict(os.environ, {"KEEL_LLM_BE_R": "1.0"}):
+            plan = plan_protect(
+                side="short",
+                entry=84079.7,
+                mark=83500.0,
+                sl=84037.7,
+                tp=82969.8,
+                atr=250.0,
+                inst_id="BTC-USDT-SWAP",
+            )
+        self.assertIsNone(plan)
+
+    def test_tick_rounded_be_long_not_reapplied(self) -> None:
+        with patch.dict(os.environ, {"KEEL_LLM_BE_R": "1.0"}):
+            plan = plan_protect(
+                side="long",
+                entry=117.42,
+                mark=119.5,
+                sl=117.47,  # BE 117.47871 rounded down by a tick-sized amount
+                tp=119.85,
+                atr=0.4,
+                inst_id="SOL-USDT-SWAP",
+            )
+        # 117.47 is 0.0087 below BE: more than half a 0.01 tick -> re-arm once.
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        self.assertTrue(plan.breakeven)
+        with patch.dict(os.environ, {"KEEL_LLM_BE_R": "1.0"}):
+            again = plan_protect(
+                side="long",
+                entry=117.42,
+                mark=119.5,
+                sl=117.48,  # exchange-rounded value of plan.new_sl
+                tp=119.85,
+                atr=0.4,
+                inst_id="SOL-USDT-SWAP",
+            )
+        self.assertIsNone(again)
+
+    def test_be_still_arms_first_time_with_inst_id(self) -> None:
+        with patch.dict(os.environ, {"KEEL_LLM_BE_R": "1.0"}):
+            plan = plan_protect(
+                side="short",
+                entry=84079.7,
+                mark=83500.0,  # +1.15R
+                sl=84584.18,
+                tp=82969.8,
+                atr=250.0,
+                inst_id="BTC-USDT-SWAP",
+            )
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        self.assertTrue(plan.breakeven)
+        self.assertAlmostEqual(plan.new_sl, 84079.7 - close_fee_pad(84079.7))
+
+    def test_price_tick_tolerance(self) -> None:
+        self.assertAlmostEqual(price_tick_tolerance("BTC-USDT-SWAP"), 0.05)
+        self.assertAlmostEqual(price_tick_tolerance("SOL-USDT-SWAP"), 0.005)
+        self.assertEqual(price_tick_tolerance(None), 0.0)
 
 
 if __name__ == "__main__":

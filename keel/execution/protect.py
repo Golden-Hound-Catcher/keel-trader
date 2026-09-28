@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from keel.config.settings import _env
+from keel.domain.instruments import lookup_instrument
 from keel.policy.edge_overlay import plan_llm_geometry
 
 logger = logging.getLogger("keel.execution.protect")
@@ -35,6 +36,22 @@ def be_trigger_r() -> float:
 def close_fee_pad(entry: float, *, taker_bps: float | None = None) -> float:
     bps = DEFAULT_TAKER_BPS if taker_bps is None else float(taker_bps)
     return float(entry) * max(0.0, bps) / 10_000.0
+
+
+def price_tick_tolerance(inst_id: str | None) -> float:
+    """Half a price tick for ``inst_id`` (0 when unknown / not given).
+
+    OKX stores trigger prices rounded to the instrument tick, so a BE stop of
+    84037.66015 comes back as 84037.7. Without a tolerance the next cycle
+    sees "BE not yet applied" and re-amends + re-logs every cycle.
+    """
+    if not inst_id:
+        return 0.0
+    try:
+        precision = max(int(lookup_instrument(str(inst_id)).price_precision), 0)
+    except Exception:
+        return 0.0
+    return 0.5 * (10.0 ** -precision)
 
 
 def favorable_r(side: str, entry: float, sl: float, mark: float) -> float:
@@ -69,6 +86,7 @@ def plan_protect(
     atr: float,
     taker_bps: float = DEFAULT_TAKER_BPS,
     be_r: float | None = None,
+    inst_id: str | None = None,
 ) -> ProtectPlan | None:
     """
     Compute a wider SL / farther TP, and optionally a BE+close-fee stop.
@@ -130,20 +148,22 @@ def plan_protect(
     # tiny leftover 1-ATR risk after we just opened the stop up.
     r_vs_new = favorable_r(side_s, entry_f, new_sl, mark_f)
     pad = close_fee_pad(entry_f, taker_bps=taker_bps)
+    # A BE stop already on the exchange (tick-rounded) counts as applied.
+    tol = price_tick_tolerance(inst_id)
     breakeven = False
     reason = "widen_fee_geometry" if widened else "hold"
     if trigger > 0 and r_vs_new >= trigger:
         if side_s == "long":
             be_sl = entry_f + pad
             cap = mark_f - pad
-            if be_sl < cap and be_sl > new_sl:
+            if be_sl < cap and be_sl > new_sl + tol:
                 new_sl = be_sl
                 breakeven = True
                 reason = "breakeven_plus_close_fee"
         else:
             be_sl = entry_f - pad
             cap = mark_f + pad
-            if be_sl > cap and be_sl < new_sl:
+            if be_sl > cap and be_sl < new_sl - tol:
                 new_sl = be_sl
                 breakeven = True
                 reason = "breakeven_plus_close_fee"
@@ -244,6 +264,7 @@ def protect_open_positions(
             sl=sl,
             tp=tp,
             atr=float(atr_map.get(inst) or 0.0),
+            inst_id=inst,
         )
         if plan is None:
             continue
@@ -288,5 +309,6 @@ __all__ = [
     "close_fee_pad",
     "favorable_r",
     "plan_protect",
+    "price_tick_tolerance",
     "protect_open_positions",
 ]
