@@ -26,7 +26,9 @@ from keel.llm.prompts.compose import (
     PromptComposer,
     format_market_block,
     format_rule_block,
+    htf_4h_prompt_variables,
 )
+from keel.policy.edge_overlay import effective_llm_4h_mode
 from keel.policy.protocol import PolicyContext, PolicyResult
 from keel.policy.stub import RuleDecisionPolicy
 
@@ -140,8 +142,12 @@ class LLMDecisionPolicy:
             "market_block": format_market_block(snaps),
             "profile_name": "keel-default",
         }
+        # 4h wording follows the effective KEEL_LLM_4H_MODE (same source as
+        # the edge-overlay veto) so hard mode tells the model 4h-neutral → WAIT.
+        variables.update(htf_4h_prompt_variables(effective_llm_4h_mode()))
         assembled = self._composer.compose(variables=variables)
         prompt_meta = {
+            "llm_4h_mode": variables["htf_4h_mode"],
             "modules_used": assembled.modules_used,
             "characters": assembled.characters,
             "prompt_valid": assembled.valid,

@@ -110,6 +110,18 @@ def _4h_mode() -> str:
     return "soft"
 
 
+def effective_llm_4h_mode() -> str:
+    """
+    Effective 4h interpretation for the LLM path: ``hard`` | ``soft`` | ``off``.
+
+    ``off`` when ``KEEL_LLM_REQUIRE_4H=0``; otherwise ``_4h_mode()`` (env/.env/
+    profile — llm_demo defaults to hard). Single source of truth shared by the
+    code veto (``_htf_ok``) and the prompt wording (``keel.llm.prompts``) so the
+    model is told the same 4h rule the kernel enforces.
+    """
+    return _4h_mode() if _require_4h() else "off"
+
+
 def _require_15m_align() -> bool:
     """F7: entry TF must not oppose the side. Default on."""
     return _flag("KEEL_LLM_REQUIRE_15M_ALIGN", True)
