@@ -18,12 +18,61 @@ class HealthResponse(BaseModel):
     environment: Literal["demo", "live"]
 
 
+class ZeroEntryLastEntry(BaseModel):
+    trade_id: int | None = None
+    timestamp: float | None = None
+    time_cst: str | None = None
+    inst_id: str | None = None
+    direction: str | None = None
+
+
+class ZeroEntryAlert(BaseModel):
+    """48h zero-entry alert (keel/ledger/zero_entry_alert.py).
+
+    ``kind``: ok | market (no fills ≥ threshold, worker healthy — regime) |
+    outage (worker stale or cycle coverage < 50 %) | disabled.
+    ``message_zh`` is the one-line digest text.
+    """
+
+    code: str = "zero_entry_48h"
+    triggered: bool = False
+    kind: str = "ok"
+    severity: str = "ok"
+    threshold_hours: float = 48.0
+    checked_at: float | None = None
+    checked_at_cst: str | None = None
+    hours_since_last_entry: float | None = None
+    last_entry: ZeroEntryLastEntry | None = None
+    worker_stale: bool = False
+    seconds_since_last_cycle: int | None = None
+    worker_stale_threshold_seconds: int | None = None
+    window_hours: float | None = None
+    cycle_count: int = 0
+    cycle_coverage: float | None = None
+    decisions_in_window: int = 0
+    veto_counts: dict[str, int] = Field(default_factory=dict)
+    veto_shares: dict[str, float] = Field(default_factory=dict)
+    trend_4h_neutral_share: float | None = None
+    message_zh: str = ""
+
+
+class OpsAlert(BaseModel):
+    """One Monitor / digest alert row (triggered only)."""
+
+    code: str
+    severity: str = "warning"
+    kind: str | None = None
+    message_zh: str = ""
+
+
 class ReadyResponse(BaseModel):
     ready: bool
     okx_configured: bool
     llm_configured: bool
     seconds_since_last_cycle: int | None = None
     worker_stale: bool = False
+    # Informational only — does NOT affect ``ready`` (a quiet market is not unready).
+    zero_entry_alert: ZeroEntryAlert | None = None
 
 
 class CredentialsStatus(BaseModel):
@@ -531,6 +580,9 @@ class QualityStatsResponse(BaseModel):
     avg_cycle_duration_ms: float | None = None
     # Stage R/S: optional per-instrument breakdown (soft-fail if older clients ignore).
     by_instrument: dict[str, QualityInstrumentStats] = Field(default_factory=dict)
+    # 2026-09-29: triggered ops alerts (Monitor list) + full 48h zero-entry payload.
+    alerts: list[OpsAlert] = Field(default_factory=list)
+    zero_entry_alert: ZeroEntryAlert | None = None
 
 
 class NearestSignalItem(BaseModel):

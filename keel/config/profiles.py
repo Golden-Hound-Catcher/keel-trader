@@ -32,7 +32,12 @@ LLM_DEMO: dict[str, str] = {
     "KEEL_LLM_EDGE_OVERLAY": "1",
     "KEEL_LLM_REQUIRE_1H": "1",
     "KEEL_LLM_REQUIRE_4H": "1",
-    "KEEL_LLM_4H_MODE": "soft",  # F10: soft+4h-neutral needs 15m same-dir
+    # 2026-09-29: hard = 4h must match side (4h neutral → WAIT, gate htf_ok).
+    # Backtest audit/backtest-4h-neutral-2026-09-29.md: 43 trades −26.06 → 25 trades
+    # +22.27, fires/day 6.4 → 3.7; 4h-neutral entries were 18 trades / 0 wins.
+    # Risk: all-day 4h-neutral regimes give 0 fires → 48h zero-entry alert
+    # (keel/ledger/zero_entry_alert.py). Env/.env KEEL_LLM_4H_MODE=soft still wins.
+    "KEEL_LLM_4H_MODE": "hard",
     "KEEL_LLM_REQUIRE_15M_ALIGN": "1",
     # P1-2: 15m same-dir (neutral blocks) when require_15m on — rule fairness
     "KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL": "1",

@@ -149,7 +149,7 @@ Paper 门禁脚本 **不能**替代 demo（demo 需要操作员本机 key）。C
 | 端点 / 开关 | 作用 |
 |-------------|------|
 | `GET /health` | 进程存活；返回 `status=ok`、版本、demo/live 环境标签 |
-| `GET /ready` | 账本可读且 worker **未** stale；`worker_stale` = 距上次 cycle 超过 `max(2×interval, interval+300)`（默认 interval 900s → 1800s） |
+| `GET /ready` | 账本可读且 worker **未** stale；`worker_stale` = 距上次 cycle 超过 `max(2×interval, interval+300)`（默认 interval 900s → 1800s）。另含 `zero_entry_alert`（仅信息，不影响 `ready`，见下） |
 | `KEEL_KILL_SWITCH=1` | 紧急熔断：风控拒绝一切交易动作（BUY/SELL/scale/close）；`WAIT` 仍可通过 |
 | `KEEL_SHADOW_MODE=1` | 影子成交：风控通过后 ledger `shadow_fill`，**不**调用 `place_order`；kill-switch 只拦真实下单，shadow 仍可记录 |
 | `KEEL_MAX_NOTIONAL_PER_INSTRUMENT` | 单标的名义价值上限（默认 2000 USDT） |
@@ -1296,3 +1296,15 @@ curl -s "http://127.0.0.1:8080/api/v1/stats/shadow_markout?hours=24" | python -m
 - 缺后续价 → 计入 `skipped`，不进 sample
 - Monitor：Decision quality 旁 `mk netRT …` chip（有 probe sample 时优先 net roundtrip）
 
+
+
+## 48h 零开仓告警（2026-09-29，配合 llm_demo `KEEL_LLM_4H_MODE=hard`）
+
+hard-4h 在全天 4h=neutral 的行情下会 0 开火。`keel/ledger/zero_entry_alert.py` 只读账本判断：
+距上次 **已成交** LLM 开仓（`trades.action in (open, scale_in)` 且 `strategy_tag=keel-llm`）是否 ≥ `KEEL_ZERO_ENTRY_ALERT_HOURS`（默认 48，0=关）。
+
+- `kind=ok`：未触发；`kind=market`（severity warning）：worker 正常、窗口周期覆盖率 ≥50%，属行情驱动，消息给出近 48h LLM 决策中 4h 硬门槛 / ADX 下限 / 其他门槛 / 已有持仓冷却 / 模型自身 WAIT 的占比与 4h=neutral 占比；
+  `kind=outage`（severity critical）：worker stale，或近 48h 周期覆盖率 <50%（服务曾中断）。
+- 读取：`curl -s http://127.0.0.1:8080/ready | jq .zero_entry_alert`（无需 token）；`GET /api/v1/stats/zero_entry`；`GET /api/v1/stats/quality` → `alerts[]` + `zero_entry_alert`（Monitor 概览告警行）；
+  `.venv/bin/python scripts/zero_entry_alert.py [--json] [--exit-code]`（直接读账本，API 挂了也能用；`--exit-code`：0 正常 / 2 market / 3 outage）。
+- worker（scheduler 进程）每 15 分钟检查一次，触发时在 `data/run/keel-worker.log` 写 `WARNING keel.worker.alerts: ZERO_ENTRY_ALERT kind=…`（首次/类型变化即写，之后每小时最多一次）。

@@ -32,7 +32,7 @@ from keel.policy import (
 
 LLM_RULE_ASYMMETRY_NOTE = (
     "LLM 15m=not-opposing (neutral OK unless KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL); "
-    "rule TF 15m=same-dir (neutral blocks). LLM 4h=soft vs rule 4h=hard under llm_demo. "
+    "rule TF 15m=same-dir (neutral blocks). LLM 4h=hard (llm_demo since 2026-09-29) = rule 4h=hard. "
     "Dual-log diverge often reflects gate definition mismatch, not model error."
 )
 MONITOR_SIDECAR_NOTE = (
