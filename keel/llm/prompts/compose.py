@@ -71,7 +71,64 @@ ALLOWED_VARIABLES = {
     "market_block",
     "profile_name",
     "rule_block",
+    "htf_4h_mode",
+    "htf_4h_rule",
+    "htf_4h_task",
 }
+
+# 4h wording rendered from the *effective* KEEL_LLM_4H_MODE (2026-09-29): the
+# prompt must describe the same 4h rule the kernel veto enforces
+# (keel.policy.edge_overlay._htf_ok), otherwise the model keeps proposing
+# entries that the code then vetoes. ``soft`` keeps the pre-2026-09-29 text.
+HTF_4H_RULE_TEXT: dict[str, str] = {
+    "hard": (
+        "- 开火需 trend1h 与方向一致；当前 trend4h 为 hard 模式：开仓必须 4h 与方向同向"
+        "（多头需 trend4h=bullish，空头需 trend4h=bearish）。trend4h=neutral 或 4h 反向时"
+        "一律直接输出 WAIT，不要提议开多/开空（内核会以 4h hard veto 否决）。"
+        "15m 独跑或 1h 为 neutral 必须 WAIT"
+    ),
+    "soft": (
+        "- 开火需 trend1h 与方向一致；trend4h 默认 soft（neutral 可开火，只要 1h 对齐；"
+        "4h 反向必须 WAIT）。仅 hard 模式才要求 4h 同向。15m 独跑或 1h 为 neutral 必须 WAIT\n"
+        "- soft-4h 且 4h=neutral 时：必须有 15m 同向确认，否则 WAIT（勿在 soft-4h 无 15m 确认时开火）"
+    ),
+    "off": (
+        "- 开火需 trend1h 与方向一致；当前不强制 trend4h（仅作参考）。"
+        "15m 独跑或 1h 为 neutral 必须 WAIT"
+    ),
+}
+# Inserted before "15m 反向、" in user_task.v2 — keep the trailing "、".
+HTF_4H_TASK_TEXT: dict[str, str] = {
+    "hard": "4h 未与方向同向（hard-4h：4h=neutral 或反向均 WAIT）、",
+    "soft": "4h 反向、soft-4h 且 4h=neutral 无 15m 同向确认、",
+    "off": "",
+}
+
+
+def normalize_htf_4h_mode(mode: str | None) -> str:
+    m = str(mode or "").strip().lower()
+    return m if m in HTF_4H_RULE_TEXT else "soft"
+
+
+def resolve_htf_4h_mode() -> str:
+    """Effective LLM 4h mode (hard|soft|off) from env/.env/profile."""
+    try:
+        # Lazy: keel.policy imports this module (avoid an import cycle).
+        from keel.policy.edge_overlay import effective_llm_4h_mode
+
+        return normalize_htf_4h_mode(effective_llm_4h_mode())
+    except Exception:  # pragma: no cover - defensive; keep prompts composable
+        return "soft"
+
+
+def htf_4h_prompt_variables(mode: str | None = None) -> dict[str, str]:
+    """Template vars ``htf_4h_mode`` / ``htf_4h_rule`` / ``htf_4h_task``."""
+    m = normalize_htf_4h_mode(mode) if mode is not None else resolve_htf_4h_mode()
+    return {
+        "htf_4h_mode": m,
+        "htf_4h_rule": HTF_4H_RULE_TEXT[m],
+        "htf_4h_task": HTF_4H_TASK_TEXT[m],
+    }
 
 
 @dataclass(frozen=True)
@@ -254,6 +311,16 @@ class PromptComposer:
                 valid=False,
                 errors=[f"total modules exceed {MAX_MODULES}"],
             )
+
+        # Fill the 4h wording from the effective setting unless the caller
+        # passed it explicitly (keeps system_rules.v2 / user_task.v2 correct
+        # for every caller, incl. tests and scripts).
+        merged_vars: dict[str, Any] = dict(variables or {})
+        if not all(k in merged_vars for k in ("htf_4h_rule", "htf_4h_task")):
+            htf_vars = htf_4h_prompt_variables(merged_vars.get("htf_4h_mode"))
+            for k, v in htf_vars.items():
+                merged_vars.setdefault(k, v)
+        variables = merged_vars
 
         used: list[str] = []
         system_parts: list[str] = []
