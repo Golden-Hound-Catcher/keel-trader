@@ -14,6 +14,14 @@ Flow now:
 - still resting → ``order_resting`` event only; each cycle
   ``reconcile_resting_entries`` records the open on fill or cancels after
   KEEL_ENTRY_TTL_SECONDS (0 = never cancel).
+- 9/28 fix: a transient ``get_order`` miss right after placement (OKX demo
+  51603 / network) used to make ``await_fill`` return None, which the
+  orchestrator reads as "adapter cannot look orders up" and fell back to the
+  legacy ledger-at-acceptance path (limit px, fee 0, single pending-OCO probe,
+  no retry, no fallback OCO) → false ``sl_tp_attach_failed=no_pending_oco``
+  on #306/#307/#308 while OKX had created the attached OCO. Now a lookup miss
+  keeps polling and, if still unknown, returns ``state="unknown"`` so the
+  entry is parked as ``order_resting`` and resolved by the next cycle.
 """
 from __future__ import annotations
 
@@ -31,6 +39,7 @@ ORDER_RESOLVED_EVENT = "order_entry_resolved"
 DEFAULT_FILL_WAIT_SECONDS = 8.0
 DEFAULT_ENTRY_TTL_SECONDS = 900.0
 _TERMINAL = frozenset({"filled", "canceled", "cancelled", "mmp_canceled"})
+UNKNOWN_STATE = "unknown"  # order lookup failed — not terminal, resolve later
 
 
 def _num(key: str, default: float) -> float:
@@ -108,7 +117,7 @@ def fetch_fill(exchange: Any, inst_id: str, order_id: str | None) -> FillInfo | 
     try:
         return parse_order_row(getter(inst_id, str(order_id)))
     except Exception:
-        logger.debug("get_order failed %s %s", inst_id, order_id, exc_info=True)
+        logger.warning("get_order failed %s %s", inst_id, order_id, exc_info=True)
         return None
 
 
@@ -121,20 +130,41 @@ def await_fill(
     poll_seconds: float = 1.0,
     sleep: Callable[[float], None] | None = None,
 ) -> FillInfo | None:
-    """Poll ``get_order`` until terminal or ``wait_seconds`` spent. None if unsupported."""
+    """
+    Poll ``get_order`` until terminal or ``wait_seconds`` spent.
+
+    None only when the adapter cannot look orders up at all (paper / stubs
+    without ``get_order``) or there is no order id. A lookup *miss* on an
+    adapter that supports it (OKX 51603 right after placement, HTTP error)
+    keeps polling; if it never resolves the result is ``state="unknown"``
+    (non-terminal) so callers park it as resting instead of assuming a fill.
+    """
+    getter = getattr(exchange, "get_order", None)
+    if not callable(getter) or not order_id:
+        return None
     sleep = sleep or time.sleep
     budget = entry_fill_wait_seconds() if wait_seconds is None else max(0.0, float(wait_seconds))
     info = fetch_fill(exchange, inst_id, order_id)
-    if info is None:
-        return None
+    misses = 0 if info is not None else 1
     spent = 0.0
-    while not info.terminal and spent < budget:
+    while (info is None or not info.terminal) and spent < budget:
         step = max(0.05, min(float(poll_seconds), budget - spent))
         sleep(step)
         spent += step
         nxt = fetch_fill(exchange, inst_id, order_id)
         if nxt is not None:
             info = nxt
+        elif info is None:
+            misses += 1
+    if info is None:
+        logger.warning(
+            "order lookup unresolved after %.1fs (%d misses) %s %s — parking as resting",
+            spent,
+            misses,
+            inst_id,
+            order_id,
+        )
+        return FillInfo(state=UNKNOWN_STATE, filled_size=0.0, avg_px=0.0, fill_ts=None, fee=0.0)
     return info
 
 
@@ -332,6 +362,7 @@ __all__ = [
     "FillInfo",
     "ORDER_RESOLVED_EVENT",
     "ORDER_RESTING_EVENT",
+    "UNKNOWN_STATE",
     "await_fill",
     "confirm_protection",
     "entry_fill_wait_seconds",

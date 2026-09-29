@@ -12,6 +12,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import time
 import urllib.error
 import urllib.parse
@@ -37,6 +38,9 @@ HttpTransport = Callable[[str, str, dict[str, str], bytes | None], str]
 _GET_RETRY_STATUSES = frozenset({429, 503})
 _GET_RETRY_MAX_ATTEMPTS = 3
 _GET_RETRY_BACKOFF_S = (0.25, 0.75, 1.5)
+
+
+logger = logging.getLogger("keel.exchange.okx_rest")
 
 
 def _okx_error_text(result: dict[str, Any]) -> str:
@@ -366,7 +370,8 @@ class OKXRestAdapter:
             result = self._request(
                 "GET", "/api/v5/trade/orders-algo-pending", params=params
             )
-        except Exception:
+        except Exception as e:
+            logger.warning("orders-algo-pending failed %s: %s", inst_id or "*", e)
             return []
         rows = result.get("data") or []
         return [r for r in rows if isinstance(r, dict)]
@@ -381,7 +386,8 @@ class OKXRestAdapter:
                 "/api/v5/trade/order",
                 params={"instId": inst_id, "ordId": str(order_id)},
             )
-        except Exception:
+        except Exception as e:
+            logger.warning("get_order failed %s %s: %s", inst_id, order_id, e)
             return None
         rows = result.get("data") or []
         row = rows[0] if rows else None
