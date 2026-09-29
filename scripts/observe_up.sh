@@ -31,6 +31,8 @@ fi
 
 RUN_DIR="${KEEL_OBSERVE_RUN_DIR:-$ROOT/data/run}"
 mkdir -p "$RUN_DIR"
+# Explicit start re-arms the autostart watchdog (see keel_ensure_up.sh / docs/BOX_AUTOSTART.md).
+rm -f "$RUN_DIR/keel-autostart.disabled"
 API_PID_FILE="$RUN_DIR/keel-api.pid"
 WORKER_PID_FILE="$RUN_DIR/keel-worker.pid"
 API_LOG="$RUN_DIR/keel-api.log"

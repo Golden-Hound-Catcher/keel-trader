@@ -14,6 +14,9 @@ Do **not** restore legacy R20 / QwenPaw / ByPy backup trees. Those paths are ret
 
 ## Bring-up (observe stack)
 
+**Cursor box:** use `./scripts/keel_ensure_up.sh` (venv repair + observe_up + watchdog; reboot-proof via
+`~/.bashrc` hook). Why `.venv` vanished on reboots and how autostart works: [docs/BOX_AUTOSTART.md](docs/BOX_AUTOSTART.md).
+
 ```bash
 cp env.example .env   # then edit secrets on this host only
 ./scripts/observe_up.sh      # keel-api + keel-worker via data/run/ pidfiles

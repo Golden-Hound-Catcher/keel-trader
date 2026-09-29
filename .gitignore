@@ -25,6 +25,7 @@ share/python-wheels/
 
 # Virtual Environments
 .venv/
+.venv
 venv/
 ENV/
 
@@ -66,6 +67,9 @@ data/*.sqlite
 data/*.xlsx
 data/*.csv
 data/*.lock
+data/run/*.lock
+data/run/*.stale
+data/run/*.disabled
 data/*.tmp
 data/*.enc
 data/*.txt

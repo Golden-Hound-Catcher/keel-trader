@@ -1067,6 +1067,7 @@ Kill-switch on, no orders — continuous iteration on live observation.
 
 ```bash
 ./scripts/observe_up.sh      # load .env, start keel-api + keel-worker, wait /health
+./scripts/keel_ensure_up.sh  # Cursor box: + venv repair + watchdog (docs/BOX_AUTOSTART.md)
 ./scripts/observe_status.sh  # pid liveness + /health /ready snippets (no secrets)
 ./scripts/observe_down.sh    # stop via pid files under data/run/
 ```
