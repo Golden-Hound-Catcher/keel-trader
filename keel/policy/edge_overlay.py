@@ -2,9 +2,10 @@
 Hard edge overlay for ``KEEL_DECISION_POLICY=llm``.
 
 Kernel (not the model):
-- WAIT unless 1h agrees with the side; 4h is soft by default (F8):
+- WAIT unless 1h agrees with the side; 4h is soft by *code* default (F8):
   neutral OK if 1h aligned; still block if 4h opposes. Hard mode =
-  same-direction only (``KEEL_LLM_4H_MODE=hard``).
+  same-direction only (``KEEL_LLM_4H_MODE=hard``) — the ``llm_demo``
+  profile default since 2026-09-29 (4h neutral → WAIT "4h hard veto").
 - F10 soft-4h + 15m: when soft and 4h is **neutral**, require 15m
   **same-direction** (gate ``soft4h_needs_15m``); else 15m not-opposing (F7)
 - Optional 15m not-opposing (F7): short → 15m≠bullish; long → 15m≠bearish
@@ -206,8 +207,21 @@ def _htf_ok(snapshot: MarketSnapshot, side: str) -> tuple[bool, dict[str, Any]]:
         "require_1h_trend": need_1h,
         "require_4h_trend": need_4h,
         "llm_4h_mode": mode,
+        "htf_1h_ok": bool(ok_1h),
+        "htf_4h_ok": bool(ok_4h),
         "htf_ok": bool(ok_1h and ok_4h),
     }
+    if not (ok_1h and ok_4h):
+        # Which leg vetoed (used by the 48h zero-entry alert veto shares).
+        if not ok_1h:
+            cause = "1h"
+        elif mode == "hard" and t4h == "neutral":
+            cause = "4h_hard_neutral"
+        elif mode == "hard":
+            cause = "4h_hard_opposing"
+        else:
+            cause = "4h_opposing"
+        audit["htf_veto_cause"] = cause
     return bool(ok_1h and ok_4h), audit
 
 
@@ -511,13 +525,24 @@ def apply_llm_edge_overlay(decision: Decision, snapshot: MarketSnapshot) -> Deci
     htf_ok, htf_audit = _htf_ok(snapshot, side)
     audit.update(htf_audit)
     if not htf_ok:
-        return _wait(
-            decision,
-            (
+        cause = htf_audit.get("htf_veto_cause")
+        want = "bullish" if side == "long" else "bearish"
+        if cause in ("4h_hard_neutral", "4h_hard_opposing"):
+            # 2026-09-29 llm_demo default: 4h must match the side.
+            reason = (
+                f"4h hard veto: {side} needs t4h={want} "
+                f"(t4h={htf_audit['trend_4h']} t1h={htf_audit['trend_1h']}; "
+                f"KEEL_LLM_4H_MODE=hard)"
+            )
+        else:
+            reason = (
                 f"htf {side} needs 1h align + 4h "
                 f"{htf_audit.get('llm_4h_mode', 'soft')} "
                 f"(t1h={htf_audit['trend_1h']} t4h={htf_audit['trend_4h']})"
-            ),
+            )
+        return _wait(
+            decision,
+            reason,
             gate=HTF_GATE,
             extra=audit,
         )

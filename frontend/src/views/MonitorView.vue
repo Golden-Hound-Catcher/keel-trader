@@ -485,6 +485,8 @@ const shadowStatsByAction = computed(() => {
 
 /** Q2.2 compact quality scorecard (soft-fail). */
 const qualityStats = computed(() => store.qualityStats)
+/** Triggered ops alerts from /stats/quality (e.g. 48h zero-entry: market vs outage). */
+const opsAlerts = computed(() => qualityStats.value?.alerts ?? [])
 const qualityWaitPct = computed(() => {
   const r = qualityStats.value?.wait_rate
   if (typeof r !== 'number' || !Number.isFinite(r)) return '—'
@@ -1426,6 +1428,15 @@ const configStrip = computed(() => {
               >
                 <AlertTriangle class="w-3.5 h-3.5 shrink-0" />
                 {{ workerStaleBannerText }}
+              </p>
+              <p
+                v-for="a in opsAlerts"
+                :key="'ops-alert-' + a.code"
+                class="mt-2 text-xs flex items-start gap-1.5"
+                :class="a.severity === 'critical' ? 'text-rose-300' : 'text-amber-200/90'"
+              >
+                <AlertTriangle class="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>{{ a.message_zh }}</span>
               </p>
             </div>
             <div

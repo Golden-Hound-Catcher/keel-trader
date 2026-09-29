@@ -7,6 +7,8 @@ from fastapi import APIRouter, Query
 
 from keel.api.deps import get_ledger
 from keel.api.schemas import (
+    OpsAlert,
+    ZeroEntryAlert,
     DecisionStatsResponse,
     FullGateCohortCounts,
     FullGateFiresBlock,
@@ -23,6 +25,11 @@ from keel.api.schemas import (
     ShadowMarkoutBlock,
     ShadowMarkoutHorizon,
     ShadowStatsResponse,
+)
+from keel.config import get_settings
+from keel.ledger.zero_entry_alert import (
+    compute_zero_entry_alert,
+    safe_compute_zero_entry_alert,
 )
 
 router = APIRouter()
@@ -228,7 +235,7 @@ def _shadow_by_instrument(raw: dict[str, Any] | None) -> dict[str, ShadowInstrum
 
 AGREE_RATE_NOTE = (
     "LLM 15m=not-opposing (neutral OK unless KEEL_LLM_SOFT4H_BLOCK_15M_NEUTRAL); "
-    "rule TF 15m=same-dir (neutral blocks). LLM 4h=soft vs rule 4h=hard under llm_demo. "
+    "rule TF 15m=same-dir (neutral blocks). LLM 4h=hard (llm_demo since 2026-09-29) = rule 4h=hard. "
     "Dual-log diverge often reflects gate definition mismatch, not model error."
 )
 
@@ -333,7 +340,12 @@ def get_quality_stats(
                 str(k): int(v) for k, v in dict(cv.get("by_instrument") or {}).items()
             },
         )
+    zero_entry = safe_compute_zero_entry_alert(
+        ledger, cycle_interval_seconds=get_settings().cycle_interval_seconds
+    )
     return QualityStatsResponse(
+        alerts=_ops_alerts(zero_entry),
+        zero_entry_alert=ZeroEntryAlert.model_validate(zero_entry) if zero_entry else None,
         hours=hours,
         market_source=dict(raw.get("market_source") or {}),
         decision_count=int(raw.get("decision_count", 0)),
@@ -365,3 +377,27 @@ def get_quality_stats(
             raw.get("by_instrument") if isinstance(raw.get("by_instrument"), dict) else None
         ),
     )
+
+
+def _ops_alerts(zero_entry: dict[str, Any] | None) -> list[OpsAlert]:
+    """Triggered alerts only (Monitor alert list / digest)."""
+    out: list[OpsAlert] = []
+    if zero_entry and zero_entry.get("triggered"):
+        out.append(
+            OpsAlert(
+                code=str(zero_entry.get("code") or "zero_entry_48h"),
+                severity=str(zero_entry.get("severity") or "warning"),
+                kind=str(zero_entry.get("kind") or ""),
+                message_zh=str(zero_entry.get("message_zh") or ""),
+            )
+        )
+    return out
+
+
+@router.get("/stats/zero_entry", response_model=ZeroEntryAlert)
+def get_zero_entry_alert() -> ZeroEntryAlert:
+    """48h zero-entry alert payload (same object as ``/ready.zero_entry_alert``)."""
+    payload = compute_zero_entry_alert(
+        get_ledger(), cycle_interval_seconds=get_settings().cycle_interval_seconds
+    )
+    return ZeroEntryAlert.model_validate(payload)

@@ -11,6 +11,7 @@ Design principles:
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -30,6 +31,14 @@ from typing import Callable
 from keel.config import get_settings
 
 BJ_TZ = timezone(timedelta(hours=8))
+
+alert_logger = logging.getLogger("keel.worker.alerts")
+
+# 48h zero-entry alert check (read-only ledger query in the scheduler process so
+# the WARNING lands in data/run/keel-worker.log; cycle subprocess output is not kept).
+ZERO_ENTRY_FIRST_CHECK_SECONDS = 60.0
+ZERO_ENTRY_CHECK_SECONDS = 900.0
+ZERO_ENTRY_REPEAT_WARN_SECONDS = 3600.0
 
 
 @dataclass(frozen=True)
@@ -80,6 +89,12 @@ class KeelScheduler:
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="keel-job")
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+
+        self._started_mono: float | None = None
+        self._zero_entry_next_mono: float | None = None
+        self._zero_entry_last_warn_mono: float | None = None
+        self._zero_entry_last_kind: str | None = None
+        self._zero_entry_ledger = None
 
     def _default_jobs(self) -> list[JobSpec]:
         """Default job specifications: trader only (keel-api + keel-worker).
@@ -211,11 +226,65 @@ class KeelScheduler:
 
         return launched
 
+    def _check_zero_entry_alert(self, now_mono: float | None = None) -> dict | None:
+        """
+        Periodic 48h zero-entry check → log WARNING when triggered.
+
+        WARNING on first trigger / kind change, then at most once per hour while
+        it stays triggered; INFO when it clears. Never raises.
+        """
+        now_m = time.monotonic() if now_mono is None else float(now_mono)
+        if self._started_mono is None:
+            self._started_mono = now_m
+        if self._zero_entry_next_mono is None:
+            self._zero_entry_next_mono = self._started_mono + ZERO_ENTRY_FIRST_CHECK_SECONDS
+        if now_m < self._zero_entry_next_mono:
+            return None
+        self._zero_entry_next_mono = now_m + ZERO_ENTRY_CHECK_SECONDS
+        try:
+            from keel.ledger import KeelLedger
+            from keel.ledger.zero_entry_alert import compute_zero_entry_alert
+
+            settings = get_settings()
+            if self._zero_entry_ledger is None:
+                self._zero_entry_ledger = KeelLedger(settings.ledger_path)
+            payload = compute_zero_entry_alert(
+                self._zero_entry_ledger,
+                cycle_interval_seconds=settings.cycle_interval_seconds,
+            )
+        except Exception:
+            alert_logger.debug("zero-entry alert check failed", exc_info=True)
+            return None
+        kind = str(payload.get("kind") or "ok")
+        if payload.get("triggered"):
+            changed = kind != self._zero_entry_last_kind
+            due = (
+                self._zero_entry_last_warn_mono is None
+                or now_m - self._zero_entry_last_warn_mono >= ZERO_ENTRY_REPEAT_WARN_SECONDS
+            )
+            if changed or due:
+                alert_logger.warning(
+                    "ZERO_ENTRY_ALERT kind=%s hours_since_last_entry=%s %s",
+                    kind,
+                    payload.get("hours_since_last_entry"),
+                    payload.get("message_zh"),
+                )
+                self._zero_entry_last_warn_mono = now_m
+        elif self._zero_entry_last_kind in ("market", "outage"):
+            alert_logger.info("ZERO_ENTRY_ALERT cleared: %s", payload.get("message_zh"))
+            self._zero_entry_last_warn_mono = None
+        self._zero_entry_last_kind = kind
+        return payload
+
     def _loop(self) -> None:
         """Main scheduler loop."""
         while not self._stop_event.is_set():
             try:
                 self._tick()
+            except Exception:
+                pass
+            try:
+                self._check_zero_entry_alert()
             except Exception:
                 pass
             self._stop_event.wait(5.0)

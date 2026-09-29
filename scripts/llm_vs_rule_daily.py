@@ -121,7 +121,7 @@ def _effective_config_header() -> dict[str, Any]:
         "rule_4h_mode": None,
         "asymmetry_note": (
             "LLM 15m=not-opposing unless SOFT4H_BLOCK_15M_NEUTRAL; "
-            "rule TF 15m=same-dir; llm_demo LLM 4h=soft / rule 4h=hard"
+            "rule TF 15m=same-dir; llm_demo LLM 4h=hard (since 9/29) / rule 4h=hard"
         ),
     }
     try:

@@ -36,6 +36,15 @@ def main(argv: list[str] | None = None) -> int:
             cycle_argv.extend(["--force-action", args.force_action])
         return cycle_main(cycle_argv)
 
+    import logging
+
+    if not logging.getLogger().handlers:
+        # Scheduler-process WARNINGs (e.g. ZERO_ENTRY_ALERT) → keel-worker.log.
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+
     from keel.worker.scheduler import KeelScheduler
 
     scheduler = KeelScheduler()

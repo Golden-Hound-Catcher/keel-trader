@@ -358,6 +358,36 @@ class TestLlmEdgeOverlay(unittest.TestCase):
         self.assertIn(HTF_GATE, (out.signal_diag or {}).get("missing") or [])
         self.assertEqual((out.signal_diag or {}).get("llm_4h_mode"), "hard")
 
+    def test_hard_4h_neutral_short_reason_and_cause(self) -> None:
+        """2026-09-29 llm_demo default hard: 4h neutral short → WAIT with explicit reason."""
+        os.environ["KEEL_LLM_4H_MODE"] = "hard"
+        snap = _aligned_short_snap(trend_4h="neutral", rsi_14=40.0)
+        out = apply_llm_edge_overlay(_sell(confidence=75.0), snap)
+        self.assertEqual(out.action, "WAIT")
+        diag = out.signal_diag or {}
+        self.assertEqual(diag.get("missing"), [HTF_GATE])
+        self.assertFalse(diag.get(HTF_GATE))
+        self.assertTrue(diag.get("htf_1h_ok"))
+        self.assertFalse(diag.get("htf_4h_ok"))
+        self.assertEqual(diag.get("htf_veto_cause"), "4h_hard_neutral")
+        self.assertIn("4h hard veto: short needs t4h=bearish", out.reason)
+        self.assertIn("t4h=neutral", out.reason)
+        self.assertIn("KEEL_LLM_4H_MODE=hard", out.reason)
+
+    def test_hard_4h_aligned_still_fires(self) -> None:
+        os.environ["KEEL_LLM_4H_MODE"] = "hard"
+        out = apply_llm_edge_overlay(_buy(confidence=70.0), _aligned_long_snap(rsi_14=55.0))
+        self.assertEqual(out.action, "BUY_LONG")
+        self.assertEqual((out.signal_diag or {}).get("llm_4h_mode"), "hard")
+
+    def test_1h_misaligned_keeps_htf_reason(self) -> None:
+        os.environ["KEEL_LLM_4H_MODE"] = "hard"
+        snap = _aligned_long_snap(trend_1h="neutral", rsi_14=55.0)
+        out = apply_llm_edge_overlay(_buy(), snap)
+        self.assertEqual(out.action, "WAIT")
+        self.assertEqual((out.signal_diag or {}).get("htf_veto_cause"), "1h")
+        self.assertIn("htf long needs 1h align", out.reason)
+
     def test_f8_relaxed_rsi_mid_allows_50(self) -> None:
         """F8 defaults: short_max=52 / long_min=48 → RSI 50 clears mid veto."""
         long_out = apply_llm_edge_overlay(_buy(confidence=65.0), _aligned_long_snap(rsi_14=50.0))

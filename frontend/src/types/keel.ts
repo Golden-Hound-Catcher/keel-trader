@@ -542,6 +542,33 @@ export interface KeelQualityStats {
   avg_cycle_duration_ms: number | null
   /** Stage R/S: per-instrument breakdown (soft-fail if absent). */
   by_instrument?: Record<string, KeelQualityInstrumentStats>
+  /** 2026-09-29: triggered ops alerts (Monitor alert list). */
+  alerts?: KeelOpsAlert[]
+  /** 2026-09-29: 48h zero-entry alert (also on /ready). */
+  zero_entry_alert?: KeelZeroEntryAlert | null
+}
+
+export interface KeelOpsAlert {
+  code: string
+  severity: string
+  kind?: string | null
+  message_zh: string
+}
+
+/** keel/ledger/zero_entry_alert.py — kind: ok | market | outage | disabled. */
+export interface KeelZeroEntryAlert {
+  code: string
+  triggered: boolean
+  kind: string
+  severity: string
+  threshold_hours: number
+  hours_since_last_entry?: number | null
+  worker_stale?: boolean
+  cycle_coverage?: number | null
+  decisions_in_window?: number
+  veto_shares?: Record<string, number>
+  trend_4h_neutral_share?: number | null
+  message_zh: string
 }
 
 export interface KeelDecisionsResponse {
