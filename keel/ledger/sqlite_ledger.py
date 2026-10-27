@@ -173,8 +173,8 @@ class KeelLedger:
                 """
                 INSERT INTO trades (
                     timestamp, inst_id, action, direction, size, price,
-                    pnl, fee, strategy_tag, reason, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pnl, fee, strategy_tag, reason, metadata, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trade.timestamp or time.time(),
@@ -188,6 +188,7 @@ class KeelLedger:
                     trade.strategy_tag,
                     trade.reason,
                     json.dumps(trade.metadata) if trade.metadata else None,
+                    float(trade.created_at) if trade.created_at is not None else time.time(),
                 ),
             )
             return cursor.lastrowid or 0
@@ -277,15 +278,25 @@ class KeelLedger:
         inst_id: str | None = None,
         action: str | None = None,
         limit: int = 100,
+        *,
+        since_ledgered: bool = False,
     ) -> list[TradeRecord]:
-        """Query trades with optional filters."""
+        """Query trades with optional filters.
+
+        ``since_ledgered=True`` matches rows whose fill ``timestamp`` *or*
+        ledger ``created_at`` falls in the window (late resting reconciles).
+        """
         conn = self._get_conn()
         query = "SELECT * FROM trades WHERE 1=1"
         params: list[Any] = []
 
         if since is not None:
-            query += " AND timestamp >= ?"
-            params.append(since)
+            if since_ledgered:
+                query += " AND (timestamp >= ? OR COALESCE(created_at, timestamp) >= ?)"
+                params.extend([since, since])
+            else:
+                query += " AND timestamp >= ?"
+                params.append(since)
         if inst_id is not None:
             query += " AND inst_id = ?"
             params.append(inst_id)
@@ -1140,6 +1151,12 @@ class KeelLedger:
         return self._row_to_decision(row) if row else None
 
     def _row_to_trade(self, row: sqlite3.Row) -> TradeRecord:
+        keys = set(row.keys())
+        created = row["created_at"] if "created_at" in keys else None
+        try:
+            created_f = float(created) if created is not None else None
+        except (TypeError, ValueError):
+            created_f = None
         return TradeRecord(
             id=row["id"],
             timestamp=row["timestamp"],
@@ -1153,6 +1170,7 @@ class KeelLedger:
             strategy_tag=row["strategy_tag"],
             reason=row["reason"],
             metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+            created_at=created_f,
         )
 
     def _row_to_decision(self, row: sqlite3.Row) -> DecisionRecord:

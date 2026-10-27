@@ -355,15 +355,68 @@ class TestCloseReconcileTruth(_LedgerCase):
             TradeRecord(
                 timestamp=now - 7200, inst_id=INST, action="open", direction="short", size=1.0,
                 price=100.0, strategy_tag="keel-shadow", metadata={"fill_ts": now - 7200, "shadow": True},
+                created_at=now - 7200,
             )
         )
-        self._open(ts=now - 4 * 86400, price=100.0, fill_ts=now - 4 * 86400, order_id="old")
+        # Ancient open that was also ledgered long ago (both fill + created_at outside lookback).
+        self.ledger.record_trade(
+            TradeRecord(
+                timestamp=now - 4 * 86400,
+                inst_id=INST,
+                action="open",
+                direction="short",
+                size=1.0,
+                price=100.0,
+                strategy_tag="keel-llm",
+                metadata={"order_id": "old", "fill_ts": now - 4 * 86400},
+                created_at=now - 4 * 86400,
+            )
+        )
         ex = _OkxLikeExchange()
         ex.history = [
             _hist(c_ms=int((now - 7200) * 1000), u_ms=int(now * 1000), open_px=100, close_px=99, pnl=1, realized=1, fee=0),
             _hist(c_ms=int((now - 4 * 86400) * 1000), u_ms=int(now * 1000), open_px=100, close_px=99, pnl=1, realized=1, fee=0),
         ]
         self.assertEqual(reconcile_closed_positions(ex, self.ledger, now=now), [])
+
+    def test_sweep_late_ledgered_ancient_fill_backfills(self) -> None:
+        """#338 class: resting resolve ledgers an 18-day-old fill after restart."""
+        now = time.time()
+        fill_ts = now - 18 * 86400
+        orphan = self.ledger.record_trade(
+            TradeRecord(
+                timestamp=fill_ts,
+                inst_id=INST,
+                action="open",
+                direction="short",
+                size=1.0,
+                price=82911.9,
+                strategy_tag="keel-llm",
+                metadata={"order_id": "late-1", "fill_ts": fill_ts, "stop_loss": 83500.0, "take_profit": 81800.0},
+                created_at=now - 600,  # ledgered ~10 min ago (inside 72h lookback)
+            )
+        )
+        ex = _OkxLikeExchange()
+        # No history → do not invent.
+        self.assertEqual(reconcile_closed_positions(ex, self.ledger, now=now), [])
+        self.assertEqual(self.ledger.get_trades(action="close"), [])
+        ex.history = [
+            _hist(
+                c_ms=int(fill_ts * 1000) + 500,
+                u_ms=int((fill_ts + 3600) * 1000),
+                open_px=82911.9,
+                close_px=81878.13,
+                pnl=10.33,
+                realized=9.7899,
+                fee=-0.575,
+            )
+        ]
+        out = reconcile_closed_positions(ex, self.ledger, now=now)
+        self.assertEqual([o.open_trade_id for o in out], [orphan])
+        close = self.ledger.get_trades(action="close", limit=1)[0]
+        self.assertEqual((close.metadata or {}).get("source"), "okx_positions_history_backfill")
+        self.assertAlmostEqual(close.pnl or 0, 9.7899)
+        self.assertEqual(reconcile_closed_positions(ex, self.ledger, now=now + 60), [])
 
     def test_match_history_tolerance(self) -> None:
         rows = [_hist(c_ms=1_000_000, u_ms=2_000_000, open_px=1, close_px=1, pnl=0, realized=0, fee=0)]

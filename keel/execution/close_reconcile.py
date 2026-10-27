@@ -20,6 +20,8 @@ Design (no invented history):
   ticker-at-detection estimate is only a fallback.
 - Live ``keel-llm`` opens inside ``KEEL_CLOSE_BACKFILL_LOOKBACK_HOURS`` that no
   live position covers are closed only when positions-history proves it.
+  Lookback is gated on ``max(fill timestamp, ledger created_at)`` so a late
+  resting reconcile that ledgers an ancient fill still enters the sweep.
 """
 from __future__ import annotations
 
@@ -450,6 +452,20 @@ def backfill_lookback_seconds() -> float:
     return max(0.0, min(hours, 24.0 * 90)) * 3600.0
 
 
+def _open_lookback_ref_ts(trade: TradeRecord) -> float:
+    """When the open became relevant for backfill: fill time or ledger time."""
+    try:
+        fill_ts = float(trade.timestamp or 0.0)
+    except (TypeError, ValueError):
+        fill_ts = 0.0
+    created = getattr(trade, "created_at", None)
+    try:
+        created_ts = float(created) if created is not None else 0.0
+    except (TypeError, ValueError):
+        created_ts = 0.0
+    return max(fill_ts, created_ts)
+
+
 def _fetch_positions_history(exchange: Any) -> list[dict[str, Any]] | None:
     """None when the adapter has no positions-history (paper / mocks)."""
     getter = getattr(exchange, "get_positions_history", None)
@@ -662,8 +678,9 @@ def reconcile_closed_positions(
 
     1. Keys live last snapshot but gone now → close their tracked ids.
     2. Keys still live whose tracked ids changed → close the dropped ids.
-    3. Sweep: live ``keel-llm`` opens (lookback window) that no live position
-       covers → close only when OKX positions-history proves the close.
+    3. Sweep: live ``keel-llm`` opens (lookback on fill *or* ledger created_at)
+       that no live position covers → close only when OKX positions-history
+       proves the close.
 
     Exit data prefers positions-history (true avg exit, net realized PnL,
     fees, close time); otherwise the legacy estimate. First snapshot only
@@ -715,7 +732,15 @@ def reconcile_closed_positions(
     if lookback > 0:
         seen_keys: set[str] = set()
         try:
-            recent = ledger.get_trades(since=ts - lookback, action="open", limit=500)
+            recent = ledger.get_trades(
+                since=ts - lookback, action="open", limit=500, since_ledgered=True
+            )
+        except TypeError:
+            # Older ledger stubs in unit tests may lack since_ledgered=.
+            try:
+                recent = ledger.get_trades(since=ts - lookback, action="open", limit=500)
+            except Exception:
+                recent = []
         except Exception:
             recent = []
         for t in recent:
@@ -728,9 +753,16 @@ def reconcile_closed_positions(
                     continue
                 if not _is_live_open(u):
                     continue
-                if float(u.timestamp or 0.0) < ts - lookback:
+                ref_ts = _open_lookback_ref_ts(u)
+                if ref_ts < ts - lookback:
                     continue
-                if ts - float(u.timestamp or 0.0) < _BACKFILL_GRACE_SECONDS:
+                # Grace on fill time only: brand-new fills may not be in history yet.
+                # Late-ledgered ancient fills (fill_ts << created_at) skip grace.
+                try:
+                    fill_ts = float(u.timestamp or 0.0)
+                except (TypeError, ValueError):
+                    fill_ts = 0.0
+                if fill_ts >= ts - lookback and ts - fill_ts < _BACKFILL_GRACE_SECONDS:
                     continue
                 sweep.append(u)
 
