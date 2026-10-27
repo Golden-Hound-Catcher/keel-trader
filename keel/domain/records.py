@@ -29,6 +29,10 @@ class TradeRecord:
     strategy_tag: str = ""
     reason: str = ""
     metadata: dict[str, Any] | None = None
+    # SQLite row insert time (when the ledger learned about the trade).
+    # Distinct from ``timestamp`` / fill time — late resting reconciles can
+    # ledger an ancient fill days later (see close_reconcile backfill sweep).
+    created_at: float | None = None
 
     @property
     def time_str(self) -> str:
