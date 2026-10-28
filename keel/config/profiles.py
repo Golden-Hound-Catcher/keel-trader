@@ -26,7 +26,9 @@ LLM_DEMO: dict[str, str] = {
     "KEEL_INSTRUMENTS": "BTC-USDT-SWAP,ETH-USDT-SWAP,SOL-USDT-SWAP",
     # OpenRouter + DeepSeek (json_object off — model/path often rejects it)
     "KEEL_LLM_BASE_URL": "https://openrouter.ai/api/v1",
-    "KEEL_LLM_MODEL": "deepseek/deepseek-v4-flash-0731",
+    "KEEL_LLM_MODEL": "deepseek/deepseek-v4.1-flash-1017",
+    # 2026-10-28: lower from code default high — fewer read-timeouts on OpenRouter
+    "KEEL_LLM_REASONING_EFFORT": "medium",
     "KEEL_LLM_JSON_OBJECT": "0",
     # LLM F8/F10 edge overlay gates
     "KEEL_LLM_EDGE_OVERLAY": "1",

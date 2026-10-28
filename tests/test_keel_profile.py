@@ -29,6 +29,8 @@ class TestProfileHelpers(unittest.TestCase):
         self.assertEqual(d["KEEL_RULE_VARIANT"], "trend_follow")
         self.assertEqual(d["KEEL_LLM_4H_MODE"], "hard")  # 2026-09-29 (was soft)
         self.assertEqual(d["KEEL_RULE_4H_MODE"], "hard")
+        self.assertEqual(d["KEEL_LLM_MODEL"], "deepseek/deepseek-v4.1-flash-1017")
+        self.assertEqual(d["KEEL_LLM_REASONING_EFFORT"], "medium")
         self.assertEqual(d["KEEL_LLM_JSON_OBJECT"], "0")
         self.assertEqual(d["KEEL_KILL_SWITCH"], "0")
         self.assertEqual(d["KEEL_LLM_MIN_CONFIDENCE"], "65")
@@ -47,6 +49,7 @@ class TestProfileAppliesDefaults(unittest.TestCase):
                 "KEEL_PROFILE",
                 "KEEL_DECISION_POLICY",
                 "KEEL_LLM_MODEL",
+                "KEEL_LLM_REASONING_EFFORT",
                 "KEEL_LLM_BASE_URL",
                 "KEEL_LLM_JSON_OBJECT",
                 "KEEL_RULE_VARIANT",
@@ -81,6 +84,7 @@ class TestProfileAppliesDefaults(unittest.TestCase):
         s = settings_mod.get_settings()
         self.assertEqual(s.profile, "llm_demo")
         self.assertEqual(s.llm_model, LLM_DEMO["KEEL_LLM_MODEL"])
+        self.assertEqual(s.llm_reasoning_effort, LLM_DEMO["KEEL_LLM_REASONING_EFFORT"])
         self.assertEqual(s.llm_base_url, LLM_DEMO["KEEL_LLM_BASE_URL"])
         self.assertFalse(s.llm_json_object)
         self.assertFalse(s.kill_switch)
